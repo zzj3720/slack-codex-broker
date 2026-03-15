@@ -50,8 +50,6 @@ interface PendingDispatchRequest {
   readonly recoveryKind?: "socket_ready_missed_messages" | undefined;
 }
 
-const ACTIVE_TURN_RECONCILE_INTERVAL_MS = 15_000;
-
 export class SlackConversationService {
   readonly #config: AppConfig;
   readonly #sessions: SessionManager;
@@ -295,7 +293,7 @@ export class SlackConversationService {
       throw new Error("Unable to determine filename for Slack upload");
     }
 
-    return await this.#slackApi.uploadThreadFile({
+    const uploaded = await this.#slackApi.uploadThreadFile({
       channelId: options.channelId,
       threadTs: options.rootThreadTs,
       filename,
@@ -306,6 +304,8 @@ export class SlackConversationService {
       snippetType: options.snippetType?.trim() || undefined,
       contentType: options.contentType?.trim() || undefined
     });
+    await this.#sessions.setLastSlackReplyAt(options.channelId, options.rootThreadTs, new Date().toISOString());
+    return uploaded;
   }
 
   async stopActiveTurn(session: SlackSessionRecord): Promise<boolean> {
@@ -373,7 +373,7 @@ export class SlackConversationService {
     this.#stopActiveTurnReconciler();
     this.#activeTurnReconcileTimer = setInterval(() => {
       void this.#reconcileLiveActiveTurns();
-    }, ACTIVE_TURN_RECONCILE_INTERVAL_MS);
+    }, this.#config.slackActiveTurnReconcileIntervalMs);
   }
 
   #stopActiveTurnReconciler(): void {
@@ -393,7 +393,10 @@ export class SlackConversationService {
 
     for (const session of sessions) {
       try {
-        await this.#reconcileSingleActiveTurn(session);
+        const outcome = await this.#reconcileSingleActiveTurn(session);
+        if (outcome === "retained") {
+          await this.#maybeRemindSilentActiveTurn(this.#findSessionByKey(session.key));
+        }
       } catch (error) {
         logger.warn("Failed to reconcile live Codex turn state", {
           sessionKey: session.key,
@@ -483,8 +486,60 @@ export class SlackConversationService {
     const ts = await this.#slackApi.postThreadMessage(channelId, rootThreadTs, text);
     if (ts) {
       this.#selfMessageFilter.rememberPostedMessageTs(ts);
+      await this.#sessions.setLastSlackReplyAt(channelId, rootThreadTs, new Date().toISOString());
     }
     return ts;
+  }
+
+  async #maybeRemindSilentActiveTurn(session: SlackSessionRecord): Promise<void> {
+    if (!session.activeTurnId || !session.codexThreadId || !session.activeTurnStartedAt) {
+      return;
+    }
+
+    const nowMs = Date.now();
+    const turnStartedAtMs = Date.parse(session.activeTurnStartedAt);
+    if (!Number.isFinite(turnStartedAtMs)) {
+      return;
+    }
+
+    const lastSlackReplyAtMs = session.lastSlackReplyAt ? Date.parse(session.lastSlackReplyAt) : Number.NaN;
+    const silenceAnchorMs =
+      Number.isFinite(lastSlackReplyAtMs) && lastSlackReplyAtMs > turnStartedAtMs
+        ? lastSlackReplyAtMs
+        : turnStartedAtMs;
+
+    if (nowMs - silenceAnchorMs < this.#config.slackProgressReminderAfterMs) {
+      return;
+    }
+
+    if (session.lastProgressReminderAt) {
+      const lastReminderAtMs = Date.parse(session.lastProgressReminderAt);
+      if (Number.isFinite(lastReminderAtMs) && nowMs - lastReminderAtMs < this.#config.slackProgressReminderRepeatMs) {
+        return;
+      }
+    }
+
+    try {
+      await this.#turnRunner.steerReminder(
+        session,
+        [
+          "You have been working in this Slack thread for a while without a user-visible update.",
+          "This is only a reminder, not a command to send filler.",
+          "Decide whether there is a meaningful progress point, blocker, partial conclusion, or next-step update worth sharing now.",
+          "If yes, send a short Slack update. If not, keep working."
+        ].join("\n")
+      );
+    } catch (error) {
+      if (isMissingActiveTurnSteerError(error)) {
+        return;
+      }
+      throw error;
+    }
+    await this.#sessions.setLastProgressReminderAt(
+      session.channelId,
+      session.rootThreadTs,
+      new Date().toISOString()
+    );
   }
 
   async #dispatchPersistedMessage(session: SlackSessionRecord, messageTs: string): Promise<void> {

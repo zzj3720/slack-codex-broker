@@ -7,8 +7,11 @@ export interface SlackSessionRecord {
   readonly updatedAt: string;
   readonly codexThreadId?: string | undefined;
   readonly activeTurnId?: string | undefined;
+  readonly activeTurnStartedAt?: string | undefined;
   readonly lastObservedMessageTs?: string | undefined;
   readonly lastDeliveredMessageTs?: string | undefined;
+  readonly lastSlackReplyAt?: string | undefined;
+  readonly lastProgressReminderAt?: string | undefined;
 }
 
 export type JsonLike =

@@ -7,6 +7,9 @@ export interface AppConfig {
   readonly slackSocketOpenUrl: string;
   readonly slackInitialThreadHistoryCount: number;
   readonly slackHistoryApiMaxLimit: number;
+  readonly slackActiveTurnReconcileIntervalMs: number;
+  readonly slackProgressReminderAfterMs: number;
+  readonly slackProgressReminderRepeatMs: number;
   readonly stateDir: string;
   readonly jobsRoot: string;
   readonly sessionsRoot: string;
@@ -120,6 +123,9 @@ export function loadConfig(env = process.env): AppConfig {
     slackSocketOpenUrl: env.SLACK_SOCKET_OPEN_URL ?? "apps.connections.open",
     slackInitialThreadHistoryCount: getNumber(env, "SLACK_INITIAL_THREAD_HISTORY_COUNT", 8),
     slackHistoryApiMaxLimit: getNumber(env, "SLACK_HISTORY_API_MAX_LIMIT", 50),
+    slackActiveTurnReconcileIntervalMs: getNumber(env, "SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS", 15_000),
+    slackProgressReminderAfterMs: getNumber(env, "SLACK_PROGRESS_REMINDER_AFTER_MS", 120_000),
+    slackProgressReminderRepeatMs: getNumber(env, "SLACK_PROGRESS_REMINDER_REPEAT_MS", 120_000),
     stateDir,
     jobsRoot,
     sessionsRoot,

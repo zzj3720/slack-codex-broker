@@ -361,8 +361,11 @@ export class StateStore {
       updatedAt: String(session.updatedAt),
       codexThreadId: session.codexThreadId,
       activeTurnId: session.activeTurnId,
+      activeTurnStartedAt: session.activeTurnStartedAt,
       lastObservedMessageTs: session.lastObservedMessageTs,
-      lastDeliveredMessageTs: session.lastDeliveredMessageTs
+      lastDeliveredMessageTs: session.lastDeliveredMessageTs,
+      lastSlackReplyAt: session.lastSlackReplyAt,
+      lastProgressReminderAt: session.lastProgressReminderAt
     };
   }
 

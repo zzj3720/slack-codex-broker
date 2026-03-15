@@ -66,6 +66,10 @@ export class SlackTurnRunner {
     ];
   }
 
+  async steerReminder(session: SlackSessionRecord, text: string): Promise<void> {
+    await this.#codex.steer(session, [createTextInputItem(text)]);
+  }
+
   async runTurnWithRecovery(options: {
     readonly session: SlackSessionRecord;
     readonly sessionKey: string;

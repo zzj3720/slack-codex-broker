@@ -362,6 +362,7 @@ export class AppServerClient extends EventEmitter {
         "- Registered background jobs receive environment variables including BROKER_JOB_ID, BROKER_JOB_TOKEN, BROKER_API_BASE, BROKER_JOB_HELPER, SLACK_CHANNEL_ID, SLACK_THREAD_TS, SESSION_KEY, SESSION_WORKSPACE, and REPOS_ROOT.",
         "- Inside a background job script, prefer `node \"$BROKER_JOB_HELPER\" ...` for heartbeat/event/complete/fail/cancel callbacks instead of hand-writing nested curl JSON payloads."
       ].join("\n"),
+      "Slack UX preference: do not stay silent for a long stretch if there is a meaningful progress point worth sharing. Use judgment. If you have a concrete update, short plan adjustment, blocker, or partial conclusion that would help the people in the thread, send a brief Slack update. If there is nothing meaningful to say yet, keep working and avoid filler.",
       [
         "Repository workflow contract:",
         `- Keep canonical repository clones under ${this.options.reposRoot}.`,

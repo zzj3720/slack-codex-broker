@@ -91,9 +91,12 @@ export class SessionManager {
 
   async setActiveTurnId(channelId: string, rootThreadTs: string, activeTurnId: string | undefined): Promise<SlackSessionRecord> {
     const session = this.#requireSession(channelId, rootThreadTs);
+    const now = new Date().toISOString();
     const next: SlackSessionRecord = {
       ...session,
-      activeTurnId
+      activeTurnId,
+      activeTurnStartedAt: activeTurnId ? now : undefined,
+      lastProgressReminderAt: activeTurnId ? undefined : undefined
     };
     await this.updateSession(next);
     return next;
@@ -122,6 +125,34 @@ export class SessionManager {
     const next: SlackSessionRecord = {
       ...session,
       lastDeliveredMessageTs
+    };
+    await this.updateSession(next);
+    return next;
+  }
+
+  async setLastSlackReplyAt(
+    channelId: string,
+    rootThreadTs: string,
+    lastSlackReplyAt: string | undefined
+  ): Promise<SlackSessionRecord> {
+    const session = this.#requireSession(channelId, rootThreadTs);
+    const next: SlackSessionRecord = {
+      ...session,
+      lastSlackReplyAt
+    };
+    await this.updateSession(next);
+    return next;
+  }
+
+  async setLastProgressReminderAt(
+    channelId: string,
+    rootThreadTs: string,
+    lastProgressReminderAt: string | undefined
+  ): Promise<SlackSessionRecord> {
+    const session = this.#requireSession(channelId, rootThreadTs);
+    const next: SlackSessionRecord = {
+      ...session,
+      lastProgressReminderAt
     };
     await this.updateSession(next);
     return next;

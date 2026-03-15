@@ -246,7 +246,7 @@ export class SlackCodexBridge {
       await this.#conversations.postSlackMessage({
         channelId: parsed.channelId,
         rootThreadTs: parsed.rootThreadTs,
-        text: `Session ready. Workspace \`${session.workspacePath}\`. Shared repos live under \`${this.#config.reposRoot}\`.`
+        text: "I've joined this thread and I'm checking the context now. I'll be with you shortly."
       });
     }
 

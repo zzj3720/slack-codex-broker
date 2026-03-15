@@ -24,6 +24,9 @@ describe("loadConfig", () => {
     expect(config.codexHostHomePath).toBeUndefined();
     expect(config.slackInitialThreadHistoryCount).toBe(8);
     expect(config.slackHistoryApiMaxLimit).toBe(50);
+    expect(config.slackActiveTurnReconcileIntervalMs).toBe(15_000);
+    expect(config.slackProgressReminderAfterMs).toBe(120_000);
+    expect(config.slackProgressReminderRepeatMs).toBe(120_000);
     expect(config.logLevel).toBe("info");
     expect(config.logRawSlackEvents).toBe(true);
     expect(config.logRawCodexRpc).toBe(true);

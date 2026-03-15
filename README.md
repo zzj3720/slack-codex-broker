@@ -135,9 +135,11 @@ Operational scripts for the real container:
 ```bash
 pnpm ops:check:real
 pnpm ops:rollout:real
+pnpm ops:status:real
 ```
 
 `ops:rollout:real` reuses the current `slack-codex-broker-real` container's env vars and bind mounts, refuses to restart while active turns exist unless you pass `--allow-active`, rebuilds the image, recreates the container, and then runs the fixed post-update checks. Each rollout also writes sanitized metadata plus pre-rollout logs under `.backups/rollouts/`.
+`ops:status:real` prints a structured runtime snapshot for the live container, including health, active sessions, open inbound messages, background jobs, and recent broker logs. Use `--open-inbound-limit` and `--log-lines` to tune output volume.
 
 The container image:
 

@@ -315,3 +315,104 @@ export async function writeRolloutMetadata(directory, payload) {
   await fsp.mkdir(directory, { recursive: true });
   await fsp.writeFile(path.join(directory, "metadata.json"), `${JSON.stringify(payload, null, 2)}\n`);
 }
+
+async function readJsonIfExists(filePath) {
+  try {
+    return JSON.parse(await fsp.readFile(filePath, "utf8"));
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+async function readJsonRecordsFromDirectory(directory) {
+  try {
+    const entries = await fsp.readdir(directory);
+    const records = [];
+    for (const entry of entries.sort()) {
+      if (!entry.endsWith(".json")) {
+        continue;
+      }
+
+      const payload = await readJsonIfExists(path.join(directory, entry));
+      if (payload === undefined) {
+        continue;
+      }
+
+      if (Array.isArray(payload)) {
+        records.push(...payload);
+        continue;
+      }
+
+      records.push(payload);
+    }
+
+    return records;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+async function readLastJsonlLines(filePath, limit) {
+  try {
+    const text = await fsp.readFile(filePath, "utf8");
+    return text
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .slice(-limit)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return { raw: line };
+        }
+      });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+export async function readDetailedStateFromHost(dataRootSource, options = {}) {
+  const openInboundLimit = options.openInboundLimit ?? 20;
+  const logLineLimit = options.logLineLimit ?? 40;
+  const stateRoot = path.join(dataRootSource, "state");
+  const logsRoot = path.join(dataRootSource, "logs");
+
+  const sessions = await readJsonRecordsFromDirectory(path.join(stateRoot, "sessions"));
+  const inboundMessages = await readJsonRecordsFromDirectory(path.join(stateRoot, "inbound-messages"));
+  const backgroundJobs = await readJsonRecordsFromDirectory(path.join(stateRoot, "background-jobs"));
+
+  const activeSessions = sessions
+    .filter((session) => session?.activeTurnId)
+    .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
+
+  const openInbound = inboundMessages
+    .filter((message) => message?.status === "pending" || message?.status === "inflight")
+    .sort((left, right) => String(left.updatedAt ?? "").localeCompare(String(right.updatedAt ?? "")));
+
+  const brokerLogs = await readLastJsonlLines(path.join(logsRoot, "broker.jsonl"), logLineLimit);
+
+  return {
+    sessionCount: sessions.length,
+    activeCount: activeSessions.length,
+    activeSessions,
+    openInboundCount: openInbound.length,
+    openInbound: openInbound.slice(0, openInboundLimit),
+    backgroundJobs: backgroundJobs.sort((left, right) =>
+      String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
+    ),
+    recentBrokerLogs: brokerLogs
+  };
+}

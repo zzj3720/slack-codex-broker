@@ -20,6 +20,7 @@
     "dev": "tsx watch src/index.ts",
     "ops:check:real": "node scripts/ops/check-real.mjs",
     "ops:rollout:real": "node scripts/ops/rollout-real.mjs",
+    "ops:status:real": "node scripts/ops/status-real.mjs",
     "start": "node dist/src/index.js",
     "test": "vitest run",
     "test:e2e:mock": "tsx test/manual/run-mock-e2e.ts",

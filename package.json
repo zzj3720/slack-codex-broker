@@ -1,0 +1,36 @@
+{
+  "name": "slack-codex-broker",
+  "version": "0.1.0",
+  "description": "Slack Socket Mode broker that routes Slack threads into Codex app-server sessions with isolated workspaces.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zzj3720/slack-codex-broker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zzj3720/slack-codex-broker/issues"
+  },
+  "homepage": "https://github.com/zzj3720/slack-codex-broker#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/src/index.js",
+    "test": "vitest run",
+    "test:e2e:mock": "tsx test/manual/run-mock-e2e.ts",
+    "manual:test": "tsx test/manual/run-real-codex-smoke.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules
+dist
+.data
+.data*
+.env
+.env.*
+!.env.example
+coverage
+.git
+.gitignore
+npm-debug.log*
+pnpm-debug.log*

@@ -1,0 +1,34 @@
+services:
+  slack-codex-broker:
+    build:
+      context: .
+    environment:
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_API_BASE_URL: ${SLACK_API_BASE_URL:-https://slack.com/api}
+      SLACK_SOCKET_OPEN_URL: ${SLACK_SOCKET_OPEN_URL:-apps.connections.open}
+      SLACK_INITIAL_THREAD_HISTORY_COUNT: ${SLACK_INITIAL_THREAD_HISTORY_COUNT:-8}
+      SLACK_HISTORY_API_MAX_LIMIT: ${SLACK_HISTORY_API_MAX_LIMIT:-50}
+      PORT: ${PORT:-3000}
+      SERVICE_NAME: ${SERVICE_NAME:-slack-codex-broker}
+      DATA_ROOT: ${DATA_ROOT:-/app/.data}
+      SESSIONS_ROOT: ${SESSIONS_ROOT:-/app/.data/sessions}
+      REPOS_ROOT: ${REPOS_ROOT:-/app/.data/repos}
+      CODEX_HOST_HOME_PATH: ${CODEX_HOST_HOME_PATH:-}
+      CODEX_APP_SERVER_PORT: ${CODEX_APP_SERVER_PORT:-4590}
+      CODEX_AUTH_JSON_PATH: ${CODEX_AUTH_JSON_PATH:-}
+      CODEX_DISABLED_MCP_SERVERS: ${CODEX_DISABLED_MCP_SERVERS:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      SSH_AUTH_SOCK: ${SSH_AUTH_SOCK_CONTAINER:-}
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - ./.data:/app/.data
+      - ${CODEX_HOST_HOME_PATH_HOST:-/tmp/codex-no-home}:${CODEX_HOST_HOME_PATH:-/host-codex-home}
+      - ${HOST_AGENTS_PATH_HOST:-/tmp/codex-no-agents}:${HOST_AGENTS_CONTAINER_PATH:-/host-codex-home/.agents}:ro
+      - ${SSH_AUTH_SOCK_HOST:-/tmp/codex-no-ssh-agent}:${SSH_AUTH_SOCK_CONTAINER:-/ssh-agent}
+    # For ChatGPT/Codex OAuth reuse, mount an auth.json file and set
+    # CODEX_AUTH_JSON_PATH=/auth/auth.json in .env:
+    #  - ~/.codex/auth.json:/auth/auth.json:ro

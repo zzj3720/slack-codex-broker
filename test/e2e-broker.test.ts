@@ -162,6 +162,7 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "<@UBOT> 开个 session"
     });
     await waitFor(() => mockCodex.turnsStarted.length >= 1, "session bootstrap turn");
+    await waitForSessionIdle(tempRoot, "C123:222.220");
     await broker.stop();
     cleanups.pop();
 
@@ -188,9 +189,18 @@ describe.sequential("slack-codex-broker e2e", () => {
     });
     cleanups.push(() => restarted.stop());
 
-    await waitFor(() => mockCodex.turnsStarted.length >= 2, "recovered batch turn");
-    const recoveredTurn = mockCodex.turnsStarted.at(-1)!;
-    const recoveredText = collectTextInput(recoveredTurn.input);
+    await waitFor(() => {
+      const deliveredTexts = [
+        ...mockCodex.turnsStarted.slice(1).map((turn) => collectTextInput(turn.input)),
+        ...mockCodex.steers.map((steer) => collectTextInput(steer.input))
+      ];
+      return deliveredTexts.some((text) => text.includes("recovered_message_batch_json"));
+    }, "recovered batch turn");
+    const deliveredTexts = [
+      ...mockCodex.turnsStarted.slice(1).map((turn) => collectTextInput(turn.input)),
+      ...mockCodex.steers.map((steer) => collectTextInput(steer.input))
+    ];
+    const recoveredText = deliveredTexts.find((text) => text.includes("recovered_message_batch_json")) ?? "";
     expect(recoveredText).toContain("recovered_message_batch_json");
     expect(recoveredText).toContain("漏掉的第一条");
     expect(recoveredText).toContain("漏掉的第二条");

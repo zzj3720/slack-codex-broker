@@ -363,6 +363,7 @@ export class AppServerClient extends EventEmitter {
         "- Inside a background job script, prefer `node \"$BROKER_JOB_HELPER\" ...` for heartbeat/event/complete/fail/cancel callbacks instead of hand-writing nested curl JSON payloads."
       ].join("\n"),
       "Slack UX preference: do not stay silent for a long stretch if there is a meaningful progress point worth sharing. Use judgment. If you have a concrete update, short plan adjustment, blocker, or partial conclusion that would help the people in the thread, send a brief Slack update. If there is nothing meaningful to say yet, keep working and avoid filler.",
+      "Pause/idle rule: if you decide to stop work for now and there is no running broker-managed background job still watching on your behalf, say that explicitly in Slack. Do not imply that you are still continuing work unless you have already started the next concrete command or successfully registered the background job that will keep monitoring.",
       [
         "Repository workflow contract:",
         `- Keep canonical repository clones under ${this.options.reposRoot}.`,

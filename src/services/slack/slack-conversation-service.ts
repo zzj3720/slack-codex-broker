@@ -28,6 +28,7 @@ import {
   compareIsoTimestamp,
   formatSlackRunFailureMessage,
   isBeforeSlackTs,
+  isRecoverableCodexTurnFailure,
   parseActiveTurnMismatch,
   isMissingActiveTurnSteerError,
   isSlackMessageAfterCursor,
@@ -45,12 +46,15 @@ interface RuntimeSessionState {
   readonly queue: PendingDispatchRequest[];
   processing: boolean;
   generation: number;
+  autoResumeTimer?: NodeJS.Timeout | undefined;
 }
 
 interface PendingDispatchRequest {
   readonly kind: "dispatch_pending";
   readonly recoveryKind?: "socket_ready_missed_messages" | undefined;
 }
+
+const AUTO_RESUME_AFTER_FAILURE_MS = 5_000;
 
 export class SlackConversationService {
   readonly #config: AppConfig;
@@ -106,6 +110,13 @@ export class SlackConversationService {
 
   async stop(): Promise<void> {
     this.#stopActiveTurnReconciler();
+    for (const runtime of this.#runtimeSessions.values()) {
+      if (!runtime.autoResumeTimer) {
+        continue;
+      }
+      clearTimeout(runtime.autoResumeTimer);
+      runtime.autoResumeTimer = undefined;
+    }
   }
 
   isAlreadyHandled(session: SlackSessionRecord, messageTs?: string | undefined): boolean {
@@ -883,6 +894,9 @@ export class SlackConversationService {
           formatSlackRunFailureMessage(error)
         );
         await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
+        if (isRecoverableCodexTurnFailure(error) || isMissingActiveTurnSteerError(error)) {
+          this.#scheduleAutoResume(session.key);
+        }
         break;
       }
     }
@@ -920,6 +934,30 @@ export class SlackConversationService {
     const runtime = this.#getRuntimeSession(sessionKey);
     runtime.generation += 1;
     runtime.processing = false;
+  }
+
+  #scheduleAutoResume(sessionKey: string): void {
+    const runtime = this.#getRuntimeSession(sessionKey);
+    if (runtime.autoResumeTimer) {
+      return;
+    }
+
+    runtime.autoResumeTimer = setTimeout(() => {
+      runtime.autoResumeTimer = undefined;
+      void this.#resumePendingDispatch(sessionKey, {
+        forceReset: true
+      }).catch((error) => {
+        logger.warn("Failed to auto-resume pending Slack dispatch after recoverable turn failure", {
+          sessionKey,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }, AUTO_RESUME_AFTER_FAILURE_MS);
+
+    logger.warn("Scheduled automatic retry for pending Slack dispatch after recoverable turn failure", {
+      sessionKey,
+      delayMs: AUTO_RESUME_AFTER_FAILURE_MS
+    });
   }
 
   async #resumePendingDispatch(sessionKey: string, options?: {

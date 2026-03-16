@@ -512,6 +512,9 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("BROKER_JOB_HELPER")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Pause/idle rule")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("shared_repos_root: /tmp/repos")
     );
     expect(String(threadStartParams?.baseInstructions)).toContain("node \\\"$BROKER_JOB_HELPER\\\" event");

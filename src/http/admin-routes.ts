@@ -377,13 +377,13 @@ function renderAdminPage(options: {
     }
     .list {
       display: grid;
-      gap: 8px;
+      gap: 10px;
       margin-top: 10px;
     }
     .item {
       border: 1px solid var(--line);
       border-radius: 10px;
-      padding: 8px 10px;
+      padding: 10px 12px;
       background: rgba(255,255,255,0.015);
     }
     .item-head {
@@ -471,7 +471,7 @@ function renderAdminPage(options: {
       justify-content: space-between;
       align-items: center;
       gap: 12px;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
     }
     .section-copy {
       color: var(--muted);
@@ -627,13 +627,13 @@ function renderAdminPage(options: {
     .compact-kv {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
+      gap: 10px;
     }
     .compact-stat {
       border: 1px solid var(--line);
       background: rgba(255,255,255,0.012);
       border-radius: 8px;
-      padding: 8px 10px;
+      padding: 10px 12px;
     }
     .compact-stat-label {
       font-size: 11px;
@@ -712,20 +712,21 @@ function renderAdminPage(options: {
     .session-detail-grid {
       display: grid;
       grid-template-columns: 1.3fr 1fr;
-      gap: 10px;
+      gap: 12px;
     }
     .subpanel {
       border: 1px solid var(--line);
       border-radius: 10px;
-      padding: 8px 10px;
+      padding: 12px;
       background: rgba(255,255,255,0.01);
+      display: grid;
+      gap: 10px;
     }
     .subpanel-head {
       display: flex;
       justify-content: space-between;
       gap: 10px;
       align-items: baseline;
-      margin-bottom: 8px;
     }
     .subpanel-title {
       font-size: 13px;
@@ -737,21 +738,64 @@ function renderAdminPage(options: {
     }
     .dense-panels {
       display: grid;
-      grid-template-columns: 1.2fr 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(360px, 1.15fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .auth-file-list {
+      display: grid;
       gap: 10px;
     }
-    .auth-action-list {
+    .auth-file-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      background: rgba(255,255,255,0.012);
+    }
+    .auth-file-main {
       display: grid;
       gap: 8px;
+      min-width: 0;
     }
-    .auth-action-title {
+    .auth-file-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .auth-file-title {
       font-size: 13px;
       font-weight: 650;
     }
-    .auth-action-copy {
+    .auth-file-copy {
       font-size: 11px;
       color: var(--muted);
       line-height: 1.35;
+    }
+    .auth-file-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .auth-file-path {
+      font-size: 12px;
+      line-height: 1.35;
+      color: var(--muted);
+      word-break: break-word;
+    }
+    .auth-file-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
     @media (max-width: 960px) {
       .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 {
@@ -784,6 +828,12 @@ function renderAdminPage(options: {
       }
       .dense-panels {
         grid-template-columns: 1fr;
+      }
+      .auth-file-row {
+        grid-template-columns: 1fr;
+      }
+      .auth-file-actions {
+        justify-content: flex-start;
       }
     }
     @media (max-width: 640px) {
@@ -839,7 +889,7 @@ function renderAdminPage(options: {
         <div class="section-head">
           <div>
             <h2>运行概览</h2>
-            <div class="section-copy">这里放固定信息和访问控制，不单独占三大块。</div>
+            <div class="section-copy">固定状态都压在这里。登录文件直接在条目里看状态和替换，不再拆成第二块重复区域。</div>
           </div>
           <div class="actions">
             <input id="token-input" type="password" placeholder="${options.tokenConfigured ? "管理员令牌" : "当前可留空"}" style="width:220px" />
@@ -859,53 +909,57 @@ function renderAdminPage(options: {
           </div>
           <div class="subpanel">
             <div class="subpanel-head"><div class="subpanel-title">登录文件</div></div>
-            <div id="auth-files-card"></div>
+            <div class="auth-file-list">
+              <div class="auth-file-row">
+                <div class="auth-file-main">
+                  <div class="auth-file-head">
+                    <div class="auth-file-title mono">auth.json</div>
+                    <div id="auth-file-auth-badge"></div>
+                  </div>
+                  <div class="auth-file-copy">切运行账号。支持上传文件或直接粘贴完整 JSON。</div>
+                  <div class="auth-file-meta" id="auth-file-auth-meta"></div>
+                  <div class="auth-file-path mono" id="auth-file-auth-path"></div>
+                </div>
+                <div class="auth-file-actions">
+                  <button id="open-auth-dialog">替换</button>
+                  <div class="badge good">常用</div>
+                </div>
+              </div>
+              <div class="auth-file-row">
+                <div class="auth-file-main">
+                  <div class="auth-file-head">
+                    <div class="auth-file-title mono">.credentials.json</div>
+                    <div id="auth-file-credentials-badge"></div>
+                  </div>
+                  <div class="auth-file-copy">MCP OAuth 凭据。只改这一个文件，不会碰 auth.json。</div>
+                  <div class="auth-file-meta" id="auth-file-credentials-meta"></div>
+                  <div class="auth-file-path mono" id="auth-file-credentials-path"></div>
+                </div>
+                <div class="auth-file-actions">
+                  <button id="open-credentials-dialog" class="secondary">替换</button>
+                  <div class="badge">MCP</div>
+                </div>
+              </div>
+              <div class="auth-file-row">
+                <div class="auth-file-main">
+                  <div class="auth-file-head">
+                    <div class="auth-file-title mono">config.toml</div>
+                    <div id="auth-file-config-badge"></div>
+                  </div>
+                  <div class="auth-file-copy">模型、MCP、运行参数。支持上传文件或直接粘贴文本。</div>
+                  <div class="auth-file-meta" id="auth-file-config-meta"></div>
+                  <div class="auth-file-path mono" id="auth-file-config-path"></div>
+                </div>
+                <div class="auth-file-actions">
+                  <button id="open-config-dialog" class="secondary">替换</button>
+                  <div class="badge">配置</div>
+                </div>
+              </div>
+            </div>
+            <div class="hint">系统会先把被覆盖的旧文件备份到容器数据目录里的 <span class="mono">admin-backups/auth-switches</span>，然后再写入新文件。</div>
+            <div class="status-line" id="replace-status"></div>
           </div>
         </div>
-      </section>
-
-      <section class="card span-12">
-        <div class="section-head">
-          <div>
-            <h2>替换登录态</h2>
-            <div class="section-copy">三个入口都单独替换，默认只做你当前点的那一个。</div>
-          </div>
-          <div class="badge warn">会重启内置 Codex runtime</div>
-        </div>
-        <div class="auth-action-list">
-          <div class="action-card">
-            <div>
-              <div class="auth-action-title mono">auth.json</div>
-              <div class="auth-action-copy">切运行账号。支持上传或粘贴完整 JSON。</div>
-            </div>
-            <div class="actions">
-              <button id="open-auth-dialog">替换</button>
-              <div class="badge good">常用</div>
-            </div>
-          </div>
-          <div class="action-card">
-            <div>
-              <div class="auth-action-title mono">.credentials.json</div>
-              <div class="auth-action-copy">MCP OAuth 凭据。不会碰 auth.json。</div>
-            </div>
-            <div class="actions">
-              <button id="open-credentials-dialog" class="secondary">替换</button>
-              <div class="badge">MCP</div>
-            </div>
-          </div>
-          <div class="action-card">
-            <div>
-              <div class="auth-action-title mono">config.toml</div>
-              <div class="auth-action-copy">模型、MCP、运行参数。支持上传或粘贴文本。</div>
-            </div>
-            <div class="actions">
-              <button id="open-config-dialog" class="secondary">替换</button>
-              <div class="badge">配置</div>
-            </div>
-          </div>
-        </div>
-        <div class="hint">系统会先把被覆盖的旧文件备份到容器数据目录里的 <span class="mono">admin-backups/auth-switches</span>，然后再写入新文件。</div>
-        <div class="status-line" id="replace-status"></div>
       </section>
 
       <section class="card span-12">
@@ -1201,18 +1255,21 @@ function renderAdminPage(options: {
     }
 
     function renderAuthFiles(data) {
-      const panel = document.getElementById("auth-files-card");
       const entries = [
-        ["auth.json", data.authFiles.authJson],
-        [".credentials.json", data.authFiles.credentialsJson],
-        ["config.toml", data.authFiles.configToml]
+        ["auth", data.authFiles.authJson],
+        ["credentials", data.authFiles.credentialsJson],
+        ["config", data.authFiles.configToml]
       ];
-      panel.innerHTML = entries.map(([name, file]) => {
-        const meta = file.exists
-          ? '<div class="meta"><span>大小：' + esc(file.size) + ' bytes</span><span>更新时间：' + esc(fmtTime(file.mtime)) + "</span></div>"
-          : '<div class="meta"><span class="warn">文件不存在</span></div>';
-        return '<div class="item"><div class="item-head"><div class="item-title mono">' + esc(name) + '</div>' + renderBadge(file.exists ? "已就位" : "缺失", file.exists ? "good" : "warn") + '</div>' + meta + '<div class="hint mono">' + esc(file.path) + "</div></div>";
-      }).join("");
+      entries.forEach(([key, file]) => {
+        const badgeNode = document.getElementById("auth-file-" + key + "-badge");
+        const metaNode = document.getElementById("auth-file-" + key + "-meta");
+        const pathNode = document.getElementById("auth-file-" + key + "-path");
+        badgeNode.innerHTML = renderBadge(file.exists ? "已就位" : "缺失", file.exists ? "good" : "warn");
+        metaNode.innerHTML = file.exists
+          ? '<span>大小：' + esc(file.size) + ' bytes</span><span>更新时间：' + esc(fmtTime(file.mtime)) + "</span>"
+          : '<span class="warn">文件不存在</span>';
+        pathNode.textContent = file.path || "—";
+      });
     }
 
     function summarizeSessionLead(session) {

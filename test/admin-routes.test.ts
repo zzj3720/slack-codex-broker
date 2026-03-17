@@ -68,7 +68,7 @@ describe("admin routes", () => {
     });
   });
 
-  it("renders the split auth modals and collapsed session shells in the admin page", async () => {
+  it("renders integrated auth file controls and collapsed session shells in the admin page", async () => {
     const config = loadConfig({
       SLACK_APP_TOKEN: "xapp-test",
       SLACK_BOT_TOKEN: "xoxb-test"
@@ -111,9 +111,8 @@ describe("admin routes", () => {
     expect(html).toContain("open-auth-dialog");
     expect(html).toContain("open-credentials-dialog");
     expect(html).toContain("open-config-dialog");
-    expect(html).toContain("替换 auth.json");
-    expect(html).toContain("替换 .credentials.json");
-    expect(html).toContain("替换 config.toml");
+    expect(html).toContain("登录文件直接在条目里看状态和替换");
+    expect(html).not.toContain("<h2>替换登录态</h2>");
     expect(html).toContain("session-shell");
     expect(html).toContain("session-search");
     expect(html).toContain("高密度视图");

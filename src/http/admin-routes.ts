@@ -156,25 +156,18 @@ function renderAdminPage(options: {
       margin: 0 auto;
       padding: 20px;
     }
-    .topbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: stretch;
-      gap: 18px;
-      margin-bottom: 18px;
-    }
     h1, h2, h3 {
       margin: 0;
       font-weight: 650;
       letter-spacing: -0.02em;
     }
     h1 {
-      font-size: 34px;
-      margin-bottom: 10px;
+      font-size: 22px;
+      margin-bottom: 0;
     }
     h2 {
-      font-size: 18px;
-      margin-bottom: 6px;
+      font-size: 15px;
+      margin-bottom: 4px;
     }
     h3 {
       font-size: 15px;
@@ -204,53 +197,62 @@ function renderAdminPage(options: {
     .span-7 { grid-column: span 7; }
     .span-8 { grid-column: span 8; }
     .span-12 { grid-column: span 12; }
-    .hero {
-      flex: 1 1 auto;
-      background: linear-gradient(135deg, rgba(92, 200, 255, 0.14), rgba(74, 222, 128, 0.06));
-      border: 1px solid var(--line);
-      border-radius: 24px;
-      padding: 22px;
-      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
-    }
-    .hero-meta {
+    .headerbar {
       display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-top: 14px;
-    }
-    .hero-side {
-      width: min(360px, 100%);
-      display: grid;
+      justify-content: space-between;
+      align-items: center;
       gap: 12px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.02));
     }
-    .summary-grid {
+    .header-main {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .header-subtitle {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .header-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .summary-strip {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 14px;
+      gap: 10px;
+      margin-bottom: 12px;
     }
-    .summary-card {
-      background: var(--panel-soft);
+    .summary-pill {
+      background: rgba(255,255,255,0.035);
       border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 14px;
-      min-height: 96px;
+      border-radius: 14px;
+      padding: 10px 12px;
     }
-    .summary-kicker {
+    .summary-pill-label {
       color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 10px;
+      font-size: 11px;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
-    .summary-value {
-      font-size: 28px;
+    .summary-pill-value {
+      font-size: 18px;
       font-weight: 700;
-      letter-spacing: -0.03em;
-      margin-bottom: 6px;
+      line-height: 1.2;
     }
-    .summary-detail {
+    .summary-pill-detail {
       color: var(--muted);
-      font-size: 12px;
-      line-height: 1.5;
+      font-size: 11px;
+      line-height: 1.35;
+      margin-top: 4px;
     }
     .badge {
       display: inline-flex;
@@ -432,12 +434,12 @@ function renderAdminPage(options: {
       justify-content: space-between;
       align-items: center;
       gap: 12px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }
     .section-copy {
       color: var(--muted);
-      font-size: 13px;
-      line-height: 1.5;
+      font-size: 12px;
+      line-height: 1.35;
     }
     .hint {
       margin-top: 8px;
@@ -476,29 +478,14 @@ function renderAdminPage(options: {
       color: var(--muted);
     }
     .action-card {
-      display: grid;
-      gap: 12px;
-      padding: 14px;
-      border-radius: 14px;
-      border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-    }
-    .action-card-head {
       display: flex;
+      align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-    }
-    .action-card-copy {
-      font-size: 13px;
-      color: var(--muted);
-      line-height: 1.55;
-    }
-    .action-card .actions {
-      justify-content: space-between;
-    }
-    .action-card .tiny {
-      line-height: 1.55;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.025);
     }
     .session-shell {
       border: 1px solid var(--line);
@@ -514,16 +501,16 @@ function renderAdminPage(options: {
       list-style: none;
       cursor: pointer;
       display: grid;
-      gap: 10px;
-      padding: 12px 14px;
+      gap: 6px;
+      padding: 9px 12px;
     }
     .session-summary::-webkit-details-marker {
       display: none;
     }
     .session-summary-top {
       display: grid;
-      grid-template-columns: minmax(280px, 2fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(180px, 1.2fr) minmax(220px, 1.2fr);
-      gap: 10px;
+      grid-template-columns: minmax(240px, 2.2fr) minmax(150px, 1fr) minmax(160px, 1fr) minmax(150px, 1fr) minmax(220px, 2fr);
+      gap: 8px;
       align-items: start;
     }
     .session-summary-main {
@@ -646,13 +633,13 @@ function renderAdminPage(options: {
     }
     .session-summary-label {
       color: var(--muted);
-      font-size: 11px;
+      font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
     .session-summary-value {
-      font-size: 13px;
-      line-height: 1.45;
+      font-size: 12px;
+      line-height: 1.3;
       word-break: break-word;
     }
     .session-summary-value.truncate {
@@ -692,7 +679,7 @@ function renderAdminPage(options: {
     .subpanel {
       border: 1px solid var(--line);
       border-radius: 12px;
-      padding: 10px 12px;
+      padding: 8px 10px;
       background: rgba(255,255,255,0.02);
     }
     .subpanel-head {
@@ -710,14 +697,33 @@ function renderAdminPage(options: {
       color: var(--muted);
       font-size: 11px;
     }
+    .dense-panels {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1fr;
+      gap: 10px;
+    }
+    .auth-action-list {
+      display: grid;
+      gap: 8px;
+    }
+    .auth-action-title {
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .auth-action-copy {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
     @media (max-width: 960px) {
       .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 {
         grid-column: span 12;
       }
-      .topbar {
+      .headerbar {
         flex-direction: column;
+        align-items: stretch;
       }
-      .summary-grid {
+      .summary-strip {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
       .inline-grid {
@@ -738,12 +744,15 @@ function renderAdminPage(options: {
       .session-detail-grid {
         grid-template-columns: 1fr;
       }
+      .dense-panels {
+        grid-template-columns: 1fr;
+      }
     }
     @media (max-width: 640px) {
       .wrap {
-        padding: 18px;
+        padding: 12px;
       }
-      .summary-grid {
+      .summary-strip {
         grid-template-columns: 1fr;
       }
     }
@@ -751,139 +760,108 @@ function renderAdminPage(options: {
 </head>
 <body>
   <div class="wrap">
-    <div class="topbar">
-      <div class="hero">
-        <h1>${escapeHtml(options.serviceName)} 控制台</h1>
-        <p>这是给人看的 live 管理页。你可以在这里确认当前服务有没有活着、哪个账号在跑、哪些 thread 卡住了，以及在需要的时候替换容器里的登录态。</p>
-        <div class="hero-meta">
+    <div class="headerbar">
+      <div class="header-main">
+        <h1>${escapeHtml(options.serviceName)} Admin</h1>
+        <div class="header-subtitle">live 状态、账号、session、后台任务、登录态切换都在这里。重点是快速扫一眼，不是看说明书。</div>
+      </div>
+      <div class="header-meta">
           <div class="badge ${options.tokenConfigured ? "good" : "warn"}">${options.tokenConfigured ? "已启用管理员令牌" : "未启用管理员令牌"}</div>
           <div class="badge">每 10 秒自动刷新</div>
           <div class="badge">也可以手动刷新</div>
-        </div>
-      </div>
-      <div class="hero-side">
-        <div class="card">
-          <div class="section-head">
-            <div>
-              <h2>访问控制</h2>
-              <div class="section-copy">如果配置了管理员令牌，这个页面会用它访问 API。</div>
-            </div>
-          </div>
-          <div class="form-grid">
-            <label>
-              管理员令牌
-              <input id="token-input" type="password" placeholder="${options.tokenConfigured ? "访问 API 时必填" : "当前可留空"}" />
-            </label>
-            <div class="actions">
-              <button id="refresh-button" class="secondary">立即刷新</button>
-              <span class="tiny" id="last-refresh">还没有刷新</span>
-            </div>
-            <div class="status-line" id="token-status"></div>
-          </div>
-        </div>
       </div>
     </div>
 
-    <section class="summary-grid">
-      <div class="summary-card">
-        <div class="summary-kicker">服务状态</div>
-        <div class="summary-value" id="summary-service">--</div>
-        <div class="summary-detail" id="summary-service-detail">正在读取服务信息…</div>
+    <section class="summary-strip">
+      <div class="summary-pill">
+        <div class="summary-pill-label">服务</div>
+        <div class="summary-pill-value" id="summary-service">--</div>
+        <div class="summary-pill-detail" id="summary-service-detail">正在读取服务信息…</div>
       </div>
-      <div class="summary-card">
-        <div class="summary-kicker">运行账号</div>
-        <div class="summary-value" id="summary-account">--</div>
-        <div class="summary-detail" id="summary-account-detail">正在读取账号信息…</div>
+      <div class="summary-pill">
+        <div class="summary-pill-label">账号</div>
+        <div class="summary-pill-value" id="summary-account">--</div>
+        <div class="summary-pill-detail" id="summary-account-detail">正在读取账号信息…</div>
       </div>
-      <div class="summary-card">
-        <div class="summary-kicker">会话概况</div>
-        <div class="summary-value" id="summary-sessions">--</div>
-        <div class="summary-detail" id="summary-sessions-detail">正在读取会话状态…</div>
+      <div class="summary-pill">
+        <div class="summary-pill-label">会话</div>
+        <div class="summary-pill-value" id="summary-sessions">--</div>
+        <div class="summary-pill-detail" id="summary-sessions-detail">正在读取会话状态…</div>
       </div>
-      <div class="summary-card">
-        <div class="summary-kicker">关联任务</div>
-        <div class="summary-value" id="summary-jobs">--</div>
-        <div class="summary-detail" id="summary-jobs-detail">正在读取后台任务…</div>
+      <div class="summary-pill">
+        <div class="summary-pill-label">任务</div>
+        <div class="summary-pill-value" id="summary-jobs">--</div>
+        <div class="summary-pill-detail" id="summary-jobs-detail">正在读取后台任务…</div>
       </div>
     </section>
 
     <div class="grid">
-      <section class="card span-4">
+      <section class="card span-12">
         <div class="section-head">
           <div>
-            <h2>服务信息</h2>
-            <div class="section-copy">这些是当前 broker 容器本身的运行信息。</div>
+            <h2>运行概览</h2>
+            <div class="section-copy">这里放固定信息和访问控制，不单独占三大块。</div>
+          </div>
+          <div class="actions">
+            <input id="token-input" type="password" placeholder="${options.tokenConfigured ? "管理员令牌" : "当前可留空"}" style="width:220px" />
+            <button id="refresh-button" class="secondary">刷新</button>
+            <span class="tiny" id="last-refresh">还没有刷新</span>
           </div>
         </div>
-        <dl class="kv" id="service-card"></dl>
-      </section>
-
-      <section class="card span-4">
-        <div class="section-head">
-          <div>
-            <h2>账号信息</h2>
-            <div class="section-copy">这里展示容器里当前 Codex runtime 正在使用的账号。</div>
+        <div class="status-line" id="token-status"></div>
+        <div class="dense-panels" style="margin-top:8px;">
+          <div class="subpanel">
+            <div class="subpanel-head"><div class="subpanel-title">服务</div></div>
+            <div id="service-card"></div>
+          </div>
+          <div class="subpanel">
+            <div class="subpanel-head"><div class="subpanel-title">账号</div></div>
+            <div id="account-card"></div>
+          </div>
+          <div class="subpanel">
+            <div class="subpanel-head"><div class="subpanel-title">登录文件</div></div>
+            <div id="auth-files-card"></div>
           </div>
         </div>
-        <div id="account-card" class="list"></div>
-      </section>
-
-      <section class="card span-4">
-        <div class="section-head">
-          <div>
-            <h2>登录文件</h2>
-            <div class="section-copy">确认 auth 和 MCP 凭据有没有就位。</div>
-          </div>
-        </div>
-        <div id="auth-files-card" class="list"></div>
       </section>
 
       <section class="card span-12">
         <div class="section-head">
           <div>
             <h2>替换登录态</h2>
-            <div class="section-copy">每个文件单独处理。点开对应弹窗，只改你现在要换的那一个文件，不用把一大表单全部展开。</div>
+            <div class="section-copy">三个入口都单独替换，默认只做你当前点的那一个。</div>
           </div>
           <div class="badge warn">会重启内置 Codex runtime</div>
         </div>
-        <div class="triple-grid">
+        <div class="auth-action-list">
           <div class="action-card">
-            <div class="action-card-head">
-              <div>
-                <h3 class="mono">auth.json</h3>
-                <div class="action-card-copy">切运行账号时用这个。支持上传文件，也支持直接粘贴完整 JSON。</div>
-              </div>
+            <div>
+              <div class="auth-action-title mono">auth.json</div>
+              <div class="auth-action-copy">切运行账号。支持上传或粘贴完整 JSON。</div>
+            </div>
+            <div class="actions">
+              <button id="open-auth-dialog">替换</button>
               <div class="badge good">常用</div>
             </div>
-            <div class="actions">
-              <button id="open-auth-dialog">替换 auth.json</button>
-              <span class="tiny">只改这一项</span>
-            </div>
           </div>
           <div class="action-card">
-            <div class="action-card-head">
-              <div>
-                <h3 class="mono">.credentials.json</h3>
-                <div class="action-card-copy">给 Linear、Notion 这类 MCP 的 OAuth 凭据用。不会碰 <span class="mono">auth.json</span>。</div>
-              </div>
+            <div>
+              <div class="auth-action-title mono">.credentials.json</div>
+              <div class="auth-action-copy">MCP OAuth 凭据。不会碰 auth.json。</div>
+            </div>
+            <div class="actions">
+              <button id="open-credentials-dialog" class="secondary">替换</button>
               <div class="badge">MCP</div>
             </div>
-            <div class="actions">
-              <button id="open-credentials-dialog" class="secondary">替换 .credentials.json</button>
-              <span class="tiny">只改这一项</span>
-            </div>
           </div>
           <div class="action-card">
-            <div class="action-card-head">
-              <div>
-                <h3 class="mono">config.toml</h3>
-                <div class="action-card-copy">切模型、MCP 配置或运行参数时用。支持上传或直接粘贴文本。</div>
-              </div>
-              <div class="badge">配置</div>
+            <div>
+              <div class="auth-action-title mono">config.toml</div>
+              <div class="auth-action-copy">模型、MCP、运行参数。支持上传或粘贴文本。</div>
             </div>
             <div class="actions">
-              <button id="open-config-dialog" class="secondary">替换 config.toml</button>
-              <span class="tiny">只改这一项</span>
+              <button id="open-config-dialog" class="secondary">替换</button>
+              <div class="badge">配置</div>
             </div>
           </div>
         </div>

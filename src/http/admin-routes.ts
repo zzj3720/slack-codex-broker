@@ -329,6 +329,10 @@ function renderAdminPage(options: {
       gap: 12px;
       margin-top: 16px;
     }
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
     .checkbox {
       display: flex;
       gap: 8px;
@@ -373,6 +377,11 @@ function renderAdminPage(options: {
       display: grid;
       gap: 10px;
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .triple-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
     .kv {
       display: grid;
@@ -466,6 +475,131 @@ function renderAdminPage(options: {
       font-size: 12px;
       color: var(--muted);
     }
+    .action-card {
+      display: grid;
+      gap: 12px;
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+    }
+    .action-card-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .action-card-copy {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .action-card .actions {
+      justify-content: space-between;
+    }
+    .action-card .tiny {
+      line-height: 1.55;
+    }
+    .session-shell {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.025);
+      overflow: hidden;
+    }
+    .session-shell[open] {
+      border-color: var(--line-strong);
+      background: rgba(255,255,255,0.04);
+    }
+    .session-summary {
+      list-style: none;
+      cursor: pointer;
+      display: grid;
+      gap: 12px;
+      padding: 16px 18px;
+    }
+    .session-summary::-webkit-details-marker {
+      display: none;
+    }
+    .session-summary-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .session-summary-main {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+    .session-summary-title {
+      font-weight: 650;
+      word-break: break-word;
+    }
+    .session-summary-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .session-summary-side {
+      display: grid;
+      gap: 8px;
+      justify-items: end;
+      text-align: right;
+    }
+    .session-counts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .session-body {
+      padding: 0 18px 18px;
+      display: grid;
+      gap: 12px;
+    }
+    .session-divider {
+      height: 1px;
+      background: var(--line);
+    }
+    dialog.admin-modal {
+      border: 0;
+      padding: 0;
+      border-radius: 24px;
+      width: min(760px, calc(100vw - 24px));
+      background: transparent;
+      color: inherit;
+    }
+    dialog.admin-modal::backdrop {
+      background: rgba(3, 10, 18, 0.72);
+      backdrop-filter: blur(6px);
+    }
+    .modal-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 22px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+      display: grid;
+      gap: 16px;
+    }
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .modal-copy {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
     @media (max-width: 960px) {
       .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 {
         grid-column: span 12;
@@ -477,6 +611,9 @@ function renderAdminPage(options: {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
       .inline-grid {
+        grid-template-columns: 1fr;
+      }
+      .triple-grid {
         grid-template-columns: 1fr;
       }
       .kv {
@@ -586,39 +723,53 @@ function renderAdminPage(options: {
         <div class="section-head">
           <div>
             <h2>替换登录态</h2>
-            <div class="section-copy">只会替换你这次真正提供的文件。可以只改 <span class="mono">auth.json</span>，也可以单独改 <span class="mono">.credentials.json</span> 或 <span class="mono">config.toml</span>。</div>
+            <div class="section-copy">每个文件单独处理。点开对应弹窗，只改你现在要换的那一个文件，不用把一大表单全部展开。</div>
           </div>
           <div class="badge warn">会重启内置 Codex runtime</div>
         </div>
-        <div class="form-grid">
-          <div class="inline-grid">
-            <label>
-              auth.json 文件
-              <input id="auth-json-file" type="file" accept=".json,application/json" />
-            </label>
-            <label>
-              .credentials.json（可选）
-              <input id="credentials-json-file" type="file" accept=".json,application/json" />
-            </label>
+        <div class="triple-grid">
+          <div class="action-card">
+            <div class="action-card-head">
+              <div>
+                <h3 class="mono">auth.json</h3>
+                <div class="action-card-copy">切运行账号时用这个。支持上传文件，也支持直接粘贴完整 JSON。</div>
+              </div>
+              <div class="badge good">常用</div>
+            </div>
+            <div class="actions">
+              <button id="open-auth-dialog">替换 auth.json</button>
+              <span class="tiny">只改这一项</span>
+            </div>
           </div>
-          <label>
-            或者直接粘贴 auth.json
-            <textarea id="auth-json-text" placeholder='把完整 auth.json 直接粘贴到这里。这里有内容时，会优先使用这里，不再读取上面的文件。'></textarea>
-          </label>
-          <label>
-            config.toml（可选）
-            <input id="config-toml-file" type="file" accept=".toml,text/plain" />
-          </label>
-          <label class="checkbox">
-            <input id="allow-active" type="checkbox" />
-            即使当前有活跃 session，也允许替换并打断它们
-          </label>
-          <div class="actions">
-            <button id="replace-button">应用这些变更</button>
+          <div class="action-card">
+            <div class="action-card-head">
+              <div>
+                <h3 class="mono">.credentials.json</h3>
+                <div class="action-card-copy">给 Linear、Notion 这类 MCP 的 OAuth 凭据用。不会碰 <span class="mono">auth.json</span>。</div>
+              </div>
+              <div class="badge">MCP</div>
+            </div>
+            <div class="actions">
+              <button id="open-credentials-dialog" class="secondary">替换 .credentials.json</button>
+              <span class="tiny">只改这一项</span>
+            </div>
           </div>
-          <div class="hint">系统会先把被覆盖的旧文件备份到容器数据目录里的 <span class="mono">admin-backups/auth-switches</span>，然后再写入新文件。没填的文件不会动。</div>
-          <div class="status-line" id="replace-status"></div>
+          <div class="action-card">
+            <div class="action-card-head">
+              <div>
+                <h3 class="mono">config.toml</h3>
+                <div class="action-card-copy">切模型、MCP 配置或运行参数时用。支持上传或直接粘贴文本。</div>
+              </div>
+              <div class="badge">配置</div>
+            </div>
+            <div class="actions">
+              <button id="open-config-dialog" class="secondary">替换 config.toml</button>
+              <span class="tiny">只改这一项</span>
+            </div>
+          </div>
         </div>
+        <div class="hint">系统会先把被覆盖的旧文件备份到容器数据目录里的 <span class="mono">admin-backups/auth-switches</span>，然后再写入新文件。</div>
+        <div class="status-line" id="replace-status"></div>
       </section>
 
       <section class="card span-12">
@@ -643,16 +794,112 @@ function renderAdminPage(options: {
     </div>
   </div>
 
+  <dialog id="auth-dialog" class="admin-modal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h2>替换 auth.json</h2>
+          <div class="modal-copy">只改运行账号。你可以上传文件，或者直接粘贴完整的 <span class="mono">auth.json</span>。如果两者都提供，优先使用粘贴内容。</div>
+        </div>
+        <button id="close-auth-dialog" class="secondary" type="button">关闭</button>
+      </div>
+      <div class="stack">
+        <label>
+          auth.json 文件
+          <input id="auth-json-file" type="file" accept=".json,application/json" />
+        </label>
+        <label>
+          或者直接粘贴 auth.json
+          <textarea id="auth-json-text" placeholder='把完整 auth.json 粘贴到这里。'></textarea>
+        </label>
+        <label class="checkbox">
+          <input id="allow-active-auth" type="checkbox" />
+          即使当前有活跃 session，也允许替换并打断它们
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button id="submit-auth-dialog">应用 auth.json</button>
+      </div>
+      <div class="status-line" id="auth-dialog-status"></div>
+    </div>
+  </dialog>
+
+  <dialog id="credentials-dialog" class="admin-modal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h2>替换 .credentials.json</h2>
+          <div class="modal-copy">只改 MCP OAuth 凭据。支持上传文件，也支持直接粘贴完整 JSON。</div>
+        </div>
+        <button id="close-credentials-dialog" class="secondary" type="button">关闭</button>
+      </div>
+      <div class="stack">
+        <label>
+          .credentials.json 文件
+          <input id="credentials-json-file" type="file" accept=".json,application/json" />
+        </label>
+        <label>
+          或者直接粘贴 .credentials.json
+          <textarea id="credentials-json-text" placeholder='把完整 .credentials.json 粘贴到这里。'></textarea>
+        </label>
+        <label class="checkbox">
+          <input id="allow-active-credentials" type="checkbox" />
+          即使当前有活跃 session，也允许替换并打断它们
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button id="submit-credentials-dialog">应用 .credentials.json</button>
+      </div>
+      <div class="status-line" id="credentials-dialog-status"></div>
+    </div>
+  </dialog>
+
+  <dialog id="config-dialog" class="admin-modal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h2>替换 config.toml</h2>
+          <div class="modal-copy">只改运行配置。支持上传文件，也支持直接粘贴完整文本。</div>
+        </div>
+        <button id="close-config-dialog" class="secondary" type="button">关闭</button>
+      </div>
+      <div class="stack">
+        <label>
+          config.toml 文件
+          <input id="config-toml-file" type="file" accept=".toml,text/plain" />
+        </label>
+        <label>
+          或者直接粘贴 config.toml
+          <textarea id="config-toml-text" placeholder='把完整 config.toml 粘贴到这里。'></textarea>
+        </label>
+        <label class="checkbox">
+          <input id="allow-active-config" type="checkbox" />
+          即使当前有活跃 session，也允许替换并打断它们
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button id="submit-config-dialog">应用 config.toml</button>
+      </div>
+      <div class="status-line" id="config-dialog-status"></div>
+    </div>
+  </dialog>
+
   <script>
     const tokenKey = "broker-admin-token";
     const tokenConfigured = ${options.tokenConfigured ? "true" : "false"};
     const tokenInput = document.getElementById("token-input");
     const tokenStatus = document.getElementById("token-status");
     const refreshButton = document.getElementById("refresh-button");
-    const replaceButton = document.getElementById("replace-button");
     const replaceStatus = document.getElementById("replace-status");
     const lastRefresh = document.getElementById("last-refresh");
     const authJsonText = document.getElementById("auth-json-text");
+    const credentialsJsonText = document.getElementById("credentials-json-text");
+    const configTomlText = document.getElementById("config-toml-text");
+    const dialogs = [
+      ["auth-dialog", "open-auth-dialog", "close-auth-dialog"],
+      ["credentials-dialog", "open-credentials-dialog", "close-credentials-dialog"],
+      ["config-dialog", "open-config-dialog", "close-config-dialog"]
+    ];
 
     tokenInput.value = localStorage.getItem(tokenKey) || "";
 
@@ -835,16 +1082,33 @@ function renderAdminPage(options: {
                   .join("")
               : '<div class="hint" style="margin-top:12px;">没有待处理消息。</div>';
             return (
-            '<div class="item">' +
-              '<div class="item-head"><div class="item-title mono">' + esc(session.key || "—") + '</div>' + turnBadge + '</div>' +
-              '<div class="meta"><span>最近更新：' + esc(fmtTime(session.updatedAt)) + '</span><span>最近 Slack 回复：' + esc(fmtTime(session.lastSlackReplyAt)) + '</span></div>' +
-              '<div class="meta"><span>待处理消息：' + esc(session.openInboundCount || 0) + '</span><span>关联任务：' + esc(session.backgroundJobCount || 0) + '</span>' +
-              (session.activeTurnId ? '<span>turn：<span class="mono">' + esc(session.activeTurnId) + '</span></span>' : "") +
+            '<details class="session-shell">' +
+              '<summary class="session-summary">' +
+                '<div class="session-summary-top">' +
+                  '<div class="session-summary-main">' +
+                    '<div class="session-summary-title mono">' + esc(session.key || "—") + '</div>' +
+                    '<div class="session-summary-meta"><span>最近更新：' + esc(fmtTime(session.updatedAt)) + '</span><span>最近 Slack 回复：' + esc(fmtTime(session.lastSlackReplyAt)) + "</span></div>" +
+                  '</div>' +
+                  '<div class="session-summary-side">' +
+                    turnBadge +
+                    '<div class="tiny">点开查看消息和任务</div>' +
+                  '</div>' +
+                '</div>' +
+                '<div class="session-counts">' +
+                  renderBadge("待处理 " + esc(session.openInboundCount || 0), Number(session.openInboundCount || 0) > 0 ? "warn" : "") +
+                  renderBadge("任务 " + esc(session.backgroundJobCount || 0), Number(session.backgroundJobCount || 0) > 0 ? "good" : "") +
+                  (session.activeTurnId ? renderBadge("turn 已占用", "good") : renderBadge("当前空闲", "warn")) +
+                '</div>' +
+              '</summary>' +
+              '<div class="session-body">' +
+                '<div class="session-divider"></div>' +
+                '<div class="meta"><span>工作目录：<span class="mono">' + esc(session.workspacePath || "—") + '</span></span>' +
+                (session.activeTurnId ? '<span>turn：<span class="mono">' + esc(session.activeTurnId) + '</span></span>' : "") +
+                '</div>' +
+                inboundSection +
+                jobsSection +
               '</div>' +
-              '<div class="hint mono">' + esc(session.workspacePath || "—") + '</div>' +
-              inboundSection +
-              jobsSection +
-            "</div>"
+            "</details>"
             );
           }).join("")
         );
@@ -889,6 +1153,75 @@ function renderAdminPage(options: {
       return await file.text();
     }
 
+    function bindDialog(dialogId, openId, closeId) {
+      const dialog = document.getElementById(dialogId);
+      document.getElementById(openId).addEventListener("click", () => {
+        if (typeof dialog.showModal === "function") {
+          dialog.showModal();
+        }
+      });
+      document.getElementById(closeId).addEventListener("click", () => dialog.close());
+      dialog.addEventListener("click", (event) => {
+        const rect = dialog.getBoundingClientRect();
+        const inside =
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom;
+        if (!inside) {
+          dialog.close();
+        }
+      });
+    }
+
+    async function replaceSingleFile(options) {
+      const button = document.getElementById(options.buttonId);
+      const statusNode = document.getElementById(options.statusId);
+      const dialog = document.getElementById(options.dialogId);
+      button.disabled = true;
+      statusNode.textContent = "正在写入新文件，并重启容器里的 Codex runtime…";
+      replaceStatus.textContent = "";
+      try {
+        const pastedValue = options.textareaId ? document.getElementById(options.textareaId).value.trim() : "";
+        const fileValue = options.fileInputId ? await readOptionalFile(options.fileInputId) : undefined;
+        const content = pastedValue || fileValue;
+        if (!content) {
+          throw new Error("请先提供要替换的文件内容。");
+        }
+        const payload = {
+          auth_json_content: undefined,
+          credentials_json_content: undefined,
+          config_toml_content: undefined,
+          allow_active: document.getElementById(options.allowActiveId).checked
+        };
+        payload[options.payloadKey] = content;
+        const response = await fetch("/admin/api/replace-auth", {
+          method: "POST",
+          headers: authHeaders({
+            "content-type": "application/json"
+          }),
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || "替换失败");
+        }
+        statusNode.innerHTML = '<span class="good">' + esc(options.successMessage) + "</span>";
+        replaceStatus.innerHTML = '<span class="good">' + esc(options.successMessage) + "</span>";
+        render(result.status);
+        lastRefresh.textContent = "上次刷新：" + new Date().toLocaleTimeString();
+        if (typeof dialog.close === "function") {
+          dialog.close();
+        }
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        statusNode.innerHTML = '<span class="danger">' + esc(message) + "</span>";
+        replaceStatus.innerHTML = '<span class="danger">' + esc(message) + "</span>";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     async function refresh() {
       refreshButton.disabled = true;
       try {
@@ -908,41 +1241,46 @@ function renderAdminPage(options: {
     }
 
     refreshButton.addEventListener("click", refresh);
+    dialogs.forEach(([dialogId, openId, closeId]) => bindDialog(dialogId, openId, closeId));
 
-    replaceButton.addEventListener("click", async () => {
-        replaceButton.disabled = true;
-      replaceStatus.textContent = "正在写入新文件，并重启容器里的 Codex runtime…";
-      try {
-        const pastedAuthJson = authJsonText.value.trim();
-        const authJsonContent = pastedAuthJson || await readOptionalFile("auth-json-file");
-        const credentialsJsonContent = await readOptionalFile("credentials-json-file");
-        const configTomlContent = await readOptionalFile("config-toml-file");
-        if (!authJsonContent && !credentialsJsonContent && !configTomlContent) {
-          throw new Error("至少要提供一个文件内容：auth.json、.credentials.json 或 config.toml");
-        }
-        const response = await fetch("/admin/api/replace-auth", {
-          method: "POST",
-          headers: authHeaders({
-            "content-type": "application/json"
-          }),
-          body: JSON.stringify({
-            auth_json_content: authJsonContent,
-            credentials_json_content: credentialsJsonContent,
-            config_toml_content: configTomlContent,
-            allow_active: document.getElementById("allow-active").checked
-          })
-        });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "登录态替换失败");
-        replaceStatus.innerHTML = '<span class="good">登录态已替换完成。</span> 内置 Codex runtime 已重启。';
-        render(payload.status);
-        lastRefresh.textContent = "上次刷新：" + new Date().toLocaleTimeString();
-      } catch (error) {
-        replaceStatus.innerHTML = '<span class="danger">' + esc(error && error.message ? error.message : String(error)) + "</span>";
-      } finally {
-        replaceButton.disabled = false;
-      }
-    });
+    document.getElementById("submit-auth-dialog").addEventListener("click", () =>
+      replaceSingleFile({
+        dialogId: "auth-dialog",
+        buttonId: "submit-auth-dialog",
+        statusId: "auth-dialog-status",
+        textareaId: "auth-json-text",
+        fileInputId: "auth-json-file",
+        allowActiveId: "allow-active-auth",
+        payloadKey: "auth_json_content",
+        successMessage: "auth.json 已替换完成，内置 Codex runtime 已重启。"
+      })
+    );
+
+    document.getElementById("submit-credentials-dialog").addEventListener("click", () =>
+      replaceSingleFile({
+        dialogId: "credentials-dialog",
+        buttonId: "submit-credentials-dialog",
+        statusId: "credentials-dialog-status",
+        textareaId: "credentials-json-text",
+        fileInputId: "credentials-json-file",
+        allowActiveId: "allow-active-credentials",
+        payloadKey: "credentials_json_content",
+        successMessage: ".credentials.json 已替换完成，内置 Codex runtime 已重启。"
+      })
+    );
+
+    document.getElementById("submit-config-dialog").addEventListener("click", () =>
+      replaceSingleFile({
+        dialogId: "config-dialog",
+        buttonId: "submit-config-dialog",
+        statusId: "config-dialog-status",
+        textareaId: "config-toml-text",
+        fileInputId: "config-toml-file",
+        allowActiveId: "allow-active-config",
+        payloadKey: "config_toml_content",
+        successMessage: "config.toml 已替换完成，内置 Codex runtime 已重启。"
+      })
+    );
 
     refresh();
     setInterval(refresh, 10000);

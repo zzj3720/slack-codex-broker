@@ -56,6 +56,13 @@ export interface ReadTurnResultOptions {
   readonly treatMissingAsStale?: boolean | undefined;
 }
 
+export interface AppServerAccountSummary {
+  readonly account?: JsonValue | undefined;
+  readonly quota?: JsonValue | undefined;
+  readonly usage?: JsonValue | undefined;
+  readonly requiresOpenaiAuth?: boolean | undefined;
+}
+
 export class AppServerClient extends EventEmitter {
   #socket: WebSocket | undefined;
   #requestCounter = 0;
@@ -167,6 +174,22 @@ export class AppServerClient extends EventEmitter {
       type: "apiKey",
       apiKey: this.options.openAiApiKey
     });
+  }
+
+  async readAccountSummary(refreshToken = false): Promise<AppServerAccountSummary> {
+    const response = await this.request("account/read", { refreshToken }) as {
+      account?: JsonValue;
+      quota?: JsonValue;
+      usage?: JsonValue;
+      requiresOpenaiAuth?: boolean;
+    };
+
+    return {
+      account: response.account,
+      quota: response.quota,
+      usage: response.usage,
+      requiresOpenaiAuth: response.requiresOpenaiAuth
+    };
   }
 
   async ensureThread(session: {

@@ -6,6 +6,10 @@ function parseArgs(argv) {
   let containerName = "slack-codex-broker-real";
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
+    if (argument === "--") {
+      continue;
+    }
+
     if (argument === "--container") {
       containerName = argv[index + 1];
       index += 1;
@@ -28,4 +32,3 @@ function parseArgs(argv) {
 const options = parseArgs(process.argv.slice(2));
 const summary = await checkContainer(options.containerName);
 console.log(JSON.stringify(summary, null, 2));
-

@@ -31,6 +31,7 @@ describe("loadConfig", () => {
     expect(config.logRawSlackEvents).toBe(true);
     expect(config.logRawCodexRpc).toBe(true);
     expect(config.logRawHttpRequests).toBe(true);
+    expect(config.brokerAdminToken).toBeUndefined();
   });
 
   it("rejects invalid numeric values", () => {
@@ -77,5 +78,15 @@ describe("loadConfig", () => {
     expect(config.logRawSlackEvents).toBe(false);
     expect(config.logRawCodexRpc).toBe(false);
     expect(config.logRawHttpRequests).toBe(true);
+  });
+
+  it("loads an optional broker admin token", () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      BROKER_ADMIN_TOKEN: "secret-admin-token"
+    } as NodeJS.ProcessEnv);
+
+    expect(config.brokerAdminToken).toBe("secret-admin-token");
   });
 });

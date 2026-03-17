@@ -2,6 +2,7 @@ import { AppServerClient } from "./app-server-client.js";
 import { AppServerProcess } from "./app-server-process.js";
 import type { SlackSessionRecord, SlackUserIdentity } from "../../types.js";
 import type {
+  AppServerAccountSummary,
   CodexInputItem,
   ReadTurnResultOptions,
   ReadTurnResult,
@@ -135,6 +136,17 @@ export class CodexBroker {
     }
 
     return await this.#withRecovery(() => this.#client.readTurnResult(session.codexThreadId!, turnId, options));
+  }
+
+  async readAccountSummary(refreshToken = false): Promise<AppServerAccountSummary> {
+    return await this.#withRecovery(() => this.#client.readAccountSummary(refreshToken));
+  }
+
+  async restartRuntime(reason = "admin runtime restart"): Promise<void> {
+    await this.#connectClient({
+      restartProcess: true,
+      reason
+    });
   }
 
   #createClient(url: string): AppServerClient {

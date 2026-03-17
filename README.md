@@ -147,6 +147,16 @@ pnpm ops:ui:real
 `ops:ui:real` starts a local-only admin page on `127.0.0.1` so you can inspect sessions/account state and upload a replacement `auth.json` without using CLI flags directly.
 `ops:resume:real` manually re-queues a stuck Slack session that still has pending inbound backlog but no active Codex turn. Use it as an operator fallback while debugging a broken thread.
 
+The broker service itself now also exposes an in-container admin page:
+
+```text
+GET /admin
+GET /admin/api/status
+POST /admin/api/replace-auth
+```
+
+If `BROKER_ADMIN_TOKEN` is set, `/admin/api/*` requires that token via either the UI token field, `x-admin-token`, or `Authorization: Bearer ...`. If it is unset, the admin API is still enabled, so only expose the broker port in environments you trust.
+
 The container image:
 
 - uses Node 22

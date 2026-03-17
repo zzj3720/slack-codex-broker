@@ -27,6 +27,10 @@ function parseArgs(argv) {
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
+    if (argument === "--") {
+      continue;
+    }
+
     switch (argument) {
       case "--container":
         options.containerName = argv[index + 1];
@@ -160,4 +164,3 @@ try {
 } finally {
   await cleanup();
 }
-

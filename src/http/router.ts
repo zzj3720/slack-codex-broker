@@ -2,12 +2,15 @@ import http from "node:http";
 import { URL } from "node:url";
 
 import type { AppConfig } from "../config.js";
+import type { AdminService } from "../services/admin-service.js";
 import type { JobManager } from "../services/job-manager.js";
 import type { SlackCodexBridge } from "../services/slack/slack-codex-bridge.js";
+import { handleAdminRequest } from "./admin-routes.js";
 import { handleJobRequest } from "./job-routes.js";
 import { handleSlackRequest } from "./slack-routes.js";
 
 export function createHttpHandler(options: {
+  readonly adminService: AdminService;
   readonly bridge: SlackCodexBridge;
   readonly jobManager: JobManager;
   readonly config: AppConfig;
@@ -21,6 +24,7 @@ async function handleHttpRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   options: {
+    readonly adminService: AdminService;
     readonly bridge: SlackCodexBridge;
     readonly jobManager: JobManager;
     readonly config: AppConfig;
@@ -34,6 +38,10 @@ async function handleHttpRequest(
   }
 
   if (await handleJobRequest(method, url, request, response, options)) {
+    return;
+  }
+
+  if (await handleAdminRequest(method, url, request, response, options)) {
     return;
   }
 

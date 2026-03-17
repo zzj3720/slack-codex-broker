@@ -24,6 +24,7 @@ export interface AppConfig {
   readonly port: number;
   readonly brokerHttpBaseUrl: string;
   readonly serviceName: string;
+  readonly brokerAdminToken?: string | undefined;
   readonly logDir: string;
   readonly logLevel: "debug" | "info" | "warn" | "error";
   readonly logRawSlackEvents: boolean;
@@ -140,6 +141,7 @@ export function loadConfig(env = process.env): AppConfig {
     port,
     brokerHttpBaseUrl: env.BROKER_HTTP_BASE_URL ?? `http://127.0.0.1:${port}`,
     serviceName: env.SERVICE_NAME ?? "slack-codex-broker",
+    brokerAdminToken: getOptional(env, "BROKER_ADMIN_TOKEN"),
     logDir,
     logLevel: getLogLevel(env, "LOG_LEVEL", "info"),
     logRawSlackEvents: getBoolean(env, "LOG_RAW_SLACK_EVENTS", true),

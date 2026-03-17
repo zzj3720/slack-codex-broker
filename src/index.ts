@@ -3,6 +3,7 @@ import http from "node:http";
 import { loadConfig } from "./config.js";
 import { createHttpHandler } from "./http/router.js";
 import { configureLogger, logger } from "./logger.js";
+import { AdminService } from "./services/admin-service.js";
 import { CodexBroker } from "./services/codex/codex-broker.js";
 import { JobManager } from "./services/job-manager.js";
 import { SessionManager } from "./services/session-manager.js";
@@ -12,6 +13,7 @@ import { StateStore } from "./store/state-store.js";
 export async function startService(): Promise<{
   readonly stop: () => Promise<void>;
 }> {
+  const startedAt = new Date();
   const config = loadConfig();
   configureLogger({
     logDir: config.logDir,
@@ -51,8 +53,15 @@ export async function startService(): Promise<{
       await bridge.acceptBackgroundJobEvent(event);
     }
   });
+  const adminService = new AdminService({
+    config,
+    sessions: sessionManager,
+    codex: codexBroker,
+    startedAt
+  });
   const server = http.createServer(
     createHttpHandler({
+      adminService,
       bridge,
       jobManager,
       config

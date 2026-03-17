@@ -283,6 +283,8 @@ export class AdminService {
       readonly jobs: readonly PersistedBackgroundJob[];
     }
   ): Record<string, unknown> {
+    const runningBackgroundJobCount = related.jobs.filter((job) => job.status === "running").length;
+    const failedBackgroundJobCount = related.jobs.filter((job) => job.status === "failed").length;
     return {
       key: session.key,
       channelId: session.channelId,
@@ -297,6 +299,8 @@ export class AdminService {
       openInboundCount: related.inbound.length,
       openInbound: related.inbound.slice(0, 5).map((message) => this.#summarizeInbound(message)),
       backgroundJobCount: related.jobs.length,
+      runningBackgroundJobCount,
+      failedBackgroundJobCount,
       backgroundJobs: related.jobs.slice(0, 5).map((job) => this.#summarizeJob(job))
     };
   }

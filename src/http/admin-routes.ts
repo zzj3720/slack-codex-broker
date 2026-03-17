@@ -776,7 +776,7 @@ function renderAdminPage(options: {
         <div class="section-head">
           <div>
             <h2>会话状态</h2>
-            <div class="section-copy">每条 session 会同时展示自己的待处理消息和关联后台任务，不再拆成两块分开看。</div>
+            <div class="section-copy">每条 session 先给你一个紧凑摘要：当前是否在跑、还挂着多少待处理消息、后台任务是运行中多少个 / 总共多少个。点开再看细节。</div>
           </div>
         </div>
         <div id="sessions-panel" class="list"></div>
@@ -1055,9 +1055,12 @@ function renderAdminPage(options: {
             const jobs = session.backgroundJobs || [];
             const inbound = session.openInbound || [];
             const isActive = Boolean(session.activeTurnId);
+            const runningJobs = Number(session.runningBackgroundJobCount || 0);
+            const totalJobs = Number(session.backgroundJobCount || 0);
+            const failedJobs = Number(session.failedBackgroundJobCount || 0);
             const turnBadge = isActive ? renderBadge("active", "good") : renderBadge("idle", "warn");
             const jobsSection = jobs.length
-              ? '<div class="hint" style="margin-top:12px;"><strong>关联后台任务</strong></div>' +
+              ? '<div class="hint" style="margin-top:12px;"><strong>关联后台任务</strong> · 运行中 ' + esc(runningJobs) + ' / 总计 ' + esc(totalJobs) + (failedJobs > 0 ? ' / 失败 ' + esc(failedJobs) : "") + '</div>' +
                 jobs
                   .map((job) =>
                     '<div class="item" style="margin-top:8px;">' +
@@ -1067,7 +1070,8 @@ function renderAdminPage(options: {
                       (job.error ? '<div class="item-text danger">' + esc(job.error) + '</div>' : "") +
                     '</div>'
                   )
-                  .join("")
+                  .join("") +
+                (totalJobs > jobs.length ? '<div class="hint" style="margin-top:8px;">这里只显示最近 ' + esc(jobs.length) + ' 条，历史任务总数是 ' + esc(totalJobs) + '。</div>' : "")
               : '<div class="hint" style="margin-top:12px;">没有关联后台任务。</div>';
             const inboundSection = inbound.length
               ? '<div class="hint" style="margin-top:12px;"><strong>待处理消息</strong></div>' +
@@ -1096,7 +1100,9 @@ function renderAdminPage(options: {
                 '</div>' +
                 '<div class="session-counts">' +
                   renderBadge("待处理 " + esc(session.openInboundCount || 0), Number(session.openInboundCount || 0) > 0 ? "warn" : "") +
-                  renderBadge("任务 " + esc(session.backgroundJobCount || 0), Number(session.backgroundJobCount || 0) > 0 ? "good" : "") +
+                  renderBadge("运行中任务 " + esc(runningJobs), runningJobs > 0 ? "good" : "") +
+                  renderBadge("总任务 " + esc(totalJobs), totalJobs > 0 ? "warn" : "") +
+                  (failedJobs > 0 ? renderBadge("失败 " + esc(failedJobs), "danger") : "") +
                   (session.activeTurnId ? renderBadge("turn 已占用", "good") : renderBadge("当前空闲", "warn")) +
                 '</div>' +
               '</summary>' +

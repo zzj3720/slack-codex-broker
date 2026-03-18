@@ -524,6 +524,15 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("/slack/post-state")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("silent block state")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Do not send one plain Slack reply and then a second state-only reply")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Do not prefix the message body with tags like [final], [block], or [wait]")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("Do not emit repeated wait updates for routine watcher ticks")
     );
     expect(threadStartParams?.baseInstructions).toEqual(

@@ -622,6 +622,63 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(mockSlack.postedMessages).toHaveLength(postedMessageCountAfterIdle);
   }, 60_000);
 
+  it("does not wake a silent block turn that already recorded its blocker", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const brokerPort = await getFreePort();
+    const brokerBaseUrl = `http://127.0.0.1:${brokerPort}`;
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    let turnCount = 0;
+    const mockCodex = new MockCodexAppServer({
+      onTurnStart: async () => {
+        turnCount += 1;
+        if (turnCount === 1) {
+          await postJson(`${brokerBaseUrl}/slack/post-state`, {
+            channel_id: "C123",
+            thread_ts: "779.220",
+            kind: "block",
+            reason: "waiting for user approval"
+          });
+        }
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: brokerPort,
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-session", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "779.220",
+      ts: "779.221",
+      text: "<@UBOT> 这步先停住"
+    });
+
+    await waitForSessionIdle(tempRoot, "C123:779.220");
+    const postedMessageCountAfterIdle = mockSlack.postedMessages.length;
+    await delay(1_000);
+    expect(turnCount).toBe(1);
+    expect(mockSlack.postedMessages).toHaveLength(postedMessageCountAfterIdle);
+  }, 60_000);
+
   it("does not recover the broker's own Slack messages as inbound work", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {

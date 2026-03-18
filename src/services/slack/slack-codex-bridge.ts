@@ -139,7 +139,7 @@ export class SlackCodexBridge {
   async postSlackState(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;
-    readonly kind: "wait";
+    readonly kind: "wait" | "block";
     readonly reason: string;
   }): Promise<void> {
     await this.#conversations.postSlackState(options);

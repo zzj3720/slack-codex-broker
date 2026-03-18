@@ -281,11 +281,11 @@ async function handleSlackPostStateRequest(
     return;
   }
 
-  if (kind !== "wait") {
+  if (kind !== "wait" && kind !== "block") {
     respondJson(response, 400, {
       ok: false,
       error: "invalid_kind",
-      allowed: ["wait"]
+      allowed: ["wait", "block"]
     });
     return;
   }
@@ -303,7 +303,7 @@ async function handleSlackPostStateRequest(
     await options.bridge.postSlackState({
       channelId,
       rootThreadTs,
-      kind: "wait",
+      kind: kind as "wait" | "block",
       reason
     });
     respondJson(response, 200, { ok: true });

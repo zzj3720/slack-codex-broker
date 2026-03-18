@@ -335,7 +335,7 @@ export class SlackConversationService {
   async postSlackState(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;
-    readonly kind: "wait";
+    readonly kind: "wait" | "block";
     readonly reason: string;
   }): Promise<void> {
     const session = this.#sessions.getSession(options.channelId, options.rootThreadTs);

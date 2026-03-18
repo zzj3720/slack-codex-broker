@@ -527,6 +527,9 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("silent block state")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("silent final state")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("Do not send one plain Slack reply and then a second state-only reply")
     );
     expect(threadStartParams?.baseInstructions).toEqual(

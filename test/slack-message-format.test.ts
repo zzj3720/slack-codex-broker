@@ -263,6 +263,7 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("\"summary\": \"CI turned green.\"");
     expect(result).toContain("Most watcher events do not need a Slack reply.");
     expect(result).toContain("/slack/post-state");
+    expect(result).toContain("silent final state");
     expect(result).not.toContain("\"sender\":");
   });
 
@@ -291,6 +292,7 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("kind=wait");
     expect(result).toContain("/slack/post-state");
     expect(result).toContain("silent block state");
+    expect(result).toContain("silent final state");
     expect(result).toContain("Do not send a normal Slack reply and then a second '[block]' or '[wait]' line");
   });
 });

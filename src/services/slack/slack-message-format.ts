@@ -121,6 +121,7 @@ function formatBackgroundJobEventForCodex(message: SlackInputMessage): string {
     "A broker-managed background job reported a new asynchronous event for this session.",
     "Decide whether it materially changes the work, requires a reply in Slack, or needs no action.",
     "Most watcher events do not need a Slack reply. If this is only routine monitoring noise or an unchanged waiting state, keep waiting silently.",
+    "If this async event only confirms a completion you already told the Slack thread about, record a silent final state through /slack/post-state instead of posting another completion message.",
     "If you need to record that you are still intentionally waiting without speaking in Slack, use the broker's /slack/post-state wait API instead of posting another wait message.",
     "background_job_event_json:",
     "```json",
@@ -145,6 +146,7 @@ function formatUnexpectedTurnStopForCodex(message: SlackInputMessage): string {
   return [
     "The previous run for this Slack thread appears to have stopped unexpectedly.",
     "If the work is actually complete, send a short final Slack update now.",
+    "If the thread already has a clear completion update from you and you only need to settle broker state, record a silent final state through /slack/post-state instead of sending another completion message.",
     "If you are intentionally blocked on user input, approval, credentials, or any other human/external dependency, send a Slack update with kind=block and a concrete blocker.",
     "If your visible Slack reply already explains the blocker, record a silent block state through /slack/post-state instead of sending a second state-only Slack message.",
     "If you are intentionally waiting on a broker-managed async job that is already running and will wake this session later, you may either send a Slack update with kind=wait or record a silent wait state through /slack/post-state.",

@@ -108,6 +108,8 @@ export interface PersistedBackgroundJob {
   readonly exitCode?: number | undefined;
   readonly error?: string | undefined;
   readonly lastEventAt?: string | undefined;
+  readonly lastEventKind?: string | undefined;
+  readonly lastEventSummary?: string | undefined;
 }
 
 export interface SlackInputMessage {

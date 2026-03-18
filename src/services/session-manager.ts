@@ -74,7 +74,7 @@ export class SessionManager {
   }
 
   async updateSession(record: SlackSessionRecord): Promise<void> {
-    await this.#stateStore.upsertSession({
+    await this.#stateStore.patchSession(record.key, {
       ...record,
       updatedAt: new Date().toISOString()
     });
@@ -85,26 +85,18 @@ export class SessionManager {
     rootThreadTs: string,
     codexThreadId: string | undefined
   ): Promise<SlackSessionRecord> {
-    const session = this.#requireSession(channelId, rootThreadTs);
-    const next: SlackSessionRecord = {
-      ...session,
+    return await this.#patchSession(channelId, rootThreadTs, {
       codexThreadId
-    };
-    await this.updateSession(next);
-    return next;
+    });
   }
 
   async setActiveTurnId(channelId: string, rootThreadTs: string, activeTurnId: string | undefined): Promise<SlackSessionRecord> {
-    const session = this.#requireSession(channelId, rootThreadTs);
     const now = new Date().toISOString();
-    const next: SlackSessionRecord = {
-      ...session,
+    return await this.#patchSession(channelId, rootThreadTs, {
       activeTurnId,
       activeTurnStartedAt: activeTurnId ? now : undefined,
-      lastProgressReminderAt: activeTurnId ? undefined : undefined
-    };
-    await this.updateSession(next);
-    return next;
+      lastProgressReminderAt: undefined
+    });
   }
 
   async setLastObservedMessageTs(
@@ -112,13 +104,9 @@ export class SessionManager {
     rootThreadTs: string,
     lastObservedMessageTs: string | undefined
   ): Promise<SlackSessionRecord> {
-    const session = this.#requireSession(channelId, rootThreadTs);
-    const next: SlackSessionRecord = {
-      ...session,
+    return await this.#patchSession(channelId, rootThreadTs, {
       lastObservedMessageTs
-    };
-    await this.updateSession(next);
-    return next;
+    });
   }
 
   async setLastDeliveredMessageTs(
@@ -126,13 +114,9 @@ export class SessionManager {
     rootThreadTs: string,
     lastDeliveredMessageTs: string | undefined
   ): Promise<SlackSessionRecord> {
-    const session = this.#requireSession(channelId, rootThreadTs);
-    const next: SlackSessionRecord = {
-      ...session,
+    return await this.#patchSession(channelId, rootThreadTs, {
       lastDeliveredMessageTs
-    };
-    await this.updateSession(next);
-    return next;
+    });
   }
 
   async setLastSlackReplyAt(
@@ -140,13 +124,9 @@ export class SessionManager {
     rootThreadTs: string,
     lastSlackReplyAt: string | undefined
   ): Promise<SlackSessionRecord> {
-    const session = this.#requireSession(channelId, rootThreadTs);
-    const next: SlackSessionRecord = {
-      ...session,
+    return await this.#patchSession(channelId, rootThreadTs, {
       lastSlackReplyAt
-    };
-    await this.updateSession(next);
-    return next;
+    });
   }
 
   async setLastProgressReminderAt(
@@ -154,13 +134,9 @@ export class SessionManager {
     rootThreadTs: string,
     lastProgressReminderAt: string | undefined
   ): Promise<SlackSessionRecord> {
-    const session = this.#requireSession(channelId, rootThreadTs);
-    const next: SlackSessionRecord = {
-      ...session,
+    return await this.#patchSession(channelId, rootThreadTs, {
       lastProgressReminderAt
-    };
-    await this.updateSession(next);
-    return next;
+    });
   }
 
   async recordTurnSignal(
@@ -173,16 +149,12 @@ export class SessionManager {
       readonly occurredAt?: string | undefined;
     }
   ): Promise<SlackSessionRecord> {
-    const session = this.#requireSession(channelId, rootThreadTs);
-    const next: SlackSessionRecord = {
-      ...session,
+    return await this.#patchSession(channelId, rootThreadTs, {
       lastTurnSignalTurnId: signal.turnId,
       lastTurnSignalKind: signal.kind,
       lastTurnSignalReason: signal.reason?.trim() || undefined,
       lastTurnSignalAt: signal.occurredAt ?? new Date().toISOString()
-    };
-    await this.updateSession(next);
-    return next;
+    });
   }
 
   getInboundMessage(channelId: string, rootThreadTs: string, messageTs: string): PersistedInboundMessage | undefined {
@@ -285,5 +257,17 @@ export class SessionManager {
       `${channelId}-${rootThreadTs}`.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
       "workspace"
     );
+  }
+
+  async #patchSession(
+    channelId: string,
+    rootThreadTs: string,
+    patch: Partial<SlackSessionRecord>
+  ): Promise<SlackSessionRecord> {
+    const session = this.#requireSession(channelId, rootThreadTs);
+    return await this.#stateStore.patchSession(session.key, {
+      ...patch,
+      updatedAt: new Date().toISOString()
+    });
   }
 }

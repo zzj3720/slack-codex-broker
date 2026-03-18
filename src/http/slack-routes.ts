@@ -281,16 +281,16 @@ async function handleSlackPostStateRequest(
     return;
   }
 
-  if (kind !== "wait" && kind !== "block") {
+  if (kind !== "wait" && kind !== "block" && kind !== "final") {
     respondJson(response, 400, {
       ok: false,
       error: "invalid_kind",
-      allowed: ["wait", "block"]
+      allowed: ["wait", "block", "final"]
     });
     return;
   }
 
-  if (!reason) {
+  if ((kind === "wait" || kind === "block") && !reason) {
     respondJson(response, 400, {
       ok: false,
       error: "missing_reason",
@@ -303,7 +303,7 @@ async function handleSlackPostStateRequest(
     await options.bridge.postSlackState({
       channelId,
       rootThreadTs,
-      kind: kind as "wait" | "block",
+      kind: kind as "wait" | "block" | "final",
       reason
     });
     respondJson(response, 200, { ok: true });

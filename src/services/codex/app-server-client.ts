@@ -344,6 +344,11 @@ export class AppServerClient extends EventEmitter {
       kind: "wait",
       reason: "replace with what you are waiting for"
     });
+    const finalStatePayload = JSON.stringify({
+      channel_id: session.channelId,
+      thread_ts: session.rootThreadTs,
+      kind: "final"
+    });
     const blockStatePayload = JSON.stringify({
       channel_id: session.channelId,
       thread_ts: session.rootThreadTs,
@@ -392,6 +397,7 @@ export class AppServerClient extends EventEmitter {
         "Slack broker API usage for this session:",
         `- Send text with: curl -sS -X POST ${this.options.brokerHttpBaseUrl}/slack/post-message -H 'content-type: application/json' -d '${messagePayload}'`,
         "- When sending a terminal Slack state, set kind to final, block, or wait. For block/wait, include a short reason field.",
+        `- Record a silent final state without posting another Slack message with: curl -sS -X POST ${this.options.brokerHttpBaseUrl}/slack/post-state -H 'content-type: application/json' -d '${finalStatePayload}'`,
         `- Record a silent wait state without posting to Slack with: curl -sS -X POST ${this.options.brokerHttpBaseUrl}/slack/post-state -H 'content-type: application/json' -d '${waitStatePayload}'`,
         `- Record a silent block state without posting a second Slack message with: curl -sS -X POST ${this.options.brokerHttpBaseUrl}/slack/post-state -H 'content-type: application/json' -d '${blockStatePayload}'`,
         `- Upload a local image or file with: curl -sS -X POST ${this.options.brokerHttpBaseUrl}/slack/post-file -H 'content-type: application/json' -d '${filePayload}'`,
@@ -405,6 +411,7 @@ export class AppServerClient extends EventEmitter {
       [
         "Turn stopping contract:",
         "- If the work is done, send a Slack update with kind=final.",
+        "- If the thread already has a clear completion update from you and you only need to settle broker state, record a silent final state through /slack/post-state instead of posting another completion message.",
         "- If you are blocked and need user input, approval, credentials, or any other human/external intervention, send a Slack update with kind=block and include a concrete reason.",
         "- If your visible Slack reply already explains the blocker in human language, record a silent block state through /slack/post-state instead of sending a second '[block]' line.",
         "- If you are intentionally waiting because a broker-managed async job is already running and will wake this session later, either send a visible Slack update with kind=wait or record a silent wait state with /slack/post-state.",

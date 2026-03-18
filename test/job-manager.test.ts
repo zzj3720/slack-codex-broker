@@ -106,4 +106,64 @@ describe("JobManager", () => {
       restartOnBoot: true
     });
   });
+
+  it("suppresses stale job events after the session already recorded final", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const jobsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-jobs-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));
+    const reposRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-repos-"));
+    const store = new StateStore(stateDir, sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore: store,
+      sessionsRoot
+    });
+    await sessions.load();
+    const session = await sessions.ensureSession("C123", "333.444");
+    await fs.mkdir(session.workspacePath, { recursive: true });
+
+    const seenEvents: Array<{ payload: { summary: string; jobId: string; eventKind: string } }> = [];
+    const jobs = new JobManager({
+      sessions,
+      jobsRoot,
+      reposRoot,
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      onEvent: async (event) => {
+        seenEvents.push({
+          payload: {
+            summary: event.payload.summary,
+            jobId: event.payload.jobId,
+            eventKind: event.payload.eventKind
+          }
+        });
+      }
+    });
+
+    const job = await jobs.registerJob({
+      channelId: "C123",
+      rootThreadTs: "333.444",
+      kind: "watch_ci",
+      script: "#!/usr/bin/env bash\nsleep 30"
+    });
+
+    await sessions.recordTurnSignal("C123", "333.444", {
+      turnId: "turn-final",
+      kind: "final",
+      occurredAt: new Date(Date.now() + 1_000).toISOString()
+    });
+
+    await jobs.emitJobEvent(job.id, job.token, {
+      eventKind: "state_changed",
+      summary: "already merged"
+    });
+
+    expect(seenEvents).toEqual([]);
+    expect(sessions.getBackgroundJob(job.id)).toMatchObject({
+      id: job.id,
+      status: "cancelled",
+      lastEventKind: "state_changed",
+      lastEventSummary: "already merged"
+    });
+
+    await jobs.stop();
+  });
 });

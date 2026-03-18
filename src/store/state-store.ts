@@ -55,11 +55,45 @@ export class StateStore {
   }
 
   async upsertSession(record: SlackSessionRecord): Promise<void> {
-    this.#sessions.set(record.key, record);
+    const normalized = this.#normalizeSession(record);
+    this.#sessions.set(normalized.key, normalized);
     await this.#writeJsonAtomic(
-      path.join(this.#sessionsDirPath, `${encodeKey(record.key)}.json`),
-      record
+      path.join(this.#sessionsDirPath, `${encodeKey(normalized.key)}.json`),
+      normalized
     );
+  }
+
+  async patchSession(
+    key: string,
+    patch:
+      | Partial<SlackSessionRecord>
+      | ((current: SlackSessionRecord) => Partial<SlackSessionRecord>)
+  ): Promise<SlackSessionRecord> {
+    const filePath = path.join(this.#sessionsDirPath, `${encodeKey(key)}.json`);
+    let updated!: SlackSessionRecord;
+
+    await this.#runSerialized(filePath, async () => {
+      const current = this.#sessions.get(key);
+      if (!current) {
+        throw new Error(`Unknown session: ${key}`);
+      }
+
+      const resolvedPatch = typeof patch === "function" ? patch(current) : patch;
+      updated = this.#normalizeSession({
+        ...current,
+        ...resolvedPatch,
+        key: current.key,
+        channelId: current.channelId,
+        rootThreadTs: current.rootThreadTs,
+        workspacePath: resolvedPatch.workspacePath ?? current.workspacePath,
+        createdAt: current.createdAt
+      });
+
+      this.#sessions.set(key, updated);
+      await this.#writeJsonAtomicUnlocked(filePath, updated);
+    });
+
+    return updated;
   }
 
   hasProcessedEvent(eventId: string): boolean {
@@ -287,24 +321,37 @@ export class StateStore {
   }
 
   async #writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-    const previous = this.#writeChains.get(filePath) ?? Promise.resolve();
+    await this.#runSerialized(filePath, async () => {
+      await this.#writeJsonAtomicUnlocked(filePath, value);
+    });
+  }
+
+  async #writeJsonAtomicUnlocked(filePath: string, value: unknown): Promise<void> {
+    await ensureDir(path.dirname(filePath));
+    const tempFilePath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+    await fs.writeFile(tempFilePath, JSON.stringify(value, null, 2));
+    await fs.rename(tempFilePath, filePath);
+  }
+
+  async #runSerialized<T>(key: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.#writeChains.get(key) ?? Promise.resolve();
+    let result!: T;
     const next = previous
       .catch(() => {})
       .then(async () => {
-        await ensureDir(path.dirname(filePath));
-        const tempFilePath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-        await fs.writeFile(tempFilePath, JSON.stringify(value, null, 2));
-        await fs.rename(tempFilePath, filePath);
+        result = await action();
       });
 
-    this.#writeChains.set(filePath, next);
+    this.#writeChains.set(key, next);
     try {
       await next;
     } finally {
-      if (this.#writeChains.get(filePath) === next) {
-        this.#writeChains.delete(filePath);
+      if (this.#writeChains.get(key) === next) {
+        this.#writeChains.delete(key);
       }
     }
+
+    return result;
   }
 
   async #readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
@@ -442,7 +489,9 @@ export class StateStore {
       cancelledAt: raw.cancelledAt,
       exitCode: raw.exitCode,
       error: raw.error,
-      lastEventAt: raw.lastEventAt
+      lastEventAt: raw.lastEventAt,
+      lastEventKind: raw.lastEventKind,
+      lastEventSummary: raw.lastEventSummary
     };
   }
 }

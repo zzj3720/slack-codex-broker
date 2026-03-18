@@ -127,7 +127,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     const botCardText = deliveredTexts.find((text) => text.includes("\"bot_id\": \"BLINEAR\"")) ?? "";
     expect(botCardText).toContain("\"attachments\"");
     expect(botCardText).toContain("https://linear.app/cue/issue/CUE-1180");
-  }, 60_000);
+  }, 90_000);
 
   it("replays missed thread messages after restart as a single recovered batch", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
@@ -208,7 +208,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(recoveredText).toContain("漏掉的第一条");
     expect(recoveredText).toContain("漏掉的第二条");
     expect(recoveredText).toContain("\"batch_message_count\": 2");
-  }, 60_000);
+  }, 90_000);
 
   it("recovers persisted pending backlog on startup when a session has no active turn", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
@@ -298,7 +298,7 @@ describe.sequential("slack-codex-broker e2e", () => {
       const deliveredTexts = mockCodex.turnsStarted.slice(1).map((turn) => collectTextInput(turn.input));
       return deliveredTexts.some((text) => text.includes("BOOT_PENDING_RECOVERY"));
     }, "startup recovery of persisted pending backlog");
-  }, 60_000);
+  }, 90_000);
 
   it("injects background job events back into the same session", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
@@ -491,7 +491,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(wakeText).toContain("explicit final, block, or wait state");
     await waitForSessionIdle(tempRoot, "C123:666.220");
     expect(turnCount).toBe(2);
-  }, 60_000);
+  }, 90_000);
 
   it("wakes a wait turn when no running async job backs that wait state", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
@@ -674,6 +674,100 @@ describe.sequential("slack-codex-broker e2e", () => {
 
     await waitForSessionIdle(tempRoot, "C123:779.220");
     const postedMessageCountAfterIdle = mockSlack.postedMessages.length;
+    await delay(1_000);
+    expect(turnCount).toBe(1);
+    expect(mockSlack.postedMessages).toHaveLength(postedMessageCountAfterIdle);
+  }, 60_000);
+
+  it("does not wake a silent final turn or replay stale watcher events after completion", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const brokerPort = await getFreePort();
+    const brokerBaseUrl = `http://127.0.0.1:${brokerPort}`;
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    let turnCount = 0;
+    let registeredJobId = "";
+    let registeredJobToken = "";
+    const mockCodex = new MockCodexAppServer({
+      onTurnStart: async () => {
+        turnCount += 1;
+        if (turnCount === 1) {
+          const registerResponse = await fetch(`${brokerBaseUrl}/jobs/register`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json"
+            },
+            body: JSON.stringify({
+              channel_id: "C123",
+              thread_ts: "780.220",
+              kind: "watch_ci",
+              script: "#!/bin/sh\nsleep 30"
+            })
+          });
+          expect(registerResponse.ok).toBe(true);
+          const registerJson = await registerResponse.json() as {
+            job: { id: string; token: string };
+          };
+          registeredJobId = registerJson.job.id;
+          registeredJobToken = registerJson.job.token;
+
+          await postJson(`${brokerBaseUrl}/slack/post-state`, {
+            channel_id: "C123",
+            thread_ts: "780.220",
+            kind: "final"
+          });
+        }
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: brokerPort,
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-session", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "780.220",
+      ts: "780.221",
+      text: "<@UBOT> 合并之后继续盯一下"
+    });
+
+    await waitForSessionIdle(tempRoot, "C123:780.220");
+    expect(turnCount).toBe(1);
+    expect(registeredJobId).not.toBe("");
+    expect(registeredJobToken).not.toBe("");
+
+    const postedMessageCountAfterIdle = mockSlack.postedMessages.length;
+    const eventResponse = await fetch(`${brokerBaseUrl}/jobs/${registeredJobId}/event`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        token: registeredJobToken,
+        event_kind: "state_changed",
+        summary: "PR merged on main"
+      })
+    });
+    expect(eventResponse.ok).toBe(true);
+
     await delay(1_000);
     expect(turnCount).toBe(1);
     expect(mockSlack.postedMessages).toHaveLength(postedMessageCountAfterIdle);

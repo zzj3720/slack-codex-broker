@@ -261,6 +261,23 @@ export class SlackConversationService {
       throw new Error(`Unknown session for background job event: ${options.channelId}:${options.rootThreadTs}`);
     }
 
+    if (
+      session.lastTurnSignalKind === "final" &&
+      session.lastTurnSignalAt &&
+      options.payload.jobId
+    ) {
+      const job = this.#sessions.getBackgroundJob(options.payload.jobId);
+      if (job && compareIsoTimestamp(job.createdAt, session.lastTurnSignalAt) <= 0) {
+        logger.info("Ignoring stale background job event after session was finalized", {
+          sessionKey: session.key,
+          jobId: job.id,
+          eventKind: options.payload.eventKind,
+          summary: options.payload.summary
+        });
+        return;
+      }
+    }
+
     await this.acceptInboundMessage(session, {
       source: "background_job_event",
       channelId: session.channelId,
@@ -335,8 +352,8 @@ export class SlackConversationService {
   async postSlackState(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;
-    readonly kind: "wait" | "block";
-    readonly reason: string;
+    readonly kind: "wait" | "block" | "final";
+    readonly reason?: string | undefined;
   }): Promise<void> {
     const session = this.#sessions.getSession(options.channelId, options.rootThreadTs);
     if (!session) {

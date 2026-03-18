@@ -149,4 +149,34 @@ describe("SessionManager", () => {
       sessionKey: "C123:111.222"
     });
   });
+
+  it("does not restore a stale active turn when turn state and turn signal write concurrently", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));
+    const store = new StateStore(stateDir, sessionsRoot);
+    const manager = new SessionManager({
+      stateStore: store,
+      sessionsRoot
+    });
+
+    await manager.load();
+    await manager.ensureSession("C123", "444.555");
+    await manager.setActiveTurnId("C123", "444.555", "turn-1");
+
+    await Promise.all([
+      manager.recordTurnSignal("C123", "444.555", {
+        turnId: "turn-1",
+        kind: "final",
+        occurredAt: "2026-03-18T10:00:00.000Z"
+      }),
+      manager.setActiveTurnId("C123", "444.555", undefined)
+    ]);
+
+    expect(manager.getSession("C123", "444.555")).toMatchObject({
+      activeTurnId: undefined,
+      lastTurnSignalTurnId: "turn-1",
+      lastTurnSignalKind: "final",
+      lastTurnSignalAt: "2026-03-18T10:00:00.000Z"
+    });
+  });
 });

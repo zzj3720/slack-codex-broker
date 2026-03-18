@@ -145,8 +145,18 @@ export class JobManager {
     const job = this.#authorizeJob(id, token);
     const updated = await this.#persistJob({
       ...job,
-      lastEventAt: new Date().toISOString()
+      lastEventAt: new Date().toISOString(),
+      lastEventKind: payload.eventKind,
+      lastEventSummary: payload.summary.trim()
     });
+
+    if (this.#shouldSuppressEventForFinalizedSession(updated)) {
+      await this.cancelJob(updated.id, undefined, {
+        skipTokenCheck: true,
+        skipEvent: true
+      });
+      return this.#requireJob(updated.id);
+    }
 
     await this.#emitEvent(updated, {
       jobId: updated.id,
@@ -174,10 +184,12 @@ export class JobManager {
     const updated = await this.#persistJob({
       ...job,
       status: "completed",
-      completedAt: now
+      completedAt: now,
+      lastEventKind: payload?.summary?.trim() ? "job_completed" : job.lastEventKind,
+      lastEventSummary: payload?.summary?.trim() || job.lastEventSummary
     });
 
-    if (payload?.summary?.trim()) {
+    if (payload?.summary?.trim() && !this.#shouldSuppressEventForFinalizedSession(updated)) {
       await this.#emitEvent(updated, {
         jobId: updated.id,
         jobKind: updated.kind,
@@ -465,6 +477,15 @@ export class JobManager {
 
     return job;
   }
+
+  #shouldSuppressEventForFinalizedSession(job: PersistedBackgroundJob): boolean {
+    const session = this.#sessions.getSession(job.channelId, job.rootThreadTs);
+    if (!session || session.lastTurnSignalKind !== "final" || !session.lastTurnSignalAt) {
+      return false;
+    }
+
+    return isIsoOnOrBefore(job.createdAt, session.lastTurnSignalAt);
+  }
 }
 
 function normalizeScript(script: string, shell: string): string {
@@ -522,4 +543,8 @@ async function waitForChildExit(
 
     child.once("exit", onExit);
   });
+}
+
+function isIsoOnOrBefore(left: string, right: string): boolean {
+  return Date.parse(left) <= Date.parse(right);
 }

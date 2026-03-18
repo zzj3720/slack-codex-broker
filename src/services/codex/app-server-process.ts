@@ -52,7 +52,8 @@ export class AppServerProcess {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       CODEX_HOME: this.#codexHome,
-      HOME: this.#runtimeHome
+      HOME: this.#runtimeHome,
+      TEMPAD_LINK_SERVICE_URL: process.env.TEMPAD_LINK_SERVICE_URL || "http://host.docker.internal:4318"
     };
 
     if (this.#openAiApiKey) {

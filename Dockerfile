@@ -28,7 +28,7 @@ FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl git gh openssh-client ripgrep \
+  && apt-get install -y --no-install-recommends ca-certificates curl git gh openssh-client python3 ripgrep \
   && mkdir -p /root/.ssh \
   && chmod 700 /root/.ssh \
   && printf 'Host github.com\n  StrictHostKeyChecking accept-new\n' > /root/.ssh/config \

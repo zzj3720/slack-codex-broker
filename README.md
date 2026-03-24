@@ -135,15 +135,16 @@ pnpm ops:status:real
 pnpm ops:auth:real status
 pnpm ops:auth:profiles bootstrap
 pnpm ops:auth:profiles status
-pnpm ops:auth:profiles copy host-to-docker
-pnpm ops:auth:profiles copy docker-to-host
+pnpm ops:auth:profiles list
+pnpm ops:auth:profiles import-host --name backup-account
+pnpm ops:auth:profiles use backup-account
 pnpm ops:ui:real
 ```
 
 `ops:rollout:real` reuses the current `slack-codex-broker-real` container's env vars and bind mounts, refuses to restart while active turns exist unless you pass `--allow-active`, rebuilds the image, recreates the container, and then runs the fixed post-update checks. Each rollout also writes sanitized metadata plus pre-rollout logs under `.backups/rollouts/`.
 `ops:status:real` prints a structured runtime snapshot for the live container, including health, active sessions, open inbound messages, background jobs, and recent broker logs. Use `--open-inbound-limit` and `--log-lines` to tune output volume.
 `ops:auth:real status` prints the live container's Codex auth files, runtime account identity, any quota/usage fields exposed by `account/read`, plus the current session state snapshot.
-`ops:auth:profiles` manages a local auth-profile directory under the live data root and keeps both the host and docker `auth.json` files wired to it. Use `bootstrap` once, then `copy host-to-docker` or `copy docker-to-host` when you want to swap.
+`ops:auth:profiles` manages a local auth-profile directory under the live data root. The host auth is kept as a reference copy, while the docker auth points at a selectable `active` profile. Use `bootstrap` once, then `import-host --name <profile>` or `import --name <profile> --from <path>` to add more docker-side auth profiles, and `use <profile>` to switch the live container.
 `ops:ui:real` starts a local-only admin page on `127.0.0.1` so you can inspect sessions/account state and upload a replacement `auth.json` without using CLI flags directly.
 `ops:resume:real` manually re-queues a stuck Slack session that still has pending inbound backlog but no active Codex turn. Use it as an operator fallback while debugging a broken thread.
 

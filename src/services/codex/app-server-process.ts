@@ -456,15 +456,41 @@ async function reclaimPortListeners(port: number, excludedPids: readonly (number
 async function listListeningPortPids(port: number): Promise<number[]> {
   try {
     const output = await runCommandCapture("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]);
-    return [...new Set(
-      output
-        .split(/\s+/)
-        .map((value) => Number.parseInt(value, 10))
-        .filter((value) => Number.isInteger(value) && value > 0)
-    )];
+    return parsePidList(output);
   } catch {
-    return [];
+    try {
+      const output = await runCommandCapture("ps", ["-axo", "pid=,command="]);
+      return parseCodexAppServerPidsFromPsOutput(output, port);
+    } catch {
+      return [];
+    }
   }
+}
+
+function parsePidList(output: string): number[] {
+  return [...new Set(
+    output
+      .split(/\s+/)
+      .map((value) => Number.parseInt(value, 10))
+      .filter((value) => Number.isInteger(value) && value > 0)
+  )];
+}
+
+function parseCodexAppServerPidsFromPsOutput(output: string, port: number): number[] {
+  const listenPatterns = [
+    `app-server --listen ws://127.0.0.1:${port}`,
+    `app-server --listen ws://localhost:${port}`
+  ];
+
+  return [...new Set(
+    output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => listenPatterns.some((pattern) => line.includes(pattern)))
+      .map((line) => Number.parseInt(line.split(/\s+/, 2)[0] ?? "", 10))
+      .filter((value) => Number.isInteger(value) && value > 0)
+  )];
 }
 
 async function runCommandCapture(command: string, args: string[]): Promise<string> {

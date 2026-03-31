@@ -84,11 +84,23 @@ export async function startService(): Promise<{
     })
   );
 
-  await new Promise<void>((resolve) => {
-    server.listen(config.port, resolve);
-  });
-  await bridge.start();
-  await jobManager.start();
+  try {
+    await bridge.start();
+    await jobManager.start();
+    await new Promise<void>((resolve, reject) => {
+      server.listen(config.port, () => resolve());
+      server.once("error", reject);
+    });
+  } catch (error) {
+    await jobManager.stop().catch(() => {});
+    await bridge.stop().catch(() => {});
+    if (server.listening) {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+    throw error;
+  }
 
   logger.info("Service booted", {
     port: config.port,
@@ -118,5 +130,5 @@ startService().catch((error: unknown) => {
   logger.error("Fatal startup error", {
     error: error instanceof Error ? error.message : String(error)
   });
-  process.exitCode = 1;
+  process.exit(1);
 });

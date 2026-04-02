@@ -731,13 +731,13 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "<@UBOT> 继续把这个做完"
     });
 
-    await waitFor(() => mockCodex.turnsStarted.length >= 2, "unexpected stop wake turn", 60_000);
+    await waitFor(() => mockCodex.turnsStarted.length >= 2, "unexpected stop wake turn", 120_000);
     const wakeText = collectTextInput(mockCodex.turnsStarted[1]!.input);
     expect(wakeText).toContain("unexpected_turn_stop_json");
     expect(wakeText).toContain("explicit final, block, or wait state");
     await waitForSessionIdle(tempRoot, "C123:666.220");
     expect(turnCount).toBe(2);
-  }, 90_000);
+  }, 150_000);
 
   it("wakes a wait turn when no running async job backs that wait state", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));

@@ -381,6 +381,8 @@ Optional fields:
 - `snippet_type`
 - `content_type`
 
+`initial_comment` accepts normal Markdown/markdownish input and is converted to Slack `mrkdwn` before upload completion.
+
 ## Slack Recovery API
 
 The broker also exposes a local-only operator endpoint for manually resuming a stuck session:

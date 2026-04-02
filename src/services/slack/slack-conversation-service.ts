@@ -438,7 +438,9 @@ export class SlackConversationService {
       filename,
       bytes,
       title: options.title?.trim() || undefined,
-      initialComment: options.initialComment?.trim() || undefined,
+      initialComment: options.initialComment
+        ? markdownishToMrkdwn(options.initialComment.trim())
+        : undefined,
       altText: options.altText?.trim() || undefined,
       snippetType: options.snippetType?.trim() || undefined,
       contentType: options.contentType?.trim() || undefined

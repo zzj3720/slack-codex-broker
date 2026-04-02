@@ -105,4 +105,44 @@ describe("SlackConversationService", () => {
 
     await service.stop();
   });
+
+  it("converts file upload initial comments from markdownish to mrkdwn", async () => {
+    const codex = new EventEmitter();
+    const uploadThreadFile = vi.fn(async () => ({
+      fileId: "F123"
+    }));
+    const setLastSlackReplyAt = vi.fn(async () => TEST_SESSION);
+
+    const service = new SlackConversationService({
+      config: TEST_CONFIG,
+      sessions: {
+        setLastSlackReplyAt
+      } as never,
+      codex: codex as never,
+      slackApi: {
+        uploadThreadFile,
+        setAssistantThreadStatus: vi.fn(),
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {} as never
+    });
+
+    await service.postSlackFile({
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      contentBase64: Buffer.from("hello world").toString("base64"),
+      filename: "report.txt",
+      initialComment: "## Summary\n- **done**\n- [docs](https://example.com)"
+    });
+
+    expect(uploadThreadFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialComment: "*Summary*\n• *done*\n• <https://example.com|docs>"
+      })
+    );
+    expect(setLastSlackReplyAt).toHaveBeenCalledTimes(1);
+
+    await service.stop();
+  });
 });

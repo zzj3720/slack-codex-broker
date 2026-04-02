@@ -46,6 +46,7 @@ import { SlackInboundStore } from "./slack-inbound-store.js";
 import {
   formatSlackHistoryContextForCodex
 } from "./slack-message-format.js";
+import { markdownishToMrkdwn } from "./slack-mrkdwn.js";
 import { SlackSelfMessageFilter } from "./slack-self-filter.js";
 import { SlackTurnReconciler } from "./slack-turn-reconciler.js";
 import { SlackTurnRunner } from "./slack-turn-runner.js";
@@ -353,9 +354,11 @@ export class SlackConversationService {
     readonly kind?: SlackTurnSignalKind | undefined;
     readonly reason?: string | undefined;
   }): Promise<void> {
-    const chunks = chunkSlackMessage(options.text);
+    const formattedText = markdownishToMrkdwn(options.text);
+    const chunks = chunkSlackMessage(formattedText);
     for (const [index, chunk] of chunks.entries()) {
       await this.#postBotThreadMessage(options.channelId, options.rootThreadTs, chunk, {
+        alreadyFormatted: true,
         turnSignal:
           index === 0 && options.kind
             ? {
@@ -435,7 +438,9 @@ export class SlackConversationService {
       filename,
       bytes,
       title: options.title?.trim() || undefined,
-      initialComment: options.initialComment?.trim() || undefined,
+      initialComment: options.initialComment
+        ? markdownishToMrkdwn(options.initialComment.trim())
+        : undefined,
       altText: options.altText?.trim() || undefined,
       snippetType: options.snippetType?.trim() || undefined,
       contentType: options.contentType?.trim() || undefined
@@ -713,6 +718,7 @@ export class SlackConversationService {
     rootThreadTs: string,
     text: string,
     options?: {
+      readonly alreadyFormatted?: boolean | undefined;
       readonly turnSignal?: {
         readonly kind: SlackTurnSignalKind;
         readonly reason?: string | undefined;
@@ -720,7 +726,8 @@ export class SlackConversationService {
     }
   ): Promise<string | undefined> {
     this.#clearAssistantStatus(channelId, rootThreadTs);
-    const ts = await this.#slackApi.postThreadMessage(channelId, rootThreadTs, text);
+    const formattedText = options?.alreadyFormatted ? text : markdownishToMrkdwn(text);
+    const ts = await this.#slackApi.postThreadMessage(channelId, rootThreadTs, formattedText);
     if (ts) {
       this.#selfMessageFilter.rememberPostedMessageTs(ts);
       const occurredAt = new Date().toISOString();

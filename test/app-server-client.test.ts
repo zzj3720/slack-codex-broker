@@ -647,6 +647,12 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("BROKER_JOB_HELPER")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Write normal Markdown in the `text` field")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("the broker converts markdownish output to `mrkdwn` before posting")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("The main Codex runtime for this Slack broker does not load the linear or notion MCPs directly")
     );
     expect(threadStartParams?.baseInstructions).toEqual(

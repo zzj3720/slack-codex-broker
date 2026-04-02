@@ -358,6 +358,8 @@ curl -sS -X POST http://127.0.0.1:3000/slack/post-message \
   -d '{"channel_id":"C123","thread_ts":"111.222","text":"working on it"}'
 ```
 
+`text` accepts normal Markdown/markdownish input. The broker converts it to Slack `mrkdwn` before posting.
+
 ### Upload a local image or file
 
 ```bash
@@ -378,6 +380,8 @@ Optional fields:
 - `alt_text`
 - `snippet_type`
 - `content_type`
+
+`initial_comment` accepts normal Markdown/markdownish input and is converted to Slack `mrkdwn` before upload completion.
 
 ## Slack Recovery API
 

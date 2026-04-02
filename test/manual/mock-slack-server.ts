@@ -10,6 +10,20 @@ export interface PostedMessage {
   readonly ts: string;
 }
 
+export interface AssistantStatusUpdate {
+  readonly channel: string;
+  readonly threadTs: string;
+  readonly status: string;
+  readonly loadingMessages?: string | undefined;
+}
+
+export interface ReactionOperation {
+  readonly action: "add" | "remove";
+  readonly channel: string;
+  readonly timestamp: string;
+  readonly name: string;
+}
+
 export interface MockThreadMessage {
   readonly channel: string;
   readonly threadTs: string;
@@ -31,6 +45,9 @@ export class MockSlackServer {
   #socket: WebSocket | undefined;
   #nextTs = 9_000_000_000;
   readonly postedMessages: PostedMessage[] = [];
+  readonly assistantStatusUpdates: AssistantStatusUpdate[] = [];
+  readonly reactionOperations: ReactionOperation[] = [];
+  readonly #activeReactions = new Set<string>();
   readonly #users = new Map<string, {
     readonly id: string;
     readonly name: string;
@@ -72,6 +89,7 @@ export class MockSlackServer {
     private readonly options?: {
       readonly botId?: string;
       readonly appId?: string;
+      readonly assistantStatusError?: string;
     }
   ) {
     this.#server = http.createServer((request, response) => {
@@ -243,6 +261,71 @@ export class MockSlackServer {
       return;
     }
 
+    if (request.url === "/api/assistant.threads.setStatus") {
+      if (this.options?.assistantStatusError) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            ok: false,
+            error: this.options.assistantStatusError
+          })
+        );
+        return;
+      }
+
+      this.assistantStatusUpdates.push({
+        channel: String(body.channel_id),
+        threadTs: String(body.thread_ts),
+        status: String(body.status ?? ""),
+        loadingMessages:
+          typeof body.loading_messages === "string" && body.loading_messages.length > 0
+            ? body.loading_messages
+            : undefined
+      });
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    if (request.url === "/api/reactions.add") {
+      const reactionKey = getReactionKey(
+        String(body.channel),
+        String(body.timestamp),
+        String(body.name)
+      );
+      this.reactionOperations.push({
+        action: "add",
+        channel: String(body.channel),
+        timestamp: String(body.timestamp),
+        name: String(body.name)
+      });
+      this.#activeReactions.add(reactionKey);
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    if (request.url === "/api/reactions.remove") {
+      const reactionKey = getReactionKey(
+        String(body.channel),
+        String(body.timestamp),
+        String(body.name)
+      );
+      this.reactionOperations.push({
+        action: "remove",
+        channel: String(body.channel),
+        timestamp: String(body.timestamp),
+        name: String(body.name)
+      });
+      this.#activeReactions.delete(reactionKey);
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
     if (request.url === "/api/users.info") {
       const user = this.#users.get(String(body.user));
 
@@ -336,4 +419,8 @@ async function readRequestBody(request: http.IncomingMessage): Promise<Record<st
 
 function getThreadKey(channel: string, threadTs: string): string {
   return `${channel}:${threadTs}`;
+}
+
+function getReactionKey(channel: string, timestamp: string, name: string): string {
+  return `${channel}:${timestamp}:${name}`;
 }

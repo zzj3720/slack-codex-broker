@@ -18,6 +18,7 @@ import {
   SlackApi,
   type SlackUploadedFile
 } from "./slack-api.js";
+import { SlackAssistantStatusController } from "./slack-assistant-status.js";
 import {
   createSlackInputFromThreadMessage,
   isSlackMessageEffectivelyEmpty,
@@ -74,6 +75,7 @@ export class SlackConversationService {
   readonly #slackApi: SlackApi;
   readonly #selfMessageFilter: SlackSelfMessageFilter;
   readonly #runtimeSessions = new Map<string, RuntimeSessionState>();
+  readonly #statusControllers = new Map<string, SlackAssistantStatusController>();
   readonly #inboundStore: SlackInboundStore;
   readonly #turnRunner: SlackTurnRunner;
   readonly #turnReconciler: SlackTurnReconciler;
@@ -108,6 +110,9 @@ export class SlackConversationService {
       turnRunner: this.#turnRunner,
       inboundStore: this.#inboundStore
     });
+    options.codex.on("notification", (method: string, params: Record<string, unknown> | undefined) => {
+      this.#handleCodexNotification(method, params ?? {});
+    });
   }
 
   setBotUserId(botUserId: string): void {
@@ -130,6 +135,9 @@ export class SlackConversationService {
       clearTimeout(runtime.autoResumeTimer);
       runtime.autoResumeTimer = undefined;
     }
+    const stopPromises = [...this.#statusControllers.values()].map((controller) => controller.stop());
+    this.#statusControllers.clear();
+    await Promise.all(stopPromises);
   }
 
   isAlreadyHandled(session: SlackSessionRecord, messageTs?: string | undefined): boolean {
@@ -371,6 +379,7 @@ export class SlackConversationService {
       reason: options.reason,
       occurredAt: new Date().toISOString()
     });
+    this.#clearAssistantStatus(options.channelId, options.rootThreadTs);
   }
 
   async postSlackFile(options: {
@@ -414,6 +423,7 @@ export class SlackConversationService {
       throw new Error("Unable to determine filename for Slack upload");
     }
 
+    this.#clearAssistantStatus(options.channelId, options.rootThreadTs);
     const uploaded = await this.#slackApi.uploadThreadFile({
       channelId: options.channelId,
       threadTs: options.rootThreadTs,
@@ -519,6 +529,7 @@ export class SlackConversationService {
     await this.#turnRunner.interrupt(session);
     await this.#inboundStore.markTurnBatchDone(session, session.activeTurnId);
     await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
+    this.#clearAssistantStatus(session.channelId, session.rootThreadTs);
     return true;
   }
 
@@ -534,6 +545,7 @@ export class SlackConversationService {
 
     this.#clearDispatchFailureBlock(session.key);
     const recordedSession = await this.#inboundStore.recordInboundMessage(session, item);
+    this.#setAssistantThinking(recordedSession);
     await this.#dispatchPersistedMessage(recordedSession, item.messageTs);
   }
 
@@ -618,6 +630,8 @@ export class SlackConversationService {
 
     if (outcome === "cleared") {
       this.#resetRuntimeProcessing(session.key);
+      const latestSession = this.#findSessionByKey(session.key);
+      this.#clearAssistantStatus(latestSession.channelId, latestSession.rootThreadTs);
       await this.#resumePendingDispatch(session.key);
     }
 
@@ -700,6 +714,7 @@ export class SlackConversationService {
       } | undefined;
     }
   ): Promise<string | undefined> {
+    this.#clearAssistantStatus(channelId, rootThreadTs);
     const ts = await this.#slackApi.postThreadMessage(channelId, rootThreadTs, text);
     if (ts) {
       this.#selfMessageFilter.rememberPostedMessageTs(ts);
@@ -781,6 +796,7 @@ export class SlackConversationService {
       return;
     }
 
+    this.#setAssistantThinking(latestSession);
     if (latestSession.activeTurnId) {
       try {
         const input = this.#inboundStore.createSlackInputFromPersistedMessage(pendingMessage);
@@ -823,6 +839,7 @@ export class SlackConversationService {
       return 0;
     }
 
+    this.#setAssistantThinking(latestSession);
     if (latestSession.activeTurnId) {
       try {
         const input = await this.#inboundStore.createRecoveredBatchInput(latestSession, pendingMessages, recoveryKind);
@@ -1027,6 +1044,7 @@ export class SlackConversationService {
           break;
         }
 
+        this.#setAssistantThinking(session);
         session = await this.#turnRunner.ensureCodexThread(session);
         const pendingMessages = this.#inboundStore.listPendingMessages(session);
 
@@ -1067,6 +1085,7 @@ export class SlackConversationService {
         session = await this.#handleCompletedTurnDisposition(session, result.turnId, dispatchMessages, {
           aborted: result.aborted
         });
+        this.#maybeClearAssistantStatusIfIdle(session);
       } catch (error) {
         if (runtime.generation !== generation) {
           return;
@@ -1121,6 +1140,7 @@ export class SlackConversationService {
             error: error instanceof Error ? error.message : String(error)
           });
         }
+        this.#clearAssistantStatus(session.channelId, session.rootThreadTs);
         break;
       }
     }
@@ -1211,6 +1231,7 @@ export class SlackConversationService {
       this.#resetRuntimeProcessing(sessionKey);
     }
 
+    this.#setAssistantThinking(session);
     this.#enqueueDispatch(session, {
       kind: "dispatch_pending"
     });
@@ -1317,4 +1338,139 @@ export class SlackConversationService {
     );
     return Date.now() - this.#lastMissedThreadRecoveryAtMs >= intervalMs;
   }
+
+  #setAssistantThinking(session: SlackSessionRecord): void {
+    this.#getStatusController(session.channelId, session.rootThreadTs).setThinking();
+  }
+
+  #clearAssistantStatus(channelId: string, rootThreadTs: string): void {
+    const sessionKey = SessionManager.createKey(channelId, rootThreadTs);
+    this.#statusControllers.get(sessionKey)?.clear();
+  }
+
+  #maybeClearAssistantStatusIfIdle(session: SlackSessionRecord): void {
+    if (session.activeTurnId) {
+      return;
+    }
+
+    const hasPendingOrInflightMessages = this.#sessions.listInboundMessages({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      status: ["pending", "inflight"]
+    }).length > 0;
+
+    if (hasPendingOrInflightMessages) {
+      return;
+    }
+
+    this.#clearAssistantStatus(session.channelId, session.rootThreadTs);
+  }
+
+  #getStatusController(channelId: string, rootThreadTs: string): SlackAssistantStatusController {
+    const sessionKey = SessionManager.createKey(channelId, rootThreadTs);
+    let controller = this.#statusControllers.get(sessionKey);
+
+    if (!controller) {
+      controller = new SlackAssistantStatusController({
+        slackApi: this.#slackApi,
+        channelId,
+        threadTs: rootThreadTs
+      });
+      this.#statusControllers.set(sessionKey, controller);
+    }
+
+    return controller;
+  }
+
+  #handleCodexNotification(method: string, params: Record<string, unknown>): void {
+    const session = this.#findSessionForCodexNotification(params);
+    if (!session) {
+      return;
+    }
+
+    const controller = this.#getStatusController(session.channelId, session.rootThreadTs);
+
+    switch (method) {
+      case "assistant.state":
+      case "workspace.assistant.state":
+        controller.handleAssistantState(asRecord(params.state));
+        return;
+      case "tool_start":
+      case "codex/event/tool_start":
+        controller.handleToolStart(params);
+        return;
+      case "tool_end":
+      case "codex/event/tool_end":
+        controller.handleToolEnd(params);
+        return;
+      case "status":
+      case "codex/event/status":
+        controller.handleTerminalStatus(typeof params.status === "string" ? params.status : undefined);
+        return;
+      case "item/agentMessage/delta":
+      case "turn/completed":
+      case "codex/event/turn_aborted":
+      case "error":
+      case "codex/event/error":
+        controller.clear();
+        return;
+      default:
+        return;
+    }
+  }
+
+  #findSessionForCodexNotification(params: Record<string, unknown>): SlackSessionRecord | undefined {
+    const turnId = normalizeCodexTurnId(params);
+    if (turnId) {
+      return this.#sessions.listSessions().find((session) => session.activeTurnId === turnId);
+    }
+
+    const threadId = normalizeCodexThreadId(params);
+    if (threadId) {
+      return this.#sessions.listSessions().find((session) => session.codexThreadId === threadId);
+    }
+
+    return undefined;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function normalizeCodexTurnId(params: Record<string, unknown>): string | undefined {
+  const direct = normalizeNonEmptyString(
+    params.turnId ??
+      params.turn_id ??
+      (asRecord(params.turn)?.id) ??
+      (asRecord(params.msg)?.turn_id)
+  );
+  if (direct) {
+    return direct;
+  }
+
+  return normalizeNonEmptyString(asRecord(params.state)?.turn_id);
+}
+
+function normalizeCodexThreadId(params: Record<string, unknown>): string | undefined {
+  return normalizeNonEmptyString(
+    params.threadId ??
+      params.thread_id ??
+      (asRecord(params.thread)?.id) ??
+      (asRecord(params.msg)?.thread_id) ??
+      (asRecord(params.state)?.thread_id)
+  );
+}
+
+function normalizeNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

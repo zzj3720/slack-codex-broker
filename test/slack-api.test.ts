@@ -151,6 +151,45 @@ describe("SlackApi.uploadThreadFile", () => {
   });
 });
 
+describe("SlackApi.setAssistantThreadStatus", () => {
+  it("sends the explicit loading message alongside the status label", async () => {
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (!url.endsWith("/assistant.threads.setStatus")) {
+        throw new Error(`Unexpected fetch ${url}`);
+      }
+
+      expect(init?.method).toBe("POST");
+      const body = String(init?.body);
+      expect(body).toContain("channel_id=C123");
+      expect(body).toContain("thread_ts=111.222");
+      expect(body).toContain("status=Reading+files...");
+      expect(body).toContain("loading_messages=Reading+files...");
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new SlackApi({
+      baseUrl: "https://slack.test/api",
+      appToken: "xapp-test",
+      botToken: "xoxb-test"
+    });
+
+    await api.setAssistantThreadStatus({
+      channelId: "C123",
+      threadTs: "111.222",
+      status: "Reading files..."
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("SlackApi.listThreadMessages", () => {
   it("preserves bot/app card messages with raw Slack payload", async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {

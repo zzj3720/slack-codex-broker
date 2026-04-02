@@ -28,6 +28,184 @@ describe.sequential("slack-codex-broker e2e", () => {
     }
   });
 
+  it("shows Slack assistant thread status while a turn is running and clears it after replying", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    let brokerBaseUrl = "";
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer({
+      onTurnStart: async (context) => {
+        await waitFor(() => {
+          return mockSlack.assistantStatusUpdates.some((update) => update.status === "Thinking...");
+        }, "assistant thinking status");
+
+        const response = await fetch(`${brokerBaseUrl}/slack/post-message`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded; charset=utf-8"
+          },
+          body: new URLSearchParams({
+            channel_id: "C123",
+            thread_ts: "110.220",
+            text: "STATUS_REPLY_OK",
+            kind: "final"
+          }).toString()
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to post broker Slack reply: ${response.status}`);
+        }
+
+        context.complete("");
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    brokerBaseUrl = broker.baseUrl;
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-status-mention", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "110.220",
+      ts: "110.221",
+      text: "<@UBOT> status test"
+    });
+
+    await waitFor(() => {
+      return mockSlack.assistantStatusUpdates.some((update) => update.status === "Thinking...");
+    }, "assistant thinking status call");
+    await waitFor(() => {
+      return mockSlack.postedMessages.some((message) => message.text === "STATUS_REPLY_OK");
+    }, "broker-posted Slack reply");
+    await waitFor(() => {
+      return mockSlack.assistantStatusUpdates.some((update) => update.status === "");
+    }, "assistant status clear");
+
+    expect(mockSlack.assistantStatusUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channel: "C123",
+          threadTs: "110.220",
+          status: "Thinking...",
+          loadingMessages: "Thinking..."
+        }),
+        expect.objectContaining({
+          channel: "C123",
+          threadTs: "110.220",
+          status: ""
+        })
+      ])
+    );
+  }, 90_000);
+
+  it("falls back to an eyes reaction when Slack assistant status is unavailable", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    let brokerBaseUrl = "";
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP",
+      assistantStatusError: "unknown_method"
+    });
+    const mockCodex = new MockCodexAppServer({
+      onTurnStart: async (context) => {
+        await waitFor(() => {
+          return mockSlack.reactionOperations.some((operation) => (
+            operation.action === "add" &&
+            operation.channel === "C123" &&
+            operation.timestamp === "120.220" &&
+            operation.name === "eyes"
+          ));
+        }, "assistant fallback reaction add");
+
+        const response = await fetch(`${brokerBaseUrl}/slack/post-message`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded; charset=utf-8"
+          },
+          body: new URLSearchParams({
+            channel_id: "C123",
+            thread_ts: "120.220",
+            text: "FALLBACK_REPLY_OK",
+            kind: "final"
+          }).toString()
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to post broker Slack reply: ${response.status}`);
+        }
+
+        context.complete("");
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    brokerBaseUrl = broker.baseUrl;
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-fallback-mention", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "120.220",
+      ts: "120.221",
+      text: "<@UBOT> fallback test"
+    });
+
+    await waitFor(() => {
+      return mockSlack.reactionOperations.some((operation) => (
+        operation.action === "add" &&
+        operation.channel === "C123" &&
+        operation.timestamp === "120.220" &&
+        operation.name === "eyes"
+      ));
+    }, "assistant fallback reaction add");
+    await waitFor(() => {
+      return mockSlack.postedMessages.some((message) => message.text === "FALLBACK_REPLY_OK");
+    }, "fallback broker-posted Slack reply");
+    await waitFor(() => {
+      return mockSlack.reactionOperations.some((operation) => (
+        operation.action === "remove" &&
+        operation.channel === "C123" &&
+        operation.timestamp === "120.220" &&
+        operation.name === "eyes"
+      ));
+    }, "assistant fallback reaction clear");
+
+    expect(mockSlack.assistantStatusUpdates).toHaveLength(0);
+  }, 90_000);
+
   it("starts a new session, backfills history, and forwards full Slack card payloads", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {

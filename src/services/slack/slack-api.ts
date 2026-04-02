@@ -97,6 +97,55 @@ export class SlackApi {
     return response.ts;
   }
 
+  async setAssistantThreadStatus(options: {
+    readonly channelId: string;
+    readonly threadTs: string;
+    readonly status: string;
+  }): Promise<void> {
+    await this.#post(
+      "assistant.threads.setStatus",
+      {
+        channel_id: options.channelId,
+        thread_ts: options.threadTs,
+        status: options.status,
+        loading_messages: options.status.trim() ? options.status : undefined
+      },
+      this.#botToken
+    );
+  }
+
+  async addReaction(options: {
+    readonly channelId: string;
+    readonly timestamp: string;
+    readonly name: string;
+  }): Promise<void> {
+    await this.#post(
+      "reactions.add",
+      {
+        channel: options.channelId,
+        timestamp: options.timestamp,
+        name: options.name
+      },
+      this.#botToken
+    );
+  }
+
+  async removeReaction(options: {
+    readonly channelId: string;
+    readonly timestamp: string;
+    readonly name: string;
+  }): Promise<void> {
+    await this.#post(
+      "reactions.remove",
+      {
+        channel: options.channelId,
+        timestamp: options.timestamp,
+        name: options.name
+      },
+      this.#botToken
+    );
+  }
+
   async uploadThreadFile(options: {
     readonly channelId: string;
     readonly threadTs: string;

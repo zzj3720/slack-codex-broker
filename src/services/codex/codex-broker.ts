@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+
 import { AppServerClient } from "./app-server-client.js";
 import { AppServerProcess } from "./app-server-process.js";
 import type { SlackSessionRecord, SlackUserIdentity } from "../../types.js";
@@ -12,7 +14,7 @@ import type {
 import { logger } from "../../logger.js";
 import { getPersonalMemoryPath } from "./codex-home.js";
 
-export class CodexBroker {
+export class CodexBroker extends EventEmitter {
   readonly #appServerProcess?: AppServerProcess;
   #client: AppServerClient;
   readonly #loadedThreadIds = new Set<string>();
@@ -45,6 +47,7 @@ export class CodexBroker {
     readonly geminiAllProxy?: string | undefined;
     readonly openAiApiKey?: string | undefined;
   }) {
+    super();
     this.#serviceName = options.serviceName;
     this.#brokerHttpBaseUrl = options.brokerHttpBaseUrl;
     this.#openAiApiKey = options.openAiApiKey;
@@ -180,6 +183,13 @@ export class CodexBroker {
   }
 
   #bindClient(client: AppServerClient): void {
+    client.on("notification", (method, params) => {
+      if (client !== this.#client) {
+        return;
+      }
+      this.emit("notification", method, params);
+    });
+
     client.on("disconnected", (error) => {
       if (this.#ignoredDisconnectClients.has(client)) {
         return;

@@ -72,6 +72,7 @@ const NONRECOVERABLE_DISPATCH_RETRY_COOLDOWN_MS = 5 * 60 * 1_000;
 export class SlackConversationService {
   readonly #config: AppConfig;
   readonly #sessions: SessionManager;
+  readonly #codex: CodexBroker;
   readonly #slackApi: SlackApi;
   readonly #selfMessageFilter: SlackSelfMessageFilter;
   readonly #runtimeSessions = new Map<string, RuntimeSessionState>();
@@ -79,6 +80,7 @@ export class SlackConversationService {
   readonly #inboundStore: SlackInboundStore;
   readonly #turnRunner: SlackTurnRunner;
   readonly #turnReconciler: SlackTurnReconciler;
+  readonly #codexNotificationHandler: (method: string, params: Record<string, unknown> | undefined) => void;
   #botUserId = "";
   #activeTurnReconcileTimer: NodeJS.Timeout | undefined;
   #catchUpPromise: Promise<void> | undefined;
@@ -93,6 +95,7 @@ export class SlackConversationService {
   }) {
     this.#config = options.config;
     this.#sessions = options.sessions;
+    this.#codex = options.codex;
     this.#slackApi = options.slackApi;
     this.#selfMessageFilter = options.selfMessageFilter;
     this.#inboundStore = new SlackInboundStore({
@@ -110,9 +113,10 @@ export class SlackConversationService {
       turnRunner: this.#turnRunner,
       inboundStore: this.#inboundStore
     });
-    options.codex.on("notification", (method: string, params: Record<string, unknown> | undefined) => {
+    this.#codexNotificationHandler = (method: string, params: Record<string, unknown> | undefined) => {
       this.#handleCodexNotification(method, params ?? {});
-    });
+    };
+    this.#codex.on("notification", this.#codexNotificationHandler);
   }
 
   setBotUserId(botUserId: string): void {
@@ -128,6 +132,7 @@ export class SlackConversationService {
 
   async stop(): Promise<void> {
     this.#stopActiveTurnReconciler();
+    this.#codex.off("notification", this.#codexNotificationHandler);
     for (const runtime of this.#runtimeSessions.values()) {
       if (!runtime.autoResumeTimer) {
         continue;
@@ -1421,13 +1426,19 @@ export class SlackConversationService {
 
   #findSessionForCodexNotification(params: Record<string, unknown>): SlackSessionRecord | undefined {
     const turnId = normalizeCodexTurnId(params);
-    if (turnId) {
-      return this.#sessions.listSessions().find((session) => session.activeTurnId === turnId);
+    const threadId = normalizeCodexThreadId(params);
+    if (!turnId && !threadId) {
+      return undefined;
     }
 
-    const threadId = normalizeCodexThreadId(params);
-    if (threadId) {
-      return this.#sessions.listSessions().find((session) => session.codexThreadId === threadId);
+    const sessions = this.#sessions.listSessions();
+    for (const session of sessions) {
+      if (turnId && session.activeTurnId === turnId) {
+        return session;
+      }
+      if (threadId && session.codexThreadId === threadId) {
+        return session;
+      }
     }
 
     return undefined;

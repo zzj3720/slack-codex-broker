@@ -4,7 +4,7 @@ import { SlackApi } from "./slack-api.js";
 const ASSISTANT_STATUS_MIN_INTERVAL_MS = 2_000;
 const FALLBACK_REACTION_NAME = "eyes";
 
-const TOOL_STATUS_LABELS = new Map<string, string>([
+const TOOL_STATUS_LABEL_ENTRIES: Array<readonly [string, string]> = [
   ["read", "Reading files..."],
   ["list", "Reading files..."],
   ["ls", "Reading files..."],
@@ -34,7 +34,11 @@ const TOOL_STATUS_LABELS = new Map<string, string>([
   ["slackgetchannelhistory", "Checking Slack..."],
   ["slackgetuserinfo", "Checking Slack..."],
   ["slackaddreaction", "Checking Slack..."]
-]);
+];
+
+const TOOL_STATUS_LABELS = new Map<string, string>(
+  TOOL_STATUS_LABEL_ENTRIES.map(([toolName, status]) => [normalizeToolName(toolName), status] as const)
+);
 
 interface AssistantStateLike {
   readonly phase?: unknown;
@@ -54,6 +58,7 @@ export class SlackAssistantStatusController {
   #stopped = false;
   #fallbackOnly = false;
   #reactionActive = false;
+  #queuedStatus: string | undefined;
   readonly #activeToolCalls = new Map<string, string>();
   readonly #activeToolOrder: string[] = [];
 
@@ -167,7 +172,7 @@ export class SlackAssistantStatusController {
       return;
     }
 
-    if (status === this.#lastStatus) {
+    if (status === this.#lastStatus || status === this.#queuedStatus) {
       this.#clearPendingStatus();
       return;
     }
@@ -197,7 +202,7 @@ export class SlackAssistantStatusController {
     const pendingStatus = this.#pendingStatus;
     this.#pendingStatus = undefined;
 
-    if (!pendingStatus || pendingStatus === this.#lastStatus) {
+    if (!pendingStatus || pendingStatus === this.#lastStatus || pendingStatus === this.#queuedStatus) {
       return;
     }
 
@@ -213,20 +218,26 @@ export class SlackAssistantStatusController {
   }
 
   #enqueueSend(status: string): Promise<void> {
-    this.#lastStatus = status;
+    this.#queuedStatus = status;
     this.#lastCallAtMs = Date.now();
     this.#sendChain = this.#sendChain
       .catch(() => undefined)
       .then(async () => {
-        await this.#send(status);
+        const sent = await this.#send(status);
+        if (this.#queuedStatus === status) {
+          this.#queuedStatus = undefined;
+        }
+        if (sent) {
+          this.#lastStatus = status;
+        }
       });
     return this.#sendChain;
   }
 
-  async #send(status: string): Promise<void> {
+  async #send(status: string): Promise<boolean> {
     if (this.#fallbackOnly) {
       await this.#applyFallbackReaction(status);
-      return;
+      return true;
     }
 
     try {
@@ -236,11 +247,12 @@ export class SlackAssistantStatusController {
         status
       });
       await this.#clearFallbackReactionIfNeeded();
+      return true;
     } catch (error) {
       if (shouldFallbackAssistantStatus(error)) {
         this.#fallbackOnly = true;
         await this.#applyFallbackReaction(status);
-        return;
+        return true;
       }
 
       logger.warn("Failed to update Slack assistant thread status", {
@@ -249,6 +261,7 @@ export class SlackAssistantStatusController {
         status,
         error: error instanceof Error ? error.message : String(error)
       });
+      return false;
     }
   }
 

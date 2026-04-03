@@ -12,6 +12,9 @@ export interface AppConfig {
   readonly slackMissedThreadRecoveryIntervalMs: number;
   readonly slackProgressReminderAfterMs: number;
   readonly slackProgressReminderRepeatMs: number;
+  readonly sessionInactiveTtlMs: number;
+  readonly sessionCleanupIntervalMs: number;
+  readonly sessionCleanupMaxPerSweep: number;
   readonly stateDir: string;
   readonly jobsRoot: string;
   readonly sessionsRoot: string;
@@ -171,6 +174,9 @@ export function loadConfig(env = process.env): AppConfig {
     ),
     slackProgressReminderAfterMs: getNumber(env, "SLACK_PROGRESS_REMINDER_AFTER_MS", 120_000),
     slackProgressReminderRepeatMs: getNumber(env, "SLACK_PROGRESS_REMINDER_REPEAT_MS", 120_000),
+    sessionInactiveTtlMs: getNumber(env, "SESSION_INACTIVE_TTL_MS", 24 * 60 * 60 * 1_000),
+    sessionCleanupIntervalMs: getNumber(env, "SESSION_CLEANUP_INTERVAL_MS", 60 * 60 * 1_000),
+    sessionCleanupMaxPerSweep: getNumber(env, "SESSION_CLEANUP_MAX_PER_SWEEP", 20),
     stateDir,
     jobsRoot,
     sessionsRoot,

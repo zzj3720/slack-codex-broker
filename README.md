@@ -54,6 +54,9 @@ Copy `.env.example` to `.env` and fill in:
 - optional `LOG_RAW_SLACK_EVENTS`
 - optional `LOG_RAW_CODEX_RPC`
 - optional `LOG_RAW_HTTP_REQUESTS`
+- optional `SESSION_INACTIVE_TTL_MS`
+- optional `SESSION_CLEANUP_INTERVAL_MS`
+- optional `SESSION_CLEANUP_MAX_PER_SWEEP`
 - one Codex auth mode
 - optional host Codex home mount if you want the container to inherit your global `~/.codex` memory/instructions
 

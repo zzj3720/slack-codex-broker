@@ -279,6 +279,30 @@ export class StateStore {
     );
   }
 
+  async deleteSession(key: string): Promise<void> {
+    const filePath = path.join(this.#sessionsDirPath, `${encodeKey(key)}.json`);
+    await this.#runSerialized(filePath, async () => {
+      this.#sessions.delete(key);
+      await this.#deleteFileIfExists(filePath);
+    });
+  }
+
+  async deleteInboundSession(sessionKey: string): Promise<void> {
+    const filePath = path.join(this.#inboundDirPath, `${encodeKey(sessionKey)}.json`);
+    await this.#runSerialized(filePath, async () => {
+      this.#inboundMessagesBySession.delete(sessionKey);
+      await this.#deleteFileIfExists(filePath);
+    });
+  }
+
+  async deleteBackgroundJob(id: string): Promise<void> {
+    const filePath = path.join(this.#jobsDirPath, `${encodeKey(id)}.json`);
+    await this.#runSerialized(filePath, async () => {
+      this.#backgroundJobs.delete(id);
+      await this.#deleteFileIfExists(filePath);
+    });
+  }
+
   async #loadSplitState(): Promise<void> {
     this.#processedEventIds = await this.#readJsonFile(this.#processedEventsFilePath, []);
     this.#processedEventIdSet = new Set(this.#processedEventIds);
@@ -331,6 +355,17 @@ export class StateStore {
     const tempFilePath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
     await fs.writeFile(tempFilePath, JSON.stringify(value, null, 2));
     await fs.rename(tempFilePath, filePath);
+  }
+
+  async #deleteFileIfExists(filePath: string): Promise<void> {
+    try {
+      await fs.rm(filePath, { force: true });
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
   }
 
   async #runSerialized<T>(key: string, action: () => Promise<T>): Promise<T> {

@@ -310,6 +310,18 @@ export class SessionManager {
     await this.#stateStore.upsertBackgroundJob(record);
   }
 
+  async deleteSession(channelId: string, rootThreadTs: string): Promise<void> {
+    await this.#stateStore.deleteSession(SessionManager.createKey(channelId, rootThreadTs));
+  }
+
+  async deleteInboundSession(channelId: string, rootThreadTs: string): Promise<void> {
+    await this.#stateStore.deleteInboundSession(SessionManager.createKey(channelId, rootThreadTs));
+  }
+
+  async deleteBackgroundJob(id: string): Promise<void> {
+    await this.#stateStore.deleteBackgroundJob(id);
+  }
+
   #requireSession(channelId: string, rootThreadTs: string): SlackSessionRecord {
     const session = this.getSession(channelId, rootThreadTs);
     if (!session) {

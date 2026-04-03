@@ -27,6 +27,9 @@ describe("loadConfig", () => {
     expect(config.slackActiveTurnReconcileIntervalMs).toBe(15_000);
     expect(config.slackProgressReminderAfterMs).toBe(120_000);
     expect(config.slackProgressReminderRepeatMs).toBe(120_000);
+    expect(config.sessionInactiveTtlMs).toBe(86_400_000);
+    expect(config.sessionCleanupIntervalMs).toBe(3_600_000);
+    expect(config.sessionCleanupMaxPerSweep).toBe(20);
     expect(config.logLevel).toBe("info");
     expect(config.logRawSlackEvents).toBe(true);
     expect(config.logRawCodexRpc).toBe(true);
@@ -113,6 +116,20 @@ describe("loadConfig", () => {
     expect(config.logRawSlackEvents).toBe(false);
     expect(config.logRawCodexRpc).toBe(false);
     expect(config.logRawHttpRequests).toBe(true);
+  });
+
+  it("parses session cleanup configuration", () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SESSION_INACTIVE_TTL_MS: "60000",
+      SESSION_CLEANUP_INTERVAL_MS: "30000",
+      SESSION_CLEANUP_MAX_PER_SWEEP: "5"
+    } as NodeJS.ProcessEnv);
+
+    expect(config.sessionInactiveTtlMs).toBe(60_000);
+    expect(config.sessionCleanupIntervalMs).toBe(30_000);
+    expect(config.sessionCleanupMaxPerSweep).toBe(5);
   });
 
   it("loads an optional broker admin token", () => {

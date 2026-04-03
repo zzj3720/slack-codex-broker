@@ -66,6 +66,32 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "POST" && url.pathname === "/admin/api/github-authors") {
+    const body = await readAdminBody(request, response);
+    if (!body) {
+      return true;
+    }
+
+    const slackUserId = readString(body.slack_user_id);
+    const githubAuthor = readString(body.github_author);
+    if (!slackUserId || !githubAuthor) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["slack_user_id", "github_author"]
+      });
+      return true;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.upsertGitHubAuthorMapping({
+        slackUserId,
+        githubAuthor
+      })
+    );
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/admin/api/deploy") {
     const body = await readAdminBody(request, response);
     if (!body) {
@@ -131,6 +157,20 @@ export async function handleAdminRequest(
     await runAdminOperation(response, () =>
       options.adminService.deleteAuthProfile({
         name: profileName
+      })
+    );
+    return true;
+  }
+
+  if (method === "DELETE" && url.pathname.startsWith("/admin/api/github-authors/")) {
+    const slackUserId = decodeURIComponent(url.pathname.slice("/admin/api/github-authors/".length));
+    if (!slackUserId || slackUserId.includes("/")) {
+      return false;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.deleteGitHubAuthorMapping({
+        slackUserId
       })
     );
     return true;
@@ -491,6 +531,18 @@ function renderAdminPage(options: {
 
         <section>
           <div class="section-head">
+            <div class="section-title">GitHub Authors</div>
+            <button id="open-github-author-dialog">ADD</button>
+          </div>
+          <div class="toolbar" style="border-bottom:none;">
+            <input id="github-author-search" type="search" placeholder="FILTER AUTHORS..." />
+          </div>
+          <div id="github-authors-panel" style="padding:12px; display:grid; gap:8px;"></div>
+          <div id="github-authors-status" style="padding:8px; font-size:10px;"></div>
+        </section>
+
+        <section>
+          <div class="section-head">
             <div class="section-title">Deploy</div>
             <button id="deploy-release-button">DEPLOY</button>
           </div>
@@ -525,14 +577,28 @@ function renderAdminPage(options: {
     <div id="add-profile-status" style="font-size:10px;"></div>
   </div></dialog>
 
+  <dialog id="github-author-dialog"><div class="modal-content">
+    <div class="section-title">GitHub author mapping</div>
+    <input id="github-author-slack-user-id" type="text" placeholder="SLACK USER ID (U123...)" />
+    <input id="github-author-value" type="text" placeholder="Name <email@example.com>" />
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button id="close-github-author-dialog" class="secondary">CANCEL</button>
+      <button id="submit-github-author-dialog">SAVE</button>
+    </div>
+    <div id="github-author-dialog-status" style="font-size:10px;"></div>
+  </div></dialog>
+
   <script>
     const refreshButton = document.getElementById("refresh-button");
     const replaceStatus = document.getElementById("replace-status");
     const deployStatus = document.getElementById("deploy-status");
+    const githubAuthorsStatus = document.getElementById("github-authors-status");
     const lastRefresh = document.getElementById("last-refresh");
     const sessionSearch = document.getElementById("session-search");
     const sessionFilter = document.getElementById("session-filter");
+    const githubAuthorSearch = document.getElementById("github-author-search");
     const addProfileDialog = document.getElementById("add-profile-dialog");
+    const githubAuthorDialog = document.getElementById("github-author-dialog");
     const deployRefInput = document.getElementById("deploy-ref-input");
     const uiStateStorageKey = "admin-ui-state:" + window.location.pathname;
     const deferredUiStatePersistMs = 150;
@@ -855,6 +921,75 @@ function renderAdminPage(options: {
       });
     }
 
+    function renderGitHubAuthors(data) {
+      const mappings = [...(data.githubAuthorMappings?.mappings || [])];
+      const panel = document.getElementById("github-authors-panel");
+      const query = String(githubAuthorSearch.value || "").toLowerCase();
+      const filtered = mappings.filter((mapping) => {
+        if (!query) {
+          return true;
+        }
+
+        return [
+          mapping.slackUserId,
+          mapping.githubAuthor,
+          mapping.slackIdentity?.displayName,
+          mapping.slackIdentity?.realName,
+          mapping.slackIdentity?.username,
+          mapping.slackIdentity?.email
+        ].some((value) => String(value || "").toLowerCase().includes(query));
+      });
+
+      if (!filtered.length) {
+        panel.innerHTML = '<div class="summary-detail" style="padding-top:12px;">NO GITHUB AUTHOR MAPPINGS</div>';
+        return;
+      }
+
+      panel.innerHTML = filtered.map((mapping) => {
+        const identity = mapping.slackIdentity || {};
+        const label = identity.realName || identity.displayName || identity.username || mapping.slackUserId;
+        const detail = [mapping.slackUserId, identity.email].filter(Boolean).join(" · ");
+        return '<div class="profile-row">' +
+                 '<div class="profile-line">' +
+                   '<span class="profile-account">' + esc(label) + "</span>" +
+                   '<span class="profile-plan">' + esc(detail || mapping.slackUserId) + "</span>" +
+                   renderBadge(mapping.source === "manual" ? "manual" : "auto", mapping.source === "manual" ? "good" : "warn") +
+                 "</div>" +
+                 '<div class="summary-detail">' + esc(mapping.githubAuthor) + "</div>" +
+                 '<div class="summary-detail">UPDATED: ' + esc(new Date(mapping.updatedAt).toLocaleString()) + "</div>" +
+                 '<div class="profile-actions">' +
+                   '<button class="secondary" data-edit-github-author="' + esc(mapping.slackUserId) + '"' +
+                     ' data-edit-github-author-value="' + esc(mapping.githubAuthor) + '">EDIT</button>' +
+                   '<button class="danger" data-delete-github-author="' + esc(mapping.slackUserId) + '">DELETE</button>' +
+                 "</div>" +
+               "</div>";
+      }).join("");
+
+      document.querySelectorAll("[data-edit-github-author]").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.getElementById("github-author-dialog-status").textContent = "";
+          document.getElementById("github-author-slack-user-id").value = button.getAttribute("data-edit-github-author") || "";
+          document.getElementById("github-author-value").value = button.getAttribute("data-edit-github-author-value") || "";
+          githubAuthorDialog.showModal();
+        });
+      });
+
+      document.querySelectorAll("[data-delete-github-author]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const slackUserId = button.getAttribute("data-delete-github-author");
+          if (!slackUserId) {
+            return;
+          }
+
+          if (!window.confirm("DELETE GITHUB AUTHOR MAPPING FOR " + slackUserId + "?")) {
+            return;
+          }
+
+          await deleteGitHubAuthorMapping(slackUserId);
+        });
+      });
+    }
+
     function summarizeSessionLead(s) {
       if (s.openInbound?.length) return s.openInbound[0].textPreview || "NEW MSG";
       if (s.backgroundJobs?.length) {
@@ -950,6 +1085,7 @@ function renderAdminPage(options: {
       renderSummary(data);
       renderService(data);
       renderAuthProfiles(data);
+      renderGitHubAuthors(data);
       renderDeployment(data);
       renderSessions(data);
       renderLogs(data);
@@ -1093,6 +1229,54 @@ function renderAdminPage(options: {
       finally { refreshButton.disabled = false; }
     }
 
+    async function submitGitHubAuthorMapping() {
+      const slackUserId = document.getElementById("github-author-slack-user-id").value.trim();
+      const githubAuthor = document.getElementById("github-author-value").value.trim();
+      const status = document.getElementById("github-author-dialog-status");
+      const submitButton = document.getElementById("submit-github-author-dialog");
+      status.textContent = "SAVING...";
+      submitButton.disabled = true;
+
+      try {
+        if (!slackUserId || !githubAuthor) {
+          throw new Error("SLACK USER ID AND GITHUB AUTHOR ARE REQUIRED");
+        }
+
+        const response = await fetch("/admin/api/github-authors", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            slack_user_id: slackUserId,
+            github_author: githubAuthor
+          })
+        });
+        const payload = await parseResponse(response);
+        render(payload.status);
+        githubAuthorsStatus.innerHTML = '<span style="color:var(--good)">MAPPING SAVED</span>';
+        status.innerHTML = '<span style="color:var(--good)">MAPPING SAVED</span>';
+        githubAuthorDialog.close();
+      } catch (error) {
+        status.innerHTML = '<span style="color:var(--danger)">' + esc(error instanceof Error ? error.message : String(error)) + "</span>";
+      } finally {
+        submitButton.disabled = false;
+      }
+    }
+
+    async function deleteGitHubAuthorMapping(slackUserId) {
+      githubAuthorsStatus.textContent = "DELETING MAPPING...";
+      try {
+        const response = await fetch("/admin/api/github-authors/" + encodeURIComponent(slackUserId), {
+          method: "DELETE",
+          headers: authHeaders()
+        });
+        const payload = await parseResponse(response);
+        render(payload.status);
+        githubAuthorsStatus.innerHTML = '<span style="color:var(--good)">MAPPING DELETED</span>';
+      } catch (error) {
+        githubAuthorsStatus.innerHTML = '<span style="color:var(--danger)">' + esc(error instanceof Error ? error.message : String(error)) + "</span>";
+      }
+    }
+
     sessionSearch.value = uiState.sessionSearch;
     sessionFilter.value = uiState.sessionFilter;
 
@@ -1108,17 +1292,31 @@ function renderAdminPage(options: {
       updateUiState({ sessionFilter: sessionFilter.value });
       if (latestStatus) renderSessions(latestStatus);
     };
+    githubAuthorSearch.oninput = () => { if (latestStatus) renderGitHubAuthors(latestStatus); };
     document.getElementById("open-add-profile-dialog").onclick = () => {
       document.getElementById("add-profile-status").textContent = "";
       addProfileDialog.showModal();
     };
+    document.getElementById("open-github-author-dialog").onclick = () => {
+      document.getElementById("github-author-dialog-status").textContent = "";
+      document.getElementById("github-author-slack-user-id").value = "";
+      document.getElementById("github-author-value").value = "";
+      githubAuthorDialog.showModal();
+    };
     document.getElementById("deploy-release-button").onclick = deployRelease;
     document.getElementById("rollback-release-button").onclick = rollbackRelease;
     document.getElementById("close-add-profile-dialog").onclick = () => addProfileDialog.close();
+    document.getElementById("close-github-author-dialog").onclick = () => githubAuthorDialog.close();
     document.getElementById("submit-add-profile-dialog").onclick = submitAddProfile;
+    document.getElementById("submit-github-author-dialog").onclick = submitGitHubAuthorMapping;
     addProfileDialog.onclick = (event) => {
       if (event.target === addProfileDialog) {
         addProfileDialog.close();
+      }
+    };
+    githubAuthorDialog.onclick = (event) => {
+      if (event.target === githubAuthorDialog) {
+        githubAuthorDialog.close();
       }
     };
 

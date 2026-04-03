@@ -42,6 +42,10 @@ export class SessionManager {
     return this.#stateStore.listSessions();
   }
 
+  getSessionByKey(key: string): SlackSessionRecord | undefined {
+    return this.#stateStore.getSession(key);
+  }
+
   hasProcessedEvent(eventId: string): boolean {
     return this.#stateStore.hasProcessedEvent(eventId);
   }
@@ -78,6 +82,15 @@ export class SessionManager {
       ...record,
       updatedAt: new Date().toISOString()
     });
+  }
+
+  findSessionByWorkspace(cwd: string): SlackSessionRecord | undefined {
+    const targetPath = path.resolve(cwd);
+    const candidates = this.listSessions()
+      .filter((session) => isSubpathOf(session.workspacePath, targetPath))
+      .sort((left, right) => right.workspacePath.length - left.workspacePath.length);
+
+    return candidates[0];
   }
 
   async setCodexThreadId(
@@ -154,6 +167,61 @@ export class SessionManager {
       lastTurnSignalKind: signal.kind,
       lastTurnSignalReason: signal.reason?.trim() || undefined,
       lastTurnSignalAt: signal.occurredAt ?? new Date().toISOString()
+    });
+  }
+
+  async addCoAuthorCandidates(
+    channelId: string,
+    rootThreadTs: string,
+    userIds: readonly string[]
+  ): Promise<SlackSessionRecord> {
+    const session = this.#requireSession(channelId, rootThreadTs);
+    const additions = userIds
+      .map((userId) => userId.trim())
+      .filter(Boolean)
+      .filter((userId, index, array) => array.indexOf(userId) === index)
+      .filter((userId) => !(session.coAuthorCandidateUserIds ?? []).includes(userId));
+
+    if (additions.length === 0) {
+      return session;
+    }
+
+    return await this.#patchSession(channelId, rootThreadTs, {
+      coAuthorCandidateUserIds: [...(session.coAuthorCandidateUserIds ?? []), ...additions],
+      coAuthorCandidateRevision: (session.coAuthorCandidateRevision ?? 0) + 1,
+      coAuthorPromptRevision: undefined,
+      coAuthorPromptedAt: undefined
+    });
+  }
+
+  async confirmCoAuthors(
+    channelId: string,
+    rootThreadTs: string,
+    options: {
+      readonly userIds: readonly string[];
+      readonly candidateRevision: number;
+    }
+  ): Promise<SlackSessionRecord> {
+    const session = this.#requireSession(channelId, rootThreadTs);
+    const confirmedUserIds = (session.coAuthorCandidateUserIds ?? [])
+      .filter((userId) => options.userIds.includes(userId));
+
+    return await this.#patchSession(channelId, rootThreadTs, {
+      coAuthorConfirmedUserIds: confirmedUserIds,
+      coAuthorConfirmedRevision: options.candidateRevision,
+      coAuthorPromptRevision: options.candidateRevision,
+      coAuthorPromptedAt: undefined
+    });
+  }
+
+  async markCoAuthorPrompted(
+    channelId: string,
+    rootThreadTs: string,
+    promptRevision: number
+  ): Promise<SlackSessionRecord> {
+    return await this.#patchSession(channelId, rootThreadTs, {
+      coAuthorPromptRevision: promptRevision,
+      coAuthorPromptedAt: new Date().toISOString()
     });
   }
 
@@ -270,4 +338,9 @@ export class SessionManager {
       updatedAt: new Date().toISOString()
     });
   }
+}
+
+function isSubpathOf(rootPath: string, targetPath: string): boolean {
+  const relative = path.relative(path.resolve(rootPath), targetPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }

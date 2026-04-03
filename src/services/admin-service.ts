@@ -5,6 +5,7 @@ import type { AppConfig } from "../config.js";
 import type { PersistedBackgroundJob, PersistedInboundMessage, SlackSessionRecord } from "../types.js";
 import type { SessionManager } from "./session-manager.js";
 import type { AuthProfileService } from "./auth-profile-service.js";
+import type { GitHubAuthorMappingService } from "./github-author-mapping-service.js";
 import type { RuntimeControl } from "./runtime-control.js";
 import type {
   DeployWorkerOptions,
@@ -34,6 +35,7 @@ export class AdminService {
       readonly sessions: SessionManager;
       readonly runtime: RuntimeControl;
       readonly authProfiles: AuthProfileService;
+      readonly githubAuthorMappings: GitHubAuthorMappingService;
       readonly startedAt: Date;
       readonly deployment?: WorkerDeploymentService | undefined;
     }
@@ -51,6 +53,7 @@ export class AdminService {
 
   async getStatus(): Promise<Record<string, unknown>> {
     await this.#refreshSessions();
+    await this.options.githubAuthorMappings.load();
     const allSessions = this.options.sessions
       .listSessions()
       .sort((left, right) => compareSessions(left, right));
@@ -112,6 +115,10 @@ export class AdminService {
         configToml: await this.#fileInfo(path.join(this.options.config.codexHome, "config.toml"))
       },
       authProfiles,
+      githubAuthorMappings: {
+        count: this.options.githubAuthorMappings.listMappings().length,
+        mappings: this.options.githubAuthorMappings.listMappings()
+      },
       account,
       rateLimits,
       deployment,
@@ -201,6 +208,34 @@ export class AdminService {
     return {
       ok: true,
       deployment,
+      status: await this.getStatus()
+    };
+  }
+
+  async upsertGitHubAuthorMapping(options: {
+    readonly slackUserId: string;
+    readonly githubAuthor: string;
+  }): Promise<Record<string, unknown>> {
+    await this.options.githubAuthorMappings.load();
+    const mapping = await this.options.githubAuthorMappings.upsertManualMapping({
+      slackUserId: options.slackUserId,
+      githubAuthor: options.githubAuthor
+    });
+    return {
+      ok: true,
+      mapping,
+      status: await this.getStatus()
+    };
+  }
+
+  async deleteGitHubAuthorMapping(options: {
+    readonly slackUserId: string;
+  }): Promise<Record<string, unknown>> {
+    await this.options.githubAuthorMappings.load();
+    await this.options.githubAuthorMappings.deleteMapping(options.slackUserId);
+    return {
+      ok: true,
+      slackUserId: options.slackUserId,
       status: await this.getStatus()
     };
   }

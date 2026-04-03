@@ -12,5 +12,8 @@ describe("resolveRuntimeToolPath", () => {
     expect(resolveRuntimeToolPath("job-callback.js")).toBe(
       path.resolve(process.cwd(), "src", "tools", "job-callback.js")
     );
+    expect(resolveRuntimeToolPath("git-coauthor.js")).toBe(
+      path.resolve(process.cwd(), "src", "tools", "git-coauthor.js")
+    );
   });
 });

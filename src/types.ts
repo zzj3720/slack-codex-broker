@@ -16,6 +16,12 @@ export interface SlackSessionRecord {
   readonly lastTurnSignalKind?: SlackTurnSignalKind | undefined;
   readonly lastTurnSignalReason?: string | undefined;
   readonly lastTurnSignalAt?: string | undefined;
+  readonly coAuthorCandidateUserIds?: readonly string[] | undefined;
+  readonly coAuthorCandidateRevision?: number | undefined;
+  readonly coAuthorConfirmedUserIds?: readonly string[] | undefined;
+  readonly coAuthorConfirmedRevision?: number | undefined;
+  readonly coAuthorPromptRevision?: number | undefined;
+  readonly coAuthorPromptedAt?: string | undefined;
 }
 
 export type JsonLike =
@@ -141,6 +147,17 @@ export interface SlackUserIdentity {
   readonly username?: string | undefined;
   readonly displayName?: string | undefined;
   readonly realName?: string | undefined;
+  readonly email?: string | undefined;
+}
+
+export type GitHubAuthorMappingSource = "manual" | "slack_inferred";
+
+export interface GitHubAuthorMappingRecord {
+  readonly slackUserId: string;
+  readonly githubAuthor: string;
+  readonly source: GitHubAuthorMappingSource;
+  readonly slackIdentity: SlackUserIdentity;
+  readonly updatedAt: string;
 }
 
 export interface SlackBatchInputMessage {

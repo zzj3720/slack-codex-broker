@@ -13,6 +13,7 @@ import { syncGeminiHome } from "./gemini-home.js";
 const ALL_MCP_SERVERS = "*";
 
 export class AppServerProcess {
+  readonly #brokerHttpBaseUrl: string;
   readonly #codexHome: string;
   readonly #runtimeHome: string;
   readonly #port: number;
@@ -29,6 +30,7 @@ export class AppServerProcess {
   #homePrepared = false;
 
   constructor(options: {
+    readonly brokerHttpBaseUrl: string;
     readonly codexHome: string;
     readonly port: number;
     readonly openAiApiKey?: string | undefined;
@@ -41,6 +43,7 @@ export class AppServerProcess {
     readonly geminiHttpsProxy?: string | undefined;
     readonly geminiAllProxy?: string | undefined;
   }) {
+    this.#brokerHttpBaseUrl = options.brokerHttpBaseUrl;
     this.#codexHome = options.codexHome;
     this.#runtimeHome = path.join(path.dirname(options.codexHome), "runtime-home");
     this.#port = options.port;
@@ -67,13 +70,17 @@ export class AppServerProcess {
     await this.#prepareCodexHome();
     await this.#bootstrapAuth();
     await this.#disableConfiguredMcpServers();
+    await this.#ensureGitCommitHook();
     const tempadLinkServiceUrl = await this.#resolveTempadLinkServiceUrl();
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       CODEX_HOME: this.#codexHome,
       HOME: this.#runtimeHome,
+      BROKER_API_BASE: this.#brokerHttpBaseUrl,
       TEMPAD_LINK_SERVICE_URL: tempadLinkServiceUrl,
+      BROKER_GIT_COAUTHOR_HELPER:
+        process.env.BROKER_GIT_COAUTHOR_HELPER?.trim() || resolveRuntimeToolPath("git-coauthor.js"),
       BROKER_GEMINI_UI_HELPER:
         process.env.BROKER_GEMINI_UI_HELPER?.trim() || resolveRuntimeToolPath("gemini-ui.js")
     };
@@ -195,6 +202,24 @@ export class AppServerProcess {
     }
   }
 
+  async #ensureGitCommitHook(): Promise<void> {
+    const hooksDir = path.join(this.#runtimeHome, ".config", "git", "hooks");
+    await ensureDir(hooksDir);
+
+    const hookPath = path.join(hooksDir, "commit-msg");
+    const hookScript = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "if [ -z \"${BROKER_GIT_COAUTHOR_HELPER:-}\" ]; then",
+      "  exit 0",
+      "fi",
+      "node \"$BROKER_GIT_COAUTHOR_HELPER\" commit-msg \"$1\""
+    ].join("\n");
+    await fs.writeFile(hookPath, `${hookScript}\n`, { mode: 0o755 });
+    await fs.chmod(hookPath, 0o755);
+    await this.#runGit(["config", "--global", "core.hooksPath", hooksDir]);
+  }
+
   async #disableConfiguredMcpServers(): Promise<void> {
     if (this.#disabledMcpServers.length === 0) {
       return;
@@ -264,6 +289,38 @@ export class AppServerProcess {
         }
 
         reject(new Error(`codex ${args.join(" ")} failed with code ${code ?? "null"}: ${stderr || stdout}`));
+      });
+    });
+  }
+
+  async #runGit(args: string[]): Promise<string> {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: this.#runtimeHome
+    };
+
+    return await new Promise<string>((resolve, reject) => {
+      const child = spawn("git", args, {
+        env,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      child.once("error", reject);
+      child.once("exit", (code) => {
+        if (code === 0) {
+          resolve(stdout);
+          return;
+        }
+
+        reject(new Error(`git ${args.join(" ")} failed with code ${code ?? "null"}: ${stderr || stdout}`));
       });
     });
   }

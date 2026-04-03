@@ -97,6 +97,42 @@ export class SlackApi {
     return response.ts;
   }
 
+  async postEphemeral(options: {
+    readonly channelId: string;
+    readonly threadTs?: string | undefined;
+    readonly userId: string;
+    readonly text: string;
+    readonly blocks?: readonly Record<string, unknown>[] | undefined;
+  }): Promise<string | undefined> {
+    const response = await this.#post<{ message_ts?: string; ts?: string }>(
+      "chat.postEphemeral",
+      {
+        channel: options.channelId,
+        user: options.userId,
+        thread_ts: options.threadTs,
+        text: options.text,
+        blocks: options.blocks ? JSON.stringify(options.blocks) : undefined
+      },
+      this.#botToken
+    );
+
+    return response.message_ts ?? response.ts;
+  }
+
+  async openView(options: {
+    readonly triggerId: string;
+    readonly view: Record<string, unknown>;
+  }): Promise<void> {
+    await this.#post(
+      "views.open",
+      {
+        trigger_id: options.triggerId,
+        view: JSON.stringify(options.view)
+      },
+      this.#botToken
+    );
+  }
+
   async setAssistantThreadStatus(options: {
     readonly channelId: string;
     readonly threadTs: string;
@@ -355,6 +391,7 @@ export class SlackApi {
           display_name_normalized?: string;
           real_name?: string;
           real_name_normalized?: string;
+          email?: string;
         };
       };
     }>(
@@ -385,7 +422,8 @@ export class SlackApi {
       mention: `<@${response.user.id}>`,
       username,
       displayName,
-      realName
+      realName,
+      email: normalizeSlackField(response.user.profile?.email)?.toLowerCase()
     };
   }
 

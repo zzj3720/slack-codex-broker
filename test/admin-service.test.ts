@@ -54,6 +54,10 @@ describe("AdminService", () => {
           profiles: []
         })
       } as never,
+      githubAuthorMappings: {
+        load: async () => {},
+        listMappings: () => []
+      } as never,
       runtime: {
         restartRuntime: async () => {},
         readAccountSummary: async () => ({
@@ -178,6 +182,10 @@ describe("AdminService", () => {
           activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         })
+      } as never,
+      githubAuthorMappings: {
+        load: async () => {},
+        listMappings: () => []
       } as never,
       runtime: {
         restartRuntime: async () => {},

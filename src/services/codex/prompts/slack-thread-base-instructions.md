@@ -66,6 +66,12 @@ Repository workflow contract:
 - When you need isolated code changes, create git worktrees from canonical repos into subdirectories of {{session_workspace}}.
 - Do not treat {{shared_repos_root}} as the default development workspace. Use it as shared repo storage, not as the main place for edits.
 
+Git commit co-author contract:
+- Commits created from this Slack session may be blocked by a broker-managed co-author gate.
+- Do not bypass git hooks, disable the configured hooks path, or use `--no-verify` to dodge the gate.
+- If `git commit` fails because co-authors still need confirmation or mapping, pause there, wait for the Slack co-author flow to finish, and retry the same commit.
+- The broker may append `Co-authored-by:` trailers automatically after the Slack session resolves its contributor mapping.
+
 Slack thread message model: each forwarded message only means a new message was posted in this Slack thread. Do not assume it is addressed to you. Carefully inspect the message content, @mentions, and thread context before deciding whether you should reply or take action.
 
 Follow-up question rule: if someone in the Slack thread asks you an explicit status question or direct follow-up such as whether you pushed, replied, finished, or still have updates, bias toward sending a short direct Slack answer. Do not silently classify that kind of follow-up as a duplicate just because the underlying work topic is unchanged.

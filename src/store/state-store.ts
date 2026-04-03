@@ -416,7 +416,14 @@ export class StateStore {
       lastTurnSignalTurnId: session.lastTurnSignalTurnId,
       lastTurnSignalKind: session.lastTurnSignalKind,
       lastTurnSignalReason: session.lastTurnSignalReason,
-      lastTurnSignalAt: session.lastTurnSignalAt
+      lastTurnSignalAt: session.lastTurnSignalAt,
+      coAuthorCandidateUserIds: normalizeStringArray(session.coAuthorCandidateUserIds),
+      coAuthorCandidateRevision: normalizeFiniteNumber(session.coAuthorCandidateRevision),
+      coAuthorConfirmedUserIds: normalizeStringArray(session.coAuthorConfirmedUserIds),
+      coAuthorConfirmedRevision: normalizeFiniteNumber(session.coAuthorConfirmedRevision),
+      coAuthorPromptRevision: normalizeFiniteNumber(session.coAuthorPromptRevision),
+      coAuthorPromptedAt:
+        typeof session.coAuthorPromptedAt === "string" ? session.coAuthorPromptedAt : undefined
     };
   }
 
@@ -506,4 +513,30 @@ function normalizeSessionDirectoryName(channelId: string, rootThreadTs: string):
 
 function encodeKey(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function normalizeStringArray(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter(Boolean);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
 }

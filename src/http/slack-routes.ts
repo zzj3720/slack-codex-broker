@@ -5,6 +5,7 @@ import type { AppConfig } from "../config.js";
 import { logger } from "../logger.js";
 import type { SlackCodexBridge } from "../services/slack/slack-codex-bridge.js";
 import {
+  readJsonBody,
   readFormBody,
   respondJson
 } from "./common.js";
@@ -46,6 +47,11 @@ export async function handleSlackRequest(
 
   if (method === "POST" && url.pathname === "/slack/post-file") {
     await handleSlackPostFileRequest(request, response, options);
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/slack/git-coauthors/resolve-commit-message") {
+    await handleResolveCommitCoauthorsRequest(request, response, options);
     return true;
   }
 
@@ -445,6 +451,57 @@ async function handleSlackPostFileRequest(
     respondJson(response, 200, {
       ok: true,
       file: uploaded
+    });
+  } catch (error) {
+    respondJson(response, 500, {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function handleResolveCommitCoauthorsRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  options: {
+    readonly bridge: SlackCodexBridge;
+  }
+): Promise<void> {
+  try {
+    const body = await readJsonBody(request);
+    const cwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
+    const commitMessage = typeof body.commit_message === "string" ? body.commit_message : "";
+    const primaryAuthorEmail =
+      typeof body.primary_author_email === "string" ? body.primary_author_email.trim() : undefined;
+
+    if (!cwd || !commitMessage) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["cwd", "commit_message"]
+      });
+      return;
+    }
+
+    const result = await options.bridge.resolveCommitCoauthors({
+      cwd,
+      commitMessage,
+      primaryAuthorEmail
+    });
+
+    if (result.status === "blocked") {
+      respondJson(response, 409, {
+        ok: false,
+        error: result.errorCode ?? "coauthor_resolution_blocked",
+        message: result.message,
+        sessionKey: result.sessionKey
+      });
+      return;
+    }
+
+    respondJson(response, 200, {
+      ok: true,
+      ...result
     });
   } catch (error) {
     respondJson(response, 500, {

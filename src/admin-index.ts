@@ -7,6 +7,7 @@ import { AdminService } from "./services/admin-service.js";
 import { AuthProfileService } from "./services/auth-profile-service.js";
 import { AuthFileRuntimeControl } from "./services/auth-file-runtime-control.js";
 import { WorkerDeploymentService } from "./services/deploy/worker-deployment-service.js";
+import { GitHubAuthorMappingService } from "./services/github-author-mapping-service.js";
 import { SessionManager } from "./services/session-manager.js";
 import { StateStore } from "./store/state-store.js";
 
@@ -32,6 +33,10 @@ export async function startAdminService(): Promise<{
   const authProfiles = new AuthProfileService({
     config
   });
+  const githubAuthorMappings = new GitHubAuthorMappingService({
+    stateDir: config.stateDir
+  });
+  await githubAuthorMappings.load();
   const deployment = createWorkerDeploymentService(config);
   const runtime = new AuthFileRuntimeControl(config, {
     onRestart: async (reason) => {
@@ -46,6 +51,7 @@ export async function startAdminService(): Promise<{
     sessions,
     runtime,
     authProfiles,
+    githubAuthorMappings,
     startedAt,
     deployment
   });

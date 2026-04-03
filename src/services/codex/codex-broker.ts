@@ -62,6 +62,7 @@ export class CodexBroker extends EventEmitter {
     }
 
     this.#appServerProcess = new AppServerProcess({
+      brokerHttpBaseUrl: options.brokerHttpBaseUrl,
       codexHome: options.codexHome,
       hostCodexHomePath: options.hostCodexHomePath,
       hostGeminiHomePath: options.hostGeminiHomePath,

@@ -43,6 +43,11 @@ interface ActiveTurn {
   reject: (error: Error) => void;
 }
 
+interface BufferedTurnEvents {
+  text: string;
+  terminalState: "completed" | "aborted" | null;
+}
+
 export interface StartedTurn {
   readonly turnId: string;
   readonly completion: Promise<CodexTurnResult>;
@@ -118,6 +123,7 @@ export class AppServerClient extends EventEmitter {
   #requestCounter = 0;
   readonly #pendingRequests = new Map<string, PendingRequest>();
   readonly #activeTurns = new Map<string, ActiveTurn>();
+  readonly #bufferedTurnEvents = new Map<string, BufferedTurnEvents>();
   #connected = false;
   #disconnectHandled = false;
   #slackBotIdentity: SlackUserIdentity | null = null;
@@ -352,6 +358,7 @@ export class AppServerClient extends EventEmitter {
         reject
       });
     });
+    this.#applyBufferedTurnEvents(result.turn.id);
 
     return {
       turnId: result.turn.id,
@@ -562,9 +569,17 @@ export class AppServerClient extends EventEmitter {
 
   #handleTurnEvent(method: string, params: Record<string, any>): void {
     if (method === "item/agentMessage/delta") {
-      const turn = this.#activeTurns.get(params.turnId as string);
+      const turnId = params.turnId as string | undefined;
+      if (!turnId) {
+        return;
+      }
+
+      const delta = String(params.delta ?? "");
+      const turn = this.#activeTurns.get(turnId);
       if (turn) {
-        turn.text += String(params.delta ?? "");
+        turn.text += delta;
+      } else if (delta) {
+        this.#bufferTurnText(turnId, delta);
       }
       return;
     }
@@ -577,16 +592,11 @@ export class AppServerClient extends EventEmitter {
 
       const turn = this.#activeTurns.get(turnId);
       if (!turn) {
+        this.#bufferTurnTerminalState(turnId, "completed");
         return;
       }
 
-      this.#activeTurns.delete(turnId);
-      turn.resolve({
-        threadId: turn.threadId,
-        turnId,
-        finalMessage: turn.text.trim(),
-        aborted: false
-      });
+      this.#resolveActiveTurn(turn, false);
       return;
     }
 
@@ -598,16 +608,11 @@ export class AppServerClient extends EventEmitter {
 
       const turn = this.#activeTurns.get(turnId);
       if (!turn) {
+        this.#bufferTurnTerminalState(turnId, "aborted");
         return;
       }
 
-      this.#activeTurns.delete(turnId);
-      turn.resolve({
-        threadId: turn.threadId,
-        turnId,
-        finalMessage: turn.text.trim(),
-        aborted: true
-      });
+      this.#resolveActiveTurn(turn, true);
     }
   }
 
@@ -630,6 +635,7 @@ export class AppServerClient extends EventEmitter {
       this.#activeTurns.delete(turnId);
       turn.reject(error);
     }
+    this.#bufferedTurnEvents.clear();
 
     this.emit("disconnected", error);
   }
@@ -645,6 +651,7 @@ export class AppServerClient extends EventEmitter {
     }
 
     this.#activeTurns.delete(turnId);
+    this.#bufferedTurnEvents.delete(turnId);
 
     if (result.status === "completed") {
       turn.resolve({
@@ -676,7 +683,63 @@ export class AppServerClient extends EventEmitter {
     }
 
     this.#activeTurns.delete(turnId);
+    this.#bufferedTurnEvents.delete(turnId);
     turn.reject(new Error("Codex turn missing from thread snapshot"));
+  }
+
+  #bufferTurnText(turnId: string, delta: string): void {
+    const buffered = this.#bufferedTurnEvents.get(turnId) ?? {
+      text: "",
+      terminalState: null
+    };
+    buffered.text += delta;
+    this.#bufferedTurnEvents.set(turnId, buffered);
+  }
+
+  #bufferTurnTerminalState(turnId: string, terminalState: "completed" | "aborted"): void {
+    const buffered = this.#bufferedTurnEvents.get(turnId) ?? {
+      text: "",
+      terminalState: null
+    };
+    buffered.terminalState = terminalState;
+    this.#bufferedTurnEvents.set(turnId, buffered);
+  }
+
+  #applyBufferedTurnEvents(turnId: string): void {
+    const turn = this.#activeTurns.get(turnId);
+    if (!turn) {
+      return;
+    }
+
+    const buffered = this.#bufferedTurnEvents.get(turnId);
+    if (!buffered) {
+      return;
+    }
+
+    this.#bufferedTurnEvents.delete(turnId);
+    if (buffered.text) {
+      turn.text += buffered.text;
+    }
+
+    if (buffered.terminalState === "completed") {
+      this.#resolveActiveTurn(turn, false);
+      return;
+    }
+
+    if (buffered.terminalState === "aborted") {
+      this.#resolveActiveTurn(turn, true);
+    }
+  }
+
+  #resolveActiveTurn(turn: ActiveTurn, aborted: boolean): void {
+    this.#activeTurns.delete(turn.turnId);
+    this.#bufferedTurnEvents.delete(turn.turnId);
+    turn.resolve({
+      threadId: turn.threadId,
+      turnId: turn.turnId,
+      finalMessage: turn.text.trim(),
+      aborted
+    });
   }
 
   #startHeartbeat(socket: WebSocket, intervalMs = 30_000): void {

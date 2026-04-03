@@ -5,6 +5,7 @@ import { createHttpHandler } from "./http/router.js";
 import { configureLogger, logger } from "./logger.js";
 import { CodexBroker } from "./services/codex/codex-broker.js";
 import { IsolatedMcpService } from "./services/codex/isolated-mcp-service.js";
+import { GitHubAuthorMappingService } from "./services/github-author-mapping-service.js";
 import { JobManager } from "./services/job-manager.js";
 import { SessionManager } from "./services/session-manager.js";
 import { SlackCodexBridge } from "./services/slack/slack-codex-bridge.js";
@@ -27,6 +28,10 @@ export async function startWorkerService(): Promise<{
     stateStore,
     sessionsRoot: config.sessionsRoot
   });
+  const githubAuthorMappings = new GitHubAuthorMappingService({
+    stateDir: config.stateDir
+  });
+  await githubAuthorMappings.load();
   const codexBroker = new CodexBroker({
     serviceName: config.serviceName,
     brokerHttpBaseUrl: config.brokerHttpBaseUrl,
@@ -47,7 +52,8 @@ export async function startWorkerService(): Promise<{
   const bridge = new SlackCodexBridge({
     config,
     sessions: sessionManager,
-    codex: codexBroker
+    codex: codexBroker,
+    mappings: githubAuthorMappings
   });
   const isolatedMcp = new IsolatedMcpService({
     codexHome: config.codexHome,

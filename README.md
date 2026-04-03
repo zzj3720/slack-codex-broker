@@ -18,6 +18,7 @@ On the first `@bot` inside an existing Slack thread, the broker backfills a boun
 Create a Slack app with:
 
 - Socket Mode enabled
+- Interactivity enabled
 - App-level token with `connections:write`
 - Bot token scopes:
   - `app_mentions:read`
@@ -26,6 +27,7 @@ Create a Slack app with:
   - `files:read` if you want Codex to receive image attachments from Slack messages
   - `files:write` if you want Codex to upload images/files back into Slack threads
   - `users:read` if you want Codex to see Slack display names instead of only raw user IDs
+  - `users:read.email` if you want the broker to infer GitHub co-author mappings from Slack profile email
 
 Event subscriptions needed for the current broker flow:
 
@@ -34,6 +36,8 @@ Event subscriptions needed for the current broker flow:
 - `message.im` for direct-message sessions
 
 If you want to support private channels or DMs, add the corresponding `groups:history`, `im:history`, or `mpim:history` scopes plus matching message events.
+
+The broker's Slack co-author flow uses Socket Mode interactive envelopes, thread ephemerals, and modals. With Socket Mode enabled, you do not need a separate public interactivity Request URL for this flow.
 
 ## Environment
 
@@ -236,6 +240,8 @@ GET /admin/api/status
 POST /admin/api/auth-profiles
 POST /admin/api/auth-profiles/:name/activate
 DELETE /admin/api/auth-profiles/:name
+POST /admin/api/github-authors
+DELETE /admin/api/github-authors/:slackUserId
 POST /admin/api/deploy
 POST /admin/api/rollback
 ```
@@ -247,6 +253,8 @@ Typical first-run flow:
 3. Activate the profile you want the worker to use.
 4. Later, deploy a commit / branch / tag from the Deploy panel.
 5. Roll back from the same panel when needed.
+
+The same admin page also exposes a `GitHub Authors` panel for manually maintaining `Slack user -> GitHub author` mappings. Manual entries override Slack-inferred mappings.
 
 If `BROKER_ADMIN_TOKEN` is set, `/admin/api/*` requires that token via `x-admin-token` or `Authorization: Bearer ...`. If it is unset, the admin API is still enabled, so only expose the broker port in environments you trust.
 

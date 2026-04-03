@@ -179,4 +179,51 @@ describe("SessionManager", () => {
       lastTurnSignalAt: "2026-03-18T10:00:00.000Z"
     });
   });
+
+  it("persists co-author candidate and confirmed revision state", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));
+    const store = new StateStore(stateDir, sessionsRoot);
+    const manager = new SessionManager({
+      stateStore: store,
+      sessionsRoot
+    });
+
+    await manager.load();
+    await manager.ensureSession("C123", "999.000");
+    let session = await manager.addCoAuthorCandidates("C123", "999.000", ["U1"]);
+    expect(session).toMatchObject({
+      coAuthorCandidateUserIds: ["U1"],
+      coAuthorCandidateRevision: 1
+    });
+
+    session = await manager.confirmCoAuthors("C123", "999.000", {
+      userIds: ["U1"],
+      candidateRevision: 1
+    });
+    expect(session).toMatchObject({
+      coAuthorConfirmedUserIds: ["U1"],
+      coAuthorConfirmedRevision: 1
+    });
+
+    session = await manager.addCoAuthorCandidates("C123", "999.000", ["U2"]);
+    expect(session).toMatchObject({
+      coAuthorCandidateUserIds: ["U1", "U2"],
+      coAuthorCandidateRevision: 2,
+      coAuthorConfirmedRevision: 1
+    });
+
+    const reloadedStore = new StateStore(stateDir, sessionsRoot);
+    const reloadedManager = new SessionManager({
+      stateStore: reloadedStore,
+      sessionsRoot
+    });
+    await reloadedManager.load();
+    expect(reloadedManager.getSession("C123", "999.000")).toMatchObject({
+      coAuthorCandidateUserIds: ["U1", "U2"],
+      coAuthorCandidateRevision: 2,
+      coAuthorConfirmedUserIds: ["U1"],
+      coAuthorConfirmedRevision: 1
+    });
+  });
 });

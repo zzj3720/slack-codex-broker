@@ -27,6 +27,9 @@ describe("loadConfig", () => {
     expect(config.slackActiveTurnReconcileIntervalMs).toBe(15_000);
     expect(config.slackProgressReminderAfterMs).toBe(120_000);
     expect(config.slackProgressReminderRepeatMs).toBe(120_000);
+    expect(config.sessionArtifactInactiveTtlMs).toBe(6 * 60 * 60 * 1_000);
+    expect(config.sessionArtifactCleanupIntervalMs).toBe(60 * 60 * 1_000);
+    expect(config.sessionArtifactCleanupMaxPerSweep).toBe(20);
     expect(config.logLevel).toBe("info");
     expect(config.logRawSlackEvents).toBe(true);
     expect(config.logRawCodexRpc).toBe(true);

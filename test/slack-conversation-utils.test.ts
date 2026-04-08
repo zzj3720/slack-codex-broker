@@ -6,6 +6,7 @@ import {
   isMissingCodexThreadError,
   isMissingActiveTurnSteerError,
   parseActiveTurnMismatch,
+  shouldAutoRecoverSession,
   shouldPostSlackRunFailure,
   shouldNotifySlackFailure
 } from "../src/services/slack/slack-conversation-utils.js";
@@ -89,4 +90,29 @@ describe("slack conversation utils", () => {
       })
     ).toBe(false);
   });
+
+  it("only auto-recovers sessions updated within the last day", () => {
+    const nowMs = Date.parse("2026-04-08T12:00:00.000Z");
+    const baseSession = {
+      key: "C123:1.23",
+      channelId: "C123",
+      rootThreadTs: "1.23",
+      workspacePath: "/tmp/workspace",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      updatedAt: "2026-04-08T00:00:01.000Z",
+      lastObservedMessageTs: "1775621831.247979"
+    };
+
+    expect(shouldAutoRecoverSession(baseSession, nowMs)).toBe(true);
+    expect(
+      shouldAutoRecoverSession(
+        {
+          ...baseSession,
+          updatedAt: "2026-04-07T11:59:59.000Z"
+        },
+        nowMs
+      )
+    ).toBe(false);
+  });
+
 });

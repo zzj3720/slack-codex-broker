@@ -422,8 +422,11 @@ async function waitForAppServerListen(
   return await new Promise<void>((resolve, reject) => {
     let stdoutTail = "";
     let stderrTail = "";
+    let startupComplete = false;
     const timeout = setTimeout(() => {
-      cleanup();
+      cleanup({
+        removeStreamListeners: true
+      });
       reject(
         new Error(
           `Timed out waiting for codex app-server to start${formatStartupDetails(stdoutTail, stderrTail)}`
@@ -431,11 +434,30 @@ async function waitForAppServerListen(
       );
     }, 15_000);
 
-    const cleanup = () => {
+    const cleanup = (options?: {
+      readonly removeStreamListeners?: boolean;
+    }) => {
       clearTimeout(timeout);
-      child.stdout.off("data", onStdout);
-      child.stderr.off("data", onStderr);
-      child.off("exit", onExit);
+      child.off("exit", onStartupExit);
+
+      if (options?.removeStreamListeners) {
+        child.stdout.off("data", onStdout);
+        child.stderr.off("data", onStderr);
+      }
+    };
+
+    const finishStartup = () => {
+      if (startupComplete) {
+        return;
+      }
+
+      startupComplete = true;
+      // Keep draining stdout/stderr after the startup banner so later app-server
+      // transport warnings (for example websocket disconnect reasons) are not
+      // lost and the child cannot block on a full pipe.
+      cleanup();
+      child.once("exit", onPostStartupExit);
+      resolve();
     };
 
     const onStdout = (chunk: Buffer): void => {
@@ -443,8 +465,7 @@ async function waitForAppServerListen(
       stdoutTail = `${stdoutTail}${text}`.slice(-8_000);
       logger.debug("codex app-server stdout", { text });
       if (text.includes("listening on:")) {
-        cleanup();
-        resolve();
+        finishStartup();
       }
     };
 
@@ -453,13 +474,20 @@ async function waitForAppServerListen(
       stderrTail = `${stderrTail}${text}`.slice(-8_000);
       logger.warn("codex app-server stderr", { text });
       if (text.includes("listening on:")) {
-        cleanup();
-        resolve();
+        finishStartup();
       }
     };
 
-    const onExit = (code: number | null) => {
-      cleanup();
+    const onPostStartupExit = () => {
+      child.stdout.off("data", onStdout);
+      child.stderr.off("data", onStderr);
+      child.off("exit", onPostStartupExit);
+    };
+
+    const onStartupExit = (code: number | null) => {
+      cleanup({
+        removeStreamListeners: true
+      });
       reject(
         new Error(
           `codex app-server exited early with code ${code ?? "null"}${formatStartupDetails(stdoutTail, stderrTail)}`
@@ -469,7 +497,7 @@ async function waitForAppServerListen(
 
     child.stdout.on("data", onStdout);
     child.stderr.on("data", onStderr);
-    child.once("exit", onExit);
+    child.once("exit", onStartupExit);
   });
 }
 

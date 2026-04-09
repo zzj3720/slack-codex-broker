@@ -206,6 +206,64 @@ describe("AppServerClient disconnect handling", () => {
     });
   });
 
+  it("does not emit an unhandled rejection when a turn disconnects before completion is awaited", async () => {
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        return;
+      }
+
+      if (message.method === "turn/start") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            turn: {
+              id: "turn-early-close"
+            }
+          }
+        }));
+        setTimeout(() => {
+          socket.close();
+        }, 0);
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos"
+    });
+
+    await client.connect();
+    const started = await client.startTurn("thread-1", "/tmp", [
+      {
+        type: "text",
+        text: "hello",
+        text_elements: []
+      }
+    ]);
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await expect(started.completion).rejects.toThrow(/closed/i);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("can recover a completed turn result from thread/read", async () => {
     const server = await createServer((socket, message) => {
       if (message.method === "initialize") {

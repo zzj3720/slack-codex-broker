@@ -359,6 +359,9 @@ export class AppServerClient extends EventEmitter {
       });
     });
     this.#applyBufferedTurnEvents(result.turn.id);
+    // A websocket disconnect can reject the turn before the caller gets to `await completion`.
+    // Keep a no-op rejection handler attached so Node does not treat that window as unhandled.
+    void completion.catch(() => {});
 
     return {
       turnId: result.turn.id,

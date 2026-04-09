@@ -206,4 +206,111 @@ describe("SlackCoauthorService", () => {
     expect(resolved.commitMessage).toContain("Co-authored-by: Alice Example <alice@example.com>");
     expect(resolved.commitMessage).toContain("Co-authored-by: Bob Example <bob@example.com>");
   });
+
+  it("adds a manual-entry hint when Slack cannot infer an email and reports which user is invalid", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-sessions-"));
+    tempDirs.push(stateDir, sessionsRoot);
+
+    const sessions = new SessionManager({
+      stateStore: new StateStore(stateDir, sessionsRoot),
+      sessionsRoot
+    });
+    await sessions.load();
+    const session = await sessions.ensureSession("C777", "333.444");
+    const mappings = new GitHubAuthorMappingService({ stateDir });
+    await mappings.load();
+
+    const postEphemeral = vi.fn(async () => "111.555");
+    const openView = vi.fn(async () => {});
+    const service = new SlackCoauthorService({
+      sessions,
+      mappings,
+      slackApi: {
+        getUserIdentity: vi.fn(async (userId: string) => {
+          if (userId !== "U1") {
+            return null;
+          }
+
+          return {
+            userId: "U1",
+            mention: "<@U1>",
+            realName: "Kewei Hua"
+          };
+        }),
+        postEphemeral,
+        openView
+      } as never
+    });
+
+    const latestSession = await service.noteIncomingSlackInput(session, {
+      source: "thread_reply",
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      messageTs: "333.445",
+      userId: "U1",
+      senderKind: "user",
+      text: "please commit this"
+    });
+
+    await service.handleInteractivePayload({
+      type: "block_actions",
+      trigger_id: "trigger-2",
+      actions: [
+        {
+          action_id: "coauthor_configure",
+          value: JSON.stringify({
+            session_key: latestSession.key,
+            candidate_revision: latestSession.coAuthorCandidateRevision
+          })
+        }
+      ]
+    });
+
+    const modalView = (openView.mock.calls[0] as unknown as [Record<string, unknown>])?.[0]?.view as Record<string, unknown>;
+    expect((modalView.blocks as Array<Record<string, unknown>>)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          block_id: "author__U1",
+          hint: {
+            type: "plain_text",
+            text: "Slack could not infer an email for this person. If checked, enter Name <email@example.com> manually."
+          }
+        })
+      ])
+    );
+
+    await service.handleInteractivePayload({
+      type: "view_submission",
+      user: { id: "U1" },
+      view: {
+        private_metadata: JSON.stringify({
+          session_key: latestSession.key,
+          candidate_revision: latestSession.coAuthorCandidateRevision
+        }),
+        state: {
+          values: {
+            contributors: {
+              selected: {
+                selected_options: [
+                  { value: "U1" }
+                ]
+              }
+            },
+            author__U1: {
+              value: {
+                value: ""
+              }
+            }
+          }
+        }
+      }
+    });
+
+    expect(postEphemeral).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        text: "These selected co-authors need a valid GitHub author in `Name <email>` format: Kewei Hua. If Slack cannot infer an email for someone, enter it manually."
+      })
+    );
+  });
 });

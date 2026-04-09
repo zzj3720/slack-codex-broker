@@ -326,7 +326,7 @@ export class CodexBroker extends EventEmitter {
   }
 }
 
-function isRecoverableCodexConnectionError(error: unknown): boolean {
+export function isRecoverableCodexConnectionError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return [
     "Codex app-server websocket is not connected",
@@ -334,6 +334,7 @@ function isRecoverableCodexConnectionError(error: unknown): boolean {
     "readyState 3",
     "socket hang up",
     "ECONNREFUSED",
+    "EPIPE",
     "closed"
   ].some((pattern) => message.includes(pattern));
 }

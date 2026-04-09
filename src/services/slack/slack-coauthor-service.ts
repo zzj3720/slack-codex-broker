@@ -9,6 +9,7 @@ import { SessionManager } from "../session-manager.js";
 import { GitHubAuthorMappingService } from "../github-author-mapping-service.js";
 import {
   appendCoAuthorTrailers,
+  inferGitHubAuthorFromSlackIdentity,
   isValidGitHubAuthor,
   normalizeEmail
 } from "../git/github-author-utils.js";
@@ -249,10 +250,16 @@ export class SlackCoauthorService {
     }
 
     if (invalidUserIds.length > 0) {
+      const invalidLabels = await Promise.all(
+        invalidUserIds.map(async (invalidUserId) => describeSlackUser(
+          await this.#slackApi.getUserIdentity(invalidUserId),
+          invalidUserId
+        ))
+      );
       await this.#postSubmitResult(
         userId,
         session.key,
-        "Some selected co-authors still have an invalid `Name <email>` value. Re-open the Slack prompt and fix them."
+        `These selected co-authors need a valid GitHub author in \`Name <email>\` format: ${invalidLabels.join(", ")}. If Slack cannot infer an email for someone, enter it manually.`
       );
       return;
     }
@@ -397,7 +404,10 @@ export class SlackCoauthorService {
         },
         ...candidateUserIds.map((userId, index) => {
           const identity = identities[index];
-          const initialValue = this.#mappings.getMapping(userId)?.githubAuthor ?? "";
+          const initialValue =
+            this.#mappings.getMapping(userId)?.githubAuthor ??
+            (identity ? inferGitHubAuthorFromSlackIdentity(identity) : undefined) ??
+            "";
           return {
             type: "input",
             block_id: authorBlockId(userId),
@@ -405,6 +415,10 @@ export class SlackCoauthorService {
             label: {
               type: "plain_text",
               text: `${describeSlackUser(identity, userId)} GitHub author`
+            },
+            hint: {
+              type: "plain_text",
+              text: buildGitHubAuthorHint(identity, Boolean(initialValue))
             },
             element: {
               type: "plain_text_input",
@@ -537,4 +551,21 @@ function describeSlackUser(
     return `${label} (${identity.email})`;
   }
   return label;
+}
+
+function buildGitHubAuthorHint(
+  identity: {
+    readonly email?: string | undefined;
+  } | null | undefined,
+  hasInitialValue: boolean
+): string {
+  if (hasInitialValue) {
+    return "Used when this person is checked as a co-author.";
+  }
+
+  if (!normalizeEmail(identity?.email)) {
+    return "Slack could not infer an email for this person. If checked, enter Name <email@example.com> manually.";
+  }
+
+  return "If checked, enter a GitHub author in the form Name <email@example.com>.";
 }

@@ -96,6 +96,7 @@ export function isRecoverableCodexTurnFailure(error: unknown): boolean {
     "readyState 3",
     "socket hang up",
     "ECONNREFUSED",
+    "EPIPE",
     "closed"
   ].some((pattern) => message.includes(pattern));
 }

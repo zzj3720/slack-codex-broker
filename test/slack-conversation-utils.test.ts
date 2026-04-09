@@ -49,6 +49,13 @@ describe("slack conversation utils", () => {
     expect(shouldPostSlackRunFailure(new Error("Codex app-server websocket closed"))).toBe(false);
   });
 
+  it("treats EPIPE transport failures as recoverable", () => {
+    expect(formatSlackRunFailureMessage(new Error("write EPIPE"))).toBe(
+      "I lost my connection while working on this thread. I will resume as soon as the connection comes back."
+    );
+    expect(shouldPostSlackRunFailure(new Error("write EPIPE"))).toBe(false);
+  });
+
   it("formats active turn mismatches for Slack users", () => {
     expect(
       formatSlackRunFailureMessage(

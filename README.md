@@ -292,6 +292,8 @@ Disposable runtime state:
 - `logs/`
 - `repos/`
 
+The worker also runs a session artifact janitor for inactive sessions. By default it removes rebuildable macOS worktree artifacts like `frontend/macos/.build` after 6 hours of inactivity, while leaving the session workspace and source checkout in place.
+
 The macOS bare-run deploy path only reuses the durable broker-owned subset that defines behavior and identity. It intentionally leaves the disposable runtime state behind and starts the VM with a clean `sessions/`, `jobs/`, `logs/`, and `repos/`.
 
 ## Logging

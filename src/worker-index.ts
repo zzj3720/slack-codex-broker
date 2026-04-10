@@ -7,6 +7,7 @@ import { CodexBroker } from "./services/codex/codex-broker.js";
 import { IsolatedMcpService } from "./services/codex/isolated-mcp-service.js";
 import { GitHubAuthorMappingService } from "./services/github-author-mapping-service.js";
 import { JobManager } from "./services/job-manager.js";
+import { SessionArtifactJanitor } from "./services/session-artifact-janitor.js";
 import { SessionManager } from "./services/session-manager.js";
 import { SlackCodexBridge } from "./services/slack/slack-codex-bridge.js";
 import { StateStore } from "./store/state-store.js";
@@ -68,6 +69,12 @@ export async function startWorkerService(): Promise<{
       await bridge.acceptBackgroundJobEvent(event);
     }
   });
+  const sessionArtifactJanitor = new SessionArtifactJanitor({
+    sessions: sessionManager,
+    inactivityTtlMs: config.sessionArtifactInactiveTtlMs,
+    cleanupIntervalMs: config.sessionArtifactCleanupIntervalMs,
+    cleanupMaxPerSweep: config.sessionArtifactCleanupMaxPerSweep
+  });
   const server = http.createServer(
     createHttpHandler({
       bridge,
@@ -80,11 +87,13 @@ export async function startWorkerService(): Promise<{
   try {
     await bridge.start();
     await jobManager.start();
+    await sessionArtifactJanitor.start();
     await new Promise<void>((resolve, reject) => {
       server.listen(config.port, config.workerBindHost, () => resolve());
       server.once("error", reject);
     });
   } catch (error) {
+    await sessionArtifactJanitor.stop().catch(() => {});
     await jobManager.stop().catch(() => {});
     await bridge.stop().catch(() => {});
     if (server.listening) {
@@ -104,6 +113,7 @@ export async function startWorkerService(): Promise<{
 
   return {
     stop: async () => {
+      await sessionArtifactJanitor.stop();
       await bridge.stop();
       await jobManager.stop();
       await new Promise<void>((resolve, reject) => {

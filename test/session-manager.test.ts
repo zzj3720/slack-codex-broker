@@ -199,18 +199,21 @@ describe("SessionManager", () => {
 
     session = await manager.confirmCoAuthors("C123", "999.000", {
       userIds: ["U1"],
-      candidateRevision: 1
+      candidateRevision: 1,
+      ignoreMissing: true
     });
     expect(session).toMatchObject({
       coAuthorConfirmedUserIds: ["U1"],
-      coAuthorConfirmedRevision: 1
+      coAuthorConfirmedRevision: 1,
+      coAuthorIgnoreMissingRevision: 1
     });
 
     session = await manager.addCoAuthorCandidates("C123", "999.000", ["U2"]);
     expect(session).toMatchObject({
       coAuthorCandidateUserIds: ["U1", "U2"],
       coAuthorCandidateRevision: 2,
-      coAuthorConfirmedRevision: 1
+      coAuthorConfirmedRevision: 1,
+      coAuthorIgnoreMissingRevision: undefined
     });
 
     const reloadedStore = new StateStore(stateDir, sessionsRoot);
@@ -223,7 +226,8 @@ describe("SessionManager", () => {
       coAuthorCandidateUserIds: ["U1", "U2"],
       coAuthorCandidateRevision: 2,
       coAuthorConfirmedUserIds: ["U1"],
-      coAuthorConfirmedRevision: 1
+      coAuthorConfirmedRevision: 1,
+      coAuthorIgnoreMissingRevision: undefined
     });
   });
 });

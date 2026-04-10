@@ -188,6 +188,24 @@ export class SlackCodexBridge {
     await this.#coauthors.deleteMapping(slackUserId);
   }
 
+  async getCommitCoauthorStatus(cwd: string) {
+    return await this.#coauthors.getCommitCoauthorStatus(cwd);
+  }
+
+  async configureSessionCoauthors(options: {
+    readonly cwd: string;
+    readonly coauthors?: readonly string[] | undefined;
+    readonly userIds?: readonly string[] | undefined;
+    readonly ignoreMissing?: boolean | undefined;
+    readonly mappings?: ReadonlyArray<{
+      readonly slackUserId?: string | undefined;
+      readonly slackUser?: string | undefined;
+      readonly githubAuthor: string;
+    }> | undefined;
+  }) {
+    return await this.#coauthors.configureSessionCoauthors(options);
+  }
+
   async resolveCommitCoauthors(options: {
     readonly cwd: string;
     readonly commitMessage: string;

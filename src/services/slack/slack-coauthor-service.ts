@@ -20,6 +20,9 @@ const COAUTHOR_CONFIGURE_ACTION_ID = "coauthor_configure";
 const COAUTHOR_MODAL_CALLBACK_ID = "coauthor_confirm";
 const CONTRIBUTOR_BLOCK_ID = "contributors";
 const CONTRIBUTOR_ACTION_ID = "selected";
+const COMMIT_BEHAVIOR_BLOCK_ID = "commit_behavior";
+const COMMIT_BEHAVIOR_ACTION_ID = "selected";
+const IGNORE_MISSING_OPTION_VALUE = "ignore_missing";
 
 export interface ResolveCommitCoauthorsResult {
   readonly status: "noop" | "blocked" | "resolved";
@@ -27,6 +30,34 @@ export interface ResolveCommitCoauthorsResult {
   readonly message?: string | undefined;
   readonly errorCode?: string | undefined;
   readonly coAuthors?: readonly string[] | undefined;
+}
+
+interface CommitCoauthorCandidateStatus {
+  readonly userId: string;
+  readonly mention: string;
+  readonly username?: string | undefined;
+  readonly displayName?: string | undefined;
+  readonly realName?: string | undefined;
+  readonly email?: string | undefined;
+  readonly githubAuthor?: string | undefined;
+  readonly githubAuthorSource?: "manual" | "slack_inferred" | undefined;
+  readonly selected: boolean;
+}
+
+interface CommitCoauthorStatus {
+  readonly sessionKey: string;
+  readonly channelId: string;
+  readonly rootThreadTs: string;
+  readonly workspacePath: string;
+  readonly candidateRevision?: number | undefined;
+  readonly selectionMode: "default_all_candidates" | "explicit";
+  readonly ignoreMissing: boolean;
+  readonly needsUserInput: boolean;
+  readonly canCommitDirectly: boolean;
+  readonly selectedUserIds: readonly string[];
+  readonly resolvedCoAuthors: readonly string[];
+  readonly missingSelectedUserIds: readonly string[];
+  readonly candidates: readonly CommitCoauthorCandidateStatus[];
 }
 
 export class SlackCoauthorService {
@@ -87,6 +118,67 @@ export class SlackCoauthorService {
     await this.#mappings.deleteMapping(slackUserId);
   }
 
+  async getCommitCoauthorStatus(cwd: string): Promise<CommitCoauthorStatus | null> {
+    await this.#mappings.load();
+    const session = this.#sessions.findSessionByWorkspace(cwd);
+    if (!session) {
+      return null;
+    }
+
+    return await this.#buildCommitCoauthorStatus(session);
+  }
+
+  async configureSessionCoauthors(options: {
+    readonly cwd: string;
+    readonly coauthors?: readonly string[] | undefined;
+    readonly userIds?: readonly string[] | undefined;
+    readonly ignoreMissing?: boolean | undefined;
+    readonly mappings?: ReadonlyArray<{
+      readonly slackUserId?: string | undefined;
+      readonly slackUser?: string | undefined;
+      readonly githubAuthor: string;
+    }> | undefined;
+  }): Promise<CommitCoauthorStatus | null> {
+    await this.#mappings.load();
+    let session = this.#sessions.findSessionByWorkspace(options.cwd);
+    if (!session) {
+      return null;
+    }
+
+    let status = await this.#buildCommitCoauthorStatus(session);
+
+    for (const entry of options.mappings ?? []) {
+      const slackUserId = entry.slackUserId?.trim() || this.#resolveUserReference(status, entry.slackUser);
+      if (!slackUserId) {
+        throw new Error(`Unable to resolve co-author mapping target: ${entry.slackUser ?? entry.slackUserId ?? "unknown"}`);
+      }
+
+      const slackIdentity = await this.#slackApi.getUserIdentity(slackUserId);
+      await this.#mappings.upsertManualMapping({
+        slackUserId,
+        githubAuthor: entry.githubAuthor,
+        slackIdentity: slackIdentity ?? undefined
+      });
+    }
+
+    status = await this.#buildCommitCoauthorStatus(session);
+    const selectedUserIds = this.#resolveRequestedUserIds(status, {
+      coauthors: options.coauthors,
+      userIds: options.userIds
+    });
+
+    if (selectedUserIds !== undefined || options.ignoreMissing !== undefined) {
+      session = await this.#sessions.confirmCoAuthors(session.channelId, session.rootThreadTs, {
+        userIds: selectedUserIds ?? status.selectedUserIds,
+        candidateRevision: session.coAuthorCandidateRevision ?? 0,
+        ignoreMissing: options.ignoreMissing ?? status.ignoreMissing
+      });
+      status = await this.#buildCommitCoauthorStatus(session);
+    }
+
+    return status;
+  }
+
   async handleInteractivePayload(payload: Record<string, unknown>): Promise<void> {
     const type = typeof payload.type === "string" ? payload.type : undefined;
     if (type === "block_actions") {
@@ -114,52 +206,19 @@ export class SlackCoauthorService {
       };
     }
 
-    const candidateUserIds = session.coAuthorCandidateUserIds ?? [];
-    if (candidateUserIds.length === 0) {
+    const status = await this.#buildCommitCoauthorStatus(session);
+    if (status.selectedUserIds.length === 0) {
       return {
         status: "noop",
         sessionKey: session.key
       };
     }
 
-    if (session.coAuthorConfirmedRevision !== session.coAuthorCandidateRevision) {
-      await this.#ensurePrompt(session);
-      return {
-        status: "blocked",
-        sessionKey: session.key,
-        errorCode: "coauthor_confirmation_required",
-        message: "Commit blocked by Slack co-author gate. Open the Slack thread and confirm co-authors, then retry the commit."
-      };
+    if (status.needsUserInput) {
+      await this.#ensurePrompt(session, status);
     }
 
-    const confirmedUserIds = session.coAuthorConfirmedUserIds ?? [];
-    const mappings = await Promise.all(
-      confirmedUserIds.map(async (userId) => {
-        let mapping = this.#mappings.getMapping(userId);
-        if (!mapping) {
-          const identity = await this.#slackApi.getUserIdentity(userId);
-          if (identity) {
-            mapping = await this.#mappings.recordObservedIdentity(identity) ?? undefined;
-          }
-        }
-        return mapping ?? null;
-      })
-    );
-
-    const missingUserIds = confirmedUserIds.filter((userId, index) => !mappings[index]);
-    if (missingUserIds.length > 0) {
-      await this.#ensurePrompt(session);
-      return {
-        status: "blocked",
-        sessionKey: session.key,
-        errorCode: "coauthor_mapping_required",
-        message: "Commit blocked by Slack co-author gate. At least one confirmed Slack contributor is still missing a GitHub author mapping."
-      };
-    }
-
-    const coAuthors = mappings
-      .filter((mapping): mapping is GitHubAuthorMappingRecord => mapping !== null)
-      .map((mapping) => mapping.githubAuthor);
+    const coAuthors = status.resolvedCoAuthors;
     const commitMessage = appendCoAuthorTrailers(options.commitMessage, {
       coAuthors,
       primaryAuthorEmail: options.primaryAuthorEmail
@@ -169,7 +228,11 @@ export class SlackCoauthorService {
       return {
         status: "noop",
         sessionKey: session.key,
-        coAuthors
+        coAuthors,
+        message:
+          status.missingSelectedUserIds.length > 0
+            ? "Some selected co-authors are still missing GitHub author info and were skipped for this commit."
+            : undefined
       };
     }
 
@@ -177,7 +240,11 @@ export class SlackCoauthorService {
       status: "resolved",
       sessionKey: session.key,
       coAuthors,
-      commitMessage
+      commitMessage,
+      message:
+        status.missingSelectedUserIds.length > 0
+          ? "Known co-authors were appended. Unresolved co-authors were skipped for this commit."
+          : undefined
     };
   }
 
@@ -231,12 +298,21 @@ export class SlackCoauthorService {
 
     const values = view?.state?.values ?? {};
     const selectedUserIds = readSelectedContributorUserIds(values);
+    const ignoreMissing = readIgnoreMissingSelection(values);
     const invalidUserIds: string[] = [];
 
     await this.#mappings.load();
     for (const userId of selectedUserIds) {
       const githubAuthor = readGitHubAuthorInput(values, userId);
-      if (!githubAuthor || !isValidGitHubAuthor(githubAuthor)) {
+      if (!githubAuthor) {
+        if (ignoreMissing) {
+          continue;
+        }
+        invalidUserIds.push(userId);
+        continue;
+      }
+
+      if (!isValidGitHubAuthor(githubAuthor)) {
         invalidUserIds.push(userId);
         continue;
       }
@@ -266,12 +342,19 @@ export class SlackCoauthorService {
 
     await this.#sessions.confirmCoAuthors(session.channelId, session.rootThreadTs, {
       userIds: selectedUserIds,
-      candidateRevision: metadata.candidateRevision
+      candidateRevision: metadata.candidateRevision,
+      ignoreMissing
     });
-    await this.#postSubmitResult(userId, session.key, "Co-author mapping saved. The next commit retry can continue.");
+    await this.#postSubmitResult(
+      userId,
+      session.key,
+      ignoreMissing
+        ? "Co-author settings saved. Commits can continue and any unresolved co-authors will be skipped."
+        : "Co-author mapping saved. The next commit retry can continue."
+    );
   }
 
-  async #ensurePrompt(session: SlackSessionRecord): Promise<void> {
+  async #ensurePrompt(session: SlackSessionRecord, status?: CommitCoauthorStatus): Promise<void> {
     const candidateRevision = session.coAuthorCandidateRevision;
     if (!candidateRevision || (session.coAuthorCandidateUserIds ?? []).length === 0) {
       return;
@@ -286,12 +369,21 @@ export class SlackCoauthorService {
       return;
     }
 
+    const currentStatus = status ?? await this.#buildCommitCoauthorStatus(session);
+    const missingNames = currentStatus.missingSelectedUserIds
+      .map((userId) => currentStatus.candidates.find((candidate) => candidate.userId === userId))
+      .filter((candidate): candidate is CommitCoauthorCandidateStatus => candidate !== undefined)
+      .map((candidate) => describeSlackUser(candidate, candidate.userId));
+
     const blocks = [
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "*Git commit paused:* this Slack session needs co-author confirmation before the commit can go through."
+          text:
+            missingNames.length > 0
+              ? `*Co-author info is incomplete:* commits can continue, but these co-authors are currently unresolved and will be skipped: ${missingNames.join(", ")}.`
+              : "*Co-author review available:* known Slack identities will be appended automatically for this session's commits."
         }
       },
       {
@@ -320,7 +412,7 @@ export class SlackCoauthorService {
           channelId: session.channelId,
           threadTs: session.rootThreadTs,
           userId,
-          text: "This commit is waiting on Slack co-author confirmation.",
+          text: "Review Slack co-author settings for this session.",
           blocks
         });
         delivered = true;
@@ -385,7 +477,7 @@ export class SlackCoauthorService {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "Choose which Slack participants should be written as GitHub co-authors for commits from this session."
+            text: "Choose which Slack participants should be written as GitHub co-authors for commits from this session. Known identities are used automatically; unresolved selections can be ignored if you want commits to continue without them."
           }
         },
         {
@@ -400,6 +492,40 @@ export class SlackCoauthorService {
             action_id: CONTRIBUTOR_ACTION_ID,
             options: contributorOptions,
             initial_options: contributorOptions.filter((entry) => selectedUserIds.includes(String(entry.value)))
+          }
+        },
+        {
+          type: "input",
+          block_id: COMMIT_BEHAVIOR_BLOCK_ID,
+          optional: true,
+          label: {
+            type: "plain_text",
+            text: "Commit behavior"
+          },
+          element: {
+            type: "checkboxes",
+            action_id: COMMIT_BEHAVIOR_ACTION_ID,
+            options: [
+              {
+                text: {
+                  type: "plain_text",
+                  text: "Allow commits to continue without unresolved co-authors"
+                },
+                value: IGNORE_MISSING_OPTION_VALUE
+              }
+            ],
+            initial_options:
+              session.coAuthorIgnoreMissingRevision === session.coAuthorCandidateRevision
+                ? [
+                    {
+                      text: {
+                        type: "plain_text",
+                        text: "Allow commits to continue without unresolved co-authors"
+                      },
+                      value: IGNORE_MISSING_OPTION_VALUE
+                    }
+                  ]
+                : []
           }
         },
         ...candidateUserIds.map((userId, index) => {
@@ -481,6 +607,119 @@ export class SlackCoauthorService {
       });
     });
   }
+
+  async #buildCommitCoauthorStatus(session: SlackSessionRecord): Promise<CommitCoauthorStatus> {
+    const candidateUserIds = session.coAuthorCandidateUserIds ?? [];
+    const explicitSelection = session.coAuthorConfirmedRevision === session.coAuthorCandidateRevision;
+    const selectedUserIds = explicitSelection
+      ? (session.coAuthorConfirmedUserIds ?? [])
+      : candidateUserIds;
+    const ignoreMissing = session.coAuthorIgnoreMissingRevision === session.coAuthorCandidateRevision;
+    const candidates = await Promise.all(candidateUserIds.map(async (userId) => {
+      const identity = await this.#slackApi.getUserIdentity(userId);
+      let mapping = this.#mappings.getMapping(userId);
+      if (!mapping && identity) {
+        mapping = await this.#mappings.recordObservedIdentity(identity) ?? undefined;
+      }
+
+      return {
+        userId,
+        mention: identity?.mention ?? `<@${userId}>`,
+        username: identity?.username,
+        displayName: identity?.displayName,
+        realName: identity?.realName,
+        email: identity?.email,
+        githubAuthor: mapping?.githubAuthor,
+        githubAuthorSource: mapping?.source,
+        selected: selectedUserIds.includes(userId)
+      } satisfies CommitCoauthorCandidateStatus;
+    }));
+
+    const selectedCandidates = candidates.filter((candidate) => candidate.selected);
+    const missingSelectedUserIds = selectedCandidates
+      .filter((candidate) => !candidate.githubAuthor)
+      .map((candidate) => candidate.userId);
+    const resolvedCoAuthors = selectedCandidates
+      .map((candidate) => candidate.githubAuthor)
+      .filter((value): value is string => Boolean(value));
+
+    return {
+      sessionKey: session.key,
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      workspacePath: session.workspacePath,
+      candidateRevision: session.coAuthorCandidateRevision,
+      selectionMode: explicitSelection ? "explicit" : "default_all_candidates",
+      ignoreMissing,
+      needsUserInput: missingSelectedUserIds.length > 0 && !ignoreMissing,
+      canCommitDirectly: missingSelectedUserIds.length === 0,
+      selectedUserIds,
+      resolvedCoAuthors,
+      missingSelectedUserIds,
+      candidates
+    };
+  }
+
+  #resolveRequestedUserIds(
+    status: CommitCoauthorStatus,
+    options: {
+      readonly coauthors?: readonly string[] | undefined;
+      readonly userIds?: readonly string[] | undefined;
+    }
+  ): string[] | undefined {
+    const resolved = new Set<string>();
+
+    for (const userId of options.userIds ?? []) {
+      const trimmed = userId.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      if (!status.candidates.some((candidate) => candidate.userId === trimmed)) {
+        throw new Error(`Unknown co-author candidate: ${userId}`);
+      }
+      resolved.add(trimmed);
+    }
+
+    for (const reference of options.coauthors ?? []) {
+      const userId = this.#resolveUserReference(status, reference);
+      if (!userId) {
+        throw new Error(`Unable to resolve co-author candidate: ${reference}`);
+      }
+      resolved.add(userId);
+    }
+
+    if ((options.userIds?.length ?? 0) === 0 && (options.coauthors?.length ?? 0) === 0) {
+      return undefined;
+    }
+
+    return [...resolved];
+  }
+
+  #resolveUserReference(status: CommitCoauthorStatus, reference: string | undefined): string | undefined {
+    const normalized = normalizeUserReference(reference);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const matches = status.candidates.filter((candidate) => {
+      const fields = [
+        candidate.userId,
+        candidate.mention,
+        candidate.username,
+        candidate.displayName,
+        candidate.realName,
+        candidate.email
+      ];
+      return fields.some((value) => normalizeUserReference(value) === normalized);
+    });
+
+    if (matches.length > 1) {
+      throw new Error(`Ambiguous co-author reference: ${reference}`);
+    }
+
+    return matches[0]?.userId;
+  }
 }
 
 function readString(value: unknown): string | undefined {
@@ -523,6 +762,19 @@ function readSelectedContributorUserIds(
   return selectedOptions
     .map((entry) => readString((entry as { value?: string } | undefined)?.value))
     .filter((value): value is string => Boolean(value));
+}
+
+function readIgnoreMissingSelection(
+  values: Record<string, Record<string, Record<string, unknown>>>
+): boolean {
+  const selectedOptions = values[COMMIT_BEHAVIOR_BLOCK_ID]?.[COMMIT_BEHAVIOR_ACTION_ID]?.selected_options;
+  if (!Array.isArray(selectedOptions)) {
+    return false;
+  }
+
+  return selectedOptions.some((entry) => {
+    return readString((entry as { value?: string } | undefined)?.value) === IGNORE_MISSING_OPTION_VALUE;
+  });
 }
 
 function readGitHubAuthorInput(
@@ -568,4 +820,9 @@ function buildGitHubAuthorHint(
   }
 
   return "If checked, enter a GitHub author in the form Name <email@example.com>.";
+}
+
+function normalizeUserReference(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || undefined;
 }

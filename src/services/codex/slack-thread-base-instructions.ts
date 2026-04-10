@@ -55,6 +55,17 @@ export async function buildSlackThreadBaseInstructions(
     file_path: "/absolute/path/to/file.png",
     initial_comment: "replace with your Slack file caption"
   });
+  const coauthorConfigurePayload = JSON.stringify({
+    cwd: options.workspacePath,
+    coauthors: ["Alice Example"],
+    ignore_missing: true,
+    mappings: [
+      {
+        slack_user: "Alice Example",
+        github_author: "Alice Example <alice@example.com>"
+      }
+    ]
+  });
   const linearCallPayload = JSON.stringify({
     server: "linear",
     name: "replace_with_linear_tool_name",
@@ -93,6 +104,10 @@ export async function buildSlackThreadBaseInstructions(
       `curl -sS -X POST ${options.brokerHttpBaseUrl}/slack/post-state -H 'content-type: application/json' -d '${blockStatePayload}'`,
     post_file_command:
       `curl -sS -X POST ${options.brokerHttpBaseUrl}/slack/post-file -H 'content-type: application/json' -d '${filePayload}'`,
+    coauthor_status_command:
+      `curl -sS '${options.brokerHttpBaseUrl}/slack/git-coauthors/session-status?cwd=${encodeURIComponent(options.workspacePath)}'`,
+    coauthor_configure_command:
+      `curl -sS -X POST ${options.brokerHttpBaseUrl}/slack/git-coauthors/configure-session -H 'content-type: application/json' -d '${coauthorConfigurePayload}'`,
     thread_history_command:
       `curl -sS '${options.brokerHttpBaseUrl}/slack/thread-history?channel_id=${encodeURIComponent(options.channelId)}&thread_ts=${encodeURIComponent(options.rootThreadTs)}&before_ts=older-message-ts&limit=20&format=text'`,
     register_job_command:

@@ -20,7 +20,7 @@ describe("SlackCoauthorService", () => {
     })));
   });
 
-  it("prompts once per candidate revision when commit confirmation is still missing", async () => {
+  it("prompts once per candidate revision when selected co-authors are still unresolved, without blocking commits", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-state-"));
     const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-sessions-"));
     tempDirs.push(stateDir, sessionsRoot);
@@ -40,8 +40,7 @@ describe("SlackCoauthorService", () => {
         getUserIdentity: vi.fn(async () => ({
           userId: "U123",
           mention: "<@U123>",
-          realName: "Alice Example",
-          email: "alice@example.com"
+          realName: "Alice Example"
         })),
         postEphemeral,
         openView: vi.fn()
@@ -62,20 +61,16 @@ describe("SlackCoauthorService", () => {
       cwd: session.workspacePath,
       commitMessage: "feat(test): demo"
     });
-    expect(first).toMatchObject({
-      status: "blocked",
-      errorCode: "coauthor_confirmation_required"
-    });
+    expect(first.status).toBe("noop");
+    expect(first.message).toContain("missing GitHub author info");
     expect(postEphemeral).toHaveBeenCalledTimes(1);
 
     const second = await service.resolveCommitCoauthors({
       cwd: session.workspacePath,
       commitMessage: "feat(test): demo"
     });
-    expect(second).toMatchObject({
-      status: "blocked",
-      errorCode: "coauthor_confirmation_required"
-    });
+    expect(second.status).toBe("noop");
+    expect(second.message).toContain("missing GitHub author info");
     expect(postEphemeral).toHaveBeenCalledTimes(1);
   });
 
@@ -312,5 +307,86 @@ describe("SlackCoauthorService", () => {
         text: "These selected co-authors need a valid GitHub author in `Name <email>` format: Kewei Hua. If Slack cannot infer an email for someone, enter it manually."
       })
     );
+  });
+
+  it("allows unresolved co-authors to be ignored when explicitly authorized", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-sessions-"));
+    tempDirs.push(stateDir, sessionsRoot);
+
+    const sessions = new SessionManager({
+      stateStore: new StateStore(stateDir, sessionsRoot),
+      sessionsRoot
+    });
+    await sessions.load();
+    const session = await sessions.ensureSession("C888", "444.555");
+    const mappings = new GitHubAuthorMappingService({ stateDir });
+    await mappings.load();
+
+    const postEphemeral = vi.fn(async () => "111.666");
+    const service = new SlackCoauthorService({
+      sessions,
+      mappings,
+      slackApi: {
+        getUserIdentity: vi.fn(async () => ({
+          userId: "U1",
+          mention: "<@U1>",
+          realName: "Alice Example"
+        })),
+        postEphemeral,
+        openView: vi.fn(async () => {})
+      } as never
+    });
+
+    const latestSession = await service.noteIncomingSlackInput(session, {
+      source: "thread_reply",
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      messageTs: "444.556",
+      userId: "U1",
+      senderKind: "user",
+      text: "please commit this"
+    });
+
+    await service.handleInteractivePayload({
+      type: "view_submission",
+      user: { id: "U1" },
+      view: {
+        private_metadata: JSON.stringify({
+          session_key: latestSession.key,
+          candidate_revision: latestSession.coAuthorCandidateRevision
+        }),
+        state: {
+          values: {
+            contributors: {
+              selected: {
+                selected_options: [
+                  { value: "U1" }
+                ]
+              }
+            },
+            commit_behavior: {
+              selected: {
+                selected_options: [
+                  { value: "ignore_missing" }
+                ]
+              }
+            },
+            author__U1: {
+              value: {
+                value: ""
+              }
+            }
+          }
+        }
+      }
+    });
+
+    const resolved = await service.resolveCommitCoauthors({
+      cwd: latestSession.workspacePath,
+      commitMessage: "feat(slack): ignore unresolved"
+    });
+    expect(resolved.status).toBe("noop");
+    expect(resolved.message).toContain("skipped for this commit");
   });
 });

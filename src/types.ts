@@ -20,6 +20,7 @@ export interface SlackSessionRecord {
   readonly coAuthorCandidateRevision?: number | undefined;
   readonly coAuthorConfirmedUserIds?: readonly string[] | undefined;
   readonly coAuthorConfirmedRevision?: number | undefined;
+  readonly coAuthorIgnoreMissingRevision?: number | undefined;
   readonly coAuthorPromptRevision?: number | undefined;
   readonly coAuthorPromptedAt?: string | undefined;
 }

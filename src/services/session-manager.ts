@@ -189,6 +189,7 @@ export class SessionManager {
     return await this.#patchSession(channelId, rootThreadTs, {
       coAuthorCandidateUserIds: [...(session.coAuthorCandidateUserIds ?? []), ...additions],
       coAuthorCandidateRevision: (session.coAuthorCandidateRevision ?? 0) + 1,
+      coAuthorIgnoreMissingRevision: undefined,
       coAuthorPromptRevision: undefined,
       coAuthorPromptedAt: undefined
     });
@@ -200,6 +201,7 @@ export class SessionManager {
     options: {
       readonly userIds: readonly string[];
       readonly candidateRevision: number;
+      readonly ignoreMissing?: boolean | undefined;
     }
   ): Promise<SlackSessionRecord> {
     const session = this.#requireSession(channelId, rootThreadTs);
@@ -209,7 +211,20 @@ export class SessionManager {
     return await this.#patchSession(channelId, rootThreadTs, {
       coAuthorConfirmedUserIds: confirmedUserIds,
       coAuthorConfirmedRevision: options.candidateRevision,
+      coAuthorIgnoreMissingRevision: options.ignoreMissing ? options.candidateRevision : undefined,
       coAuthorPromptRevision: options.candidateRevision,
+      coAuthorPromptedAt: undefined
+    });
+  }
+
+  async allowMissingCoAuthors(
+    channelId: string,
+    rootThreadTs: string,
+    candidateRevision: number
+  ): Promise<SlackSessionRecord> {
+    return await this.#patchSession(channelId, rootThreadTs, {
+      coAuthorIgnoreMissingRevision: candidateRevision,
+      coAuthorPromptRevision: candidateRevision,
       coAuthorPromptedAt: undefined
     });
   }

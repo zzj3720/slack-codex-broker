@@ -421,6 +421,7 @@ export class StateStore {
       coAuthorCandidateRevision: normalizeFiniteNumber(session.coAuthorCandidateRevision),
       coAuthorConfirmedUserIds: normalizeStringArray(session.coAuthorConfirmedUserIds),
       coAuthorConfirmedRevision: normalizeFiniteNumber(session.coAuthorConfirmedRevision),
+      coAuthorIgnoreMissingRevision: normalizeFiniteNumber(session.coAuthorIgnoreMissingRevision),
       coAuthorPromptRevision: normalizeFiniteNumber(session.coAuthorPromptRevision),
       coAuthorPromptedAt:
         typeof session.coAuthorPromptedAt === "string" ? session.coAuthorPromptedAt : undefined

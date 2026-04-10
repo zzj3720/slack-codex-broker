@@ -5,8 +5,10 @@ import type { AppConfig } from "../config.js";
 import { logger } from "../logger.js";
 import type { SlackCodexBridge } from "../services/slack/slack-codex-bridge.js";
 import {
+  readBoolean,
   readJsonBody,
   readFormBody,
+  readString,
   respondJson
 } from "./common.js";
 
@@ -52,6 +54,16 @@ export async function handleSlackRequest(
 
   if (method === "POST" && url.pathname === "/slack/git-coauthors/resolve-commit-message") {
     await handleResolveCommitCoauthorsRequest(request, response, options);
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/slack/git-coauthors/session-status") {
+    await handleGetCommitCoauthorStatusRequest(url, response, options);
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/slack/git-coauthors/configure-session") {
+    await handleConfigureCommitCoauthorsRequest(request, response, options);
     return true;
   }
 
@@ -489,16 +501,6 @@ async function handleResolveCommitCoauthorsRequest(
       primaryAuthorEmail
     });
 
-    if (result.status === "blocked") {
-      respondJson(response, 409, {
-        ok: false,
-        error: result.errorCode ?? "coauthor_resolution_blocked",
-        message: result.message,
-        sessionKey: result.sessionKey
-      });
-      return;
-    }
-
     respondJson(response, 200, {
       ok: true,
       ...result
@@ -509,4 +511,136 @@ async function handleResolveCommitCoauthorsRequest(
       error: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+async function handleGetCommitCoauthorStatusRequest(
+  url: URL,
+  response: http.ServerResponse,
+  options: {
+    readonly bridge: SlackCodexBridge;
+  }
+): Promise<void> {
+  const cwd = url.searchParams.get("cwd")?.trim();
+  if (!cwd) {
+    respondJson(response, 400, {
+      ok: false,
+      error: "missing_required_query",
+      required: ["cwd"]
+    });
+    return;
+  }
+
+  try {
+    const status = await options.bridge.getCommitCoauthorStatus(cwd);
+    if (!status) {
+      respondJson(response, 404, {
+        ok: false,
+        error: "session_not_found"
+      });
+      return;
+    }
+
+    respondJson(response, 200, {
+      ok: true,
+      status
+    });
+  } catch (error) {
+    respondJson(response, 500, {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function handleConfigureCommitCoauthorsRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  options: {
+    readonly bridge: SlackCodexBridge;
+  }
+): Promise<void> {
+  try {
+    const body = await readJsonBody(request);
+    const cwd = readString(body.cwd);
+    if (!cwd) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["cwd"]
+      });
+      return;
+    }
+
+    const coauthors = normalizeStringArray(body.coauthors);
+    const userIds = normalizeStringArray(body.user_ids);
+    const mappings = normalizeMappings(body.mappings);
+    const ignoreMissing =
+      Object.prototype.hasOwnProperty.call(body, "ignore_missing") ||
+      Object.prototype.hasOwnProperty.call(body, "ignoreMissing")
+        ? readBoolean(body.ignore_missing ?? body.ignoreMissing, false)
+        : undefined;
+    const status = await options.bridge.configureSessionCoauthors({
+      cwd,
+      coauthors,
+      userIds,
+      ignoreMissing,
+      mappings
+    });
+
+    if (!status) {
+      respondJson(response, 404, {
+        ok: false,
+        error: "session_not_found"
+      });
+      return;
+    }
+
+    respondJson(response, 200, {
+      ok: true,
+      status
+    });
+  } catch (error) {
+    respondJson(response, 500, {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter(Boolean);
+  return normalized.length > 0 ? normalized : [];
+}
+
+function normalizeMappings(value: unknown):
+  | Array<{
+      slackUserId?: string | undefined;
+      slackUser?: string | undefined;
+      githubAuthor: string;
+    }>
+  | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+    .map((entry) => {
+      const githubAuthor = readString(entry.github_author ?? entry.githubAuthor);
+      if (!githubAuthor) {
+        throw new Error("Each co-author mapping requires github_author.");
+      }
+
+      return {
+        slackUserId: readString(entry.slack_user_id ?? entry.slackUserId),
+        slackUser: readString(entry.slack_user ?? entry.slackUser),
+        githubAuthor
+      };
+    });
 }

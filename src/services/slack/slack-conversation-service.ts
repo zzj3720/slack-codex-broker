@@ -138,6 +138,7 @@ export class SlackConversationService {
 
   async start(): Promise<void> {
     await this.#reconcilePersistedActiveTurns();
+    await this.recoverMissedThreadMessages("socket_ready");
     await this.#recoverPendingSessionsOnBoot();
     await this.#recoverPendingSyntheticMessages();
     this.#startActiveTurnReconciler();
@@ -588,7 +589,10 @@ export class SlackConversationService {
     let retainedCount = 0;
 
     for (const session of sessions) {
-      const outcome = await this.#reconcileSingleActiveTurn(session);
+      const outcome = await this.#reconcileSingleActiveTurn(session, {
+        treatMissingAsStale: true,
+        resumePending: false
+      });
       if (outcome === "retained") {
         retainedCount += 1;
       } else {
@@ -646,14 +650,22 @@ export class SlackConversationService {
     }
   }
 
-  async #reconcileSingleActiveTurn(session: SlackSessionRecord): Promise<"cleared" | "retained"> {
-    const outcome = await this.#turnReconciler.reconcileSingleActiveTurn(session);
+  async #reconcileSingleActiveTurn(
+    session: SlackSessionRecord,
+    options?: {
+      readonly treatMissingAsStale?: boolean | undefined;
+      readonly resumePending?: boolean | undefined;
+    }
+  ): Promise<"cleared" | "retained"> {
+    const outcome = await this.#turnReconciler.reconcileSingleActiveTurn(session, options);
 
     if (outcome === "cleared") {
       this.#resetRuntimeProcessing(session.key);
       const latestSession = this.#findSessionByKey(session.key);
       this.#clearAssistantStatus(latestSession.channelId, latestSession.rootThreadTs);
-      await this.#resumePendingDispatch(session.key);
+      if (options?.resumePending ?? true) {
+        await this.#resumePendingDispatch(session.key);
+      }
     }
 
     return outcome;
@@ -1335,13 +1347,26 @@ export class SlackConversationService {
     let orphanedInflightResetCount = 0;
 
     for (const session of sessions) {
-      const reconciled = await this.#inboundStore.reconcileOrphanedInflightMessages(session);
+      const latestSession = this.#findSessionByKey(session.key);
+      if (latestSession.activeTurnId) {
+        continue;
+      }
+
+      const reconciled = await this.#inboundStore.reconcileOrphanedInflightMessages(latestSession);
       orphanedInflightDoneCount += reconciled.markedDoneCount;
       orphanedInflightResetCount += reconciled.resetToPendingCount;
 
-      const resumedCount = await this.#resumePendingDispatch(session.key, {
-        forceReset: true
-      });
+      const runtime = this.#getRuntimeSession(session.key);
+      if (runtime.processing || runtime.queue.some((entry) => entry.kind === "dispatch_pending")) {
+        continue;
+      }
+
+      const refreshedSession = this.#findSessionByKey(session.key);
+      if (refreshedSession.activeTurnId) {
+        continue;
+      }
+
+      const resumedCount = await this.#resumePendingDispatch(refreshedSession.key);
 
       if (resumedCount === 0) {
         continue;

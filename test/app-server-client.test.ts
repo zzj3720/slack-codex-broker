@@ -788,10 +788,10 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("UI/frontend/layout/styling contract")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("BROKER_GEMINI_UI_HELPER")
+      expect.stringContaining("kimi --work-dir /absolute/project/path")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("consult Gemini first by default")
+      expect.stringContaining("consult Kimi first by default")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("Keep APIs, data contracts, and non-UI behavior unchanged")
@@ -800,7 +800,7 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("user explicitly asks you to do the UI work directly yourself")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Gemini is unavailable right now and then continue the UI work yourself")
+      expect.stringContaining("Kimi is unavailable right now and then continue the UI work yourself")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("\"server\":\"linear\"")

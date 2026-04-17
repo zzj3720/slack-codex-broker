@@ -8,6 +8,7 @@ import {
   parseActiveTurnMismatch,
   shouldResetConflictingActiveTurnMismatch,
   shouldAutoRecoverSession,
+  shouldForceResetStaleIdleRuntime,
   shouldPostSlackRunFailure,
   shouldNotifySlackFailure
 } from "../src/services/slack/slack-conversation-utils.js";
@@ -137,6 +138,36 @@ describe("slack conversation utils", () => {
         nowMs
       )
     ).toBe(false);
+  });
+
+  it("force-resets a stale idle runtime when open messages remain", () => {
+    expect(shouldForceResetStaleIdleRuntime({
+      activeTurnId: undefined,
+      runtimeProcessing: true,
+      latestOpenMessageUpdatedAt: "2026-04-17T04:00:00.000Z",
+      nowMs: Date.parse("2026-04-17T04:01:00.000Z"),
+      staleAfterMs: 30_000
+    })).toBe(true);
+  });
+
+  it("does not force-reset an idle runtime when the open messages are still fresh", () => {
+    expect(shouldForceResetStaleIdleRuntime({
+      activeTurnId: undefined,
+      runtimeProcessing: true,
+      latestOpenMessageUpdatedAt: "2026-04-17T04:00:45.000Z",
+      nowMs: Date.parse("2026-04-17T04:01:00.000Z"),
+      staleAfterMs: 30_000
+    })).toBe(false);
+  });
+
+  it("does not force-reset when an active turn still exists", () => {
+    expect(shouldForceResetStaleIdleRuntime({
+      activeTurnId: "turn-1",
+      runtimeProcessing: true,
+      latestOpenMessageUpdatedAt: "2026-04-17T04:00:00.000Z",
+      nowMs: Date.parse("2026-04-17T04:01:00.000Z"),
+      staleAfterMs: 30_000
+    })).toBe(false);
   });
 
 });

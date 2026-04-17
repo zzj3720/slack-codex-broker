@@ -66,6 +66,25 @@ export function shouldAutoRecoverSession(session: SlackSessionRecord, nowMs: num
   return nowMs - updatedAtMs <= AUTO_RECOVERY_SESSION_LOOKBACK_MS;
 }
 
+export function shouldForceResetStaleIdleRuntime(options: {
+  readonly activeTurnId?: string | undefined;
+  readonly runtimeProcessing: boolean;
+  readonly latestOpenMessageUpdatedAt?: string | undefined;
+  readonly nowMs: number;
+  readonly staleAfterMs: number;
+}): boolean {
+  if (options.activeTurnId || !options.runtimeProcessing || !options.latestOpenMessageUpdatedAt) {
+    return false;
+  }
+
+  const updatedAtMs = Date.parse(options.latestOpenMessageUpdatedAt);
+  if (!Number.isFinite(updatedAtMs)) {
+    return false;
+  }
+
+  return options.nowMs - updatedAtMs >= options.staleAfterMs;
+}
+
 export function compareIsoTimestamp(left: string, right: string): number {
   return Date.parse(left) - Date.parse(right);
 }

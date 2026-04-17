@@ -39,6 +39,7 @@ import {
   isStopExplainingTurnSignalKind,
   isUnexpectedTurnStopMessage,
   shouldResetConflictingActiveTurnMismatch,
+  shouldForceResetStaleIdleRuntime,
   shouldPostSlackRunFailure,
   shouldNotifySlackFailure,
   shouldAutoRecoverSession
@@ -1400,6 +1401,33 @@ export class SlackConversationService {
 
     for (const session of sessions) {
       const runtime = this.#getRuntimeSession(session.key);
+      const openMessages = this.#sessions.listInboundMessages({
+        channelId: session.channelId,
+        rootThreadTs: session.rootThreadTs,
+        status: ["pending", "inflight"]
+      });
+
+      const latestOpenMessageUpdatedAt = openMessages
+        .map((message) => message.updatedAt)
+        .filter(Boolean)
+        .sort(compareIsoTimestamp)
+        .at(-1);
+
+      if (shouldForceResetStaleIdleRuntime({
+        activeTurnId: session.activeTurnId,
+        runtimeProcessing: runtime.processing,
+        latestOpenMessageUpdatedAt,
+        nowMs,
+        staleAfterMs: this.#config.slackActiveTurnReconcileIntervalMs
+      })) {
+        logger.warn("Force-resetting stale idle Slack runtime state", {
+          sessionKey: session.key,
+          latestOpenMessageUpdatedAt,
+          openMessageCount: openMessages.length
+        });
+        this.#resetRuntimeProcessing(session.key);
+      }
+
       if (runtime.processing) {
         continue;
       }

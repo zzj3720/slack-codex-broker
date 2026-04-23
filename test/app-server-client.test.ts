@@ -202,7 +202,8 @@ describe("AppServerClient disconnect handling", () => {
       threadId: "thread-1",
       turnId: "turn-1",
       finalMessage: "done",
-      aborted: false
+      aborted: false,
+      generatedImages: []
     });
   });
 
@@ -309,7 +310,150 @@ describe("AppServerClient disconnect handling", () => {
     await expect(client.readTurnResult("thread-1", "turn-1")).resolves.toEqual({
       status: "completed",
       finalMessage: "done",
-      errorMessage: undefined
+      errorMessage: undefined,
+      generatedImages: []
+    });
+  });
+
+  it("parses generated images from thread/read results", async () => {
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        return;
+      }
+
+      if (message.method === "thread/read") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            thread: {
+              turns: [
+                {
+                  id: "turn-1",
+                  status: "completed",
+                  items: [
+                    {
+                      type: "agentMessage",
+                      text: "done"
+                    },
+                    {
+                      type: "image_generation_call",
+                      id: "ig-1",
+                      revised_prompt: "blue cat",
+                      result: "QUJDREVGRw==",
+                      saved_path: "/tmp/ig-1.png"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }));
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos"
+    });
+
+    await client.connect();
+    await expect(client.readTurnResult("thread-1", "turn-1")).resolves.toEqual({
+      status: "completed",
+      finalMessage: "done",
+      errorMessage: undefined,
+      generatedImages: [
+        {
+          id: "ig-1",
+          contentBase64: "QUJDREVGRw==",
+          contentType: "image/png",
+          savedPath: "/tmp/ig-1.png",
+          revisedPrompt: "blue cat"
+        }
+      ]
+    });
+  });
+
+  it("captures image generation results from live turn notifications", async () => {
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        return;
+      }
+
+      if (message.method === "turn/start") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            turn: {
+              id: "turn-1"
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "item/completed",
+          params: {
+            turnId: "turn-1",
+            item: {
+              type: "imageGeneration",
+              id: "ig-1",
+              revisedPrompt: "blue cat",
+              result: "QUJDREVGRw==",
+              savedPath: "/tmp/ig-1.png"
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "turn/completed",
+          params: {
+            turn: {
+              id: "turn-1"
+            }
+          }
+        }));
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos"
+    });
+
+    await client.connect();
+    const started = await client.startTurn("thread-1", "/tmp", [
+      {
+        type: "text",
+        text: "hello",
+        text_elements: []
+      }
+    ]);
+
+    await expect(started.completion).resolves.toEqual({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      finalMessage: "",
+      aborted: false,
+      generatedImages: [
+        {
+          id: "ig-1",
+          contentBase64: "QUJDREVGRw==",
+          contentType: "image/png",
+          savedPath: "/tmp/ig-1.png",
+          revisedPrompt: "blue cat"
+        }
+      ]
     });
   });
 
@@ -499,13 +643,15 @@ describe("AppServerClient disconnect handling", () => {
     ).resolves.toEqual({
       status: "completed",
       finalMessage: "done",
-      errorMessage: undefined
+      errorMessage: undefined,
+      generatedImages: []
     });
     await expect(started.completion).resolves.toEqual({
       threadId: "thread-1",
       turnId: "turn-1",
       finalMessage: "done",
-      aborted: false
+      aborted: false,
+      generatedImages: []
     });
   });
 

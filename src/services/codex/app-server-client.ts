@@ -4,7 +4,11 @@ import fs from "node:fs/promises";
 import WebSocket from "ws";
 
 import { logger } from "../../logger.js";
-import type { CodexTurnResult, SlackUserIdentity } from "../../types.js";
+import type {
+  CodexTurnResult,
+  GeneratedImageArtifact,
+  SlackUserIdentity
+} from "../../types.js";
 import { buildSlackThreadBaseInstructions } from "./slack-thread-base-instructions.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -39,6 +43,7 @@ interface ActiveTurn {
   readonly threadId: string;
   readonly turnId: string;
   text: string;
+  generatedImages: GeneratedImageArtifact[];
   resolve: (result: CodexTurnResult) => void;
   reject: (error: Error) => void;
 }
@@ -46,6 +51,7 @@ interface ActiveTurn {
 interface BufferedTurnEvents {
   text: string;
   terminalState: "completed" | "aborted" | null;
+  generatedImages: GeneratedImageArtifact[];
 }
 
 export interface StartedTurn {
@@ -76,6 +82,7 @@ export interface ReadTurnResult {
   readonly status: "completed" | "failed" | "interrupted" | "inProgress" | "unknown";
   readonly finalMessage: string;
   readonly errorMessage?: string | undefined;
+  readonly generatedImages: readonly GeneratedImageArtifact[];
 }
 
 export interface ReadTurnResultOptions {
@@ -136,6 +143,7 @@ export class AppServerClient extends EventEmitter {
       readonly serviceName: string;
       readonly brokerHttpBaseUrl: string;
       readonly reposRoot: string;
+      readonly codexGeneratedImagesRoot?: string | undefined;
       readonly openAiApiKey?: string | undefined;
       readonly personalMemoryFilePath?: string | undefined;
       readonly heartbeatIntervalMs?: number | undefined;
@@ -354,6 +362,7 @@ export class AppServerClient extends EventEmitter {
         threadId,
         turnId: result.turn.id,
         text: "",
+        generatedImages: [],
         resolve,
         reject
       });
@@ -415,6 +424,7 @@ export class AppServerClient extends EventEmitter {
       rootThreadTs: session.rootThreadTs,
       workspacePath: session.workspacePath,
       reposRoot: this.options.reposRoot,
+      codexGeneratedImagesRoot: this.options.codexGeneratedImagesRoot ?? "$CODEX_HOME/generated_images",
       slackBotIdentity: this.#slackBotIdentity,
       personalMemory
     });
@@ -449,7 +459,14 @@ export class AppServerClient extends EventEmitter {
           } | null;
           items?: Array<{
             type?: string;
+            id?: string;
             text?: string;
+            status?: string;
+            result?: string;
+            savedPath?: string | null;
+            saved_path?: string | null;
+            revisedPrompt?: string | null;
+            revised_prompt?: string | null;
           }>;
         }>;
       };
@@ -466,11 +483,15 @@ export class AppServerClient extends EventEmitter {
 
     const agentMessages = (turn.items ?? []).filter((item) => item.type === "agentMessage");
     const lastAgentMessage = agentMessages.at(-1);
+    const generatedImages = (turn.items ?? [])
+      .map((item, index) => normalizeGeneratedImageArtifact(item, index))
+      .filter((item): item is GeneratedImageArtifact => item !== null);
     const status = normalizeTurnStatus(turn.status);
 
     const normalizedResult = {
       status,
       finalMessage: String(lastAgentMessage?.text ?? "").trim(),
+      generatedImages,
       errorMessage:
         turn.error?.additionalDetails ??
         turn.error?.message ??
@@ -587,6 +608,26 @@ export class AppServerClient extends EventEmitter {
       return;
     }
 
+    if (method === "item/completed") {
+      const turnId = params.turnId as string | undefined;
+      if (!turnId) {
+        return;
+      }
+
+      const image = normalizeGeneratedImageArtifact(params.item as Record<string, unknown> | undefined);
+      if (!image) {
+        return;
+      }
+
+      const turn = this.#activeTurns.get(turnId);
+      if (turn) {
+        upsertGeneratedImage(turn.generatedImages, image);
+      } else {
+        this.#bufferGeneratedImage(turnId, image);
+      }
+      return;
+    }
+
     if (method === "turn/completed") {
       const turnId = params.turn?.id as string | undefined;
       if (!turnId) {
@@ -661,7 +702,8 @@ export class AppServerClient extends EventEmitter {
         threadId: turn.threadId,
         turnId,
         finalMessage: result.finalMessage,
-        aborted: false
+        aborted: false,
+        generatedImages: result.generatedImages
       });
       return;
     }
@@ -671,7 +713,8 @@ export class AppServerClient extends EventEmitter {
         threadId: turn.threadId,
         turnId,
         finalMessage: result.finalMessage,
-        aborted: true
+        aborted: true,
+        generatedImages: result.generatedImages
       });
       return;
     }
@@ -693,7 +736,8 @@ export class AppServerClient extends EventEmitter {
   #bufferTurnText(turnId: string, delta: string): void {
     const buffered = this.#bufferedTurnEvents.get(turnId) ?? {
       text: "",
-      terminalState: null
+      terminalState: null,
+      generatedImages: []
     };
     buffered.text += delta;
     this.#bufferedTurnEvents.set(turnId, buffered);
@@ -702,9 +746,20 @@ export class AppServerClient extends EventEmitter {
   #bufferTurnTerminalState(turnId: string, terminalState: "completed" | "aborted"): void {
     const buffered = this.#bufferedTurnEvents.get(turnId) ?? {
       text: "",
-      terminalState: null
+      terminalState: null,
+      generatedImages: []
     };
     buffered.terminalState = terminalState;
+    this.#bufferedTurnEvents.set(turnId, buffered);
+  }
+
+  #bufferGeneratedImage(turnId: string, image: GeneratedImageArtifact): void {
+    const buffered = this.#bufferedTurnEvents.get(turnId) ?? {
+      text: "",
+      terminalState: null,
+      generatedImages: []
+    };
+    upsertGeneratedImage(buffered.generatedImages, image);
     this.#bufferedTurnEvents.set(turnId, buffered);
   }
 
@@ -722,6 +777,9 @@ export class AppServerClient extends EventEmitter {
     this.#bufferedTurnEvents.delete(turnId);
     if (buffered.text) {
       turn.text += buffered.text;
+    }
+    for (const image of buffered.generatedImages) {
+      upsertGeneratedImage(turn.generatedImages, image);
     }
 
     if (buffered.terminalState === "completed") {
@@ -741,7 +799,8 @@ export class AppServerClient extends EventEmitter {
       threadId: turn.threadId,
       turnId: turn.turnId,
       finalMessage: turn.text.trim(),
-      aborted
+      aborted,
+      generatedImages: [...turn.generatedImages]
     });
   }
 
@@ -830,5 +889,83 @@ function normalizeCreditsSnapshot(credits: RawCreditsSnapshot | null | undefined
     hasCredits: Boolean(credits.hasCredits),
     unlimited: Boolean(credits.unlimited),
     balance: credits.balance ?? null
+  };
+}
+
+function normalizeGeneratedImageArtifact(
+  item: Record<string, unknown> | undefined,
+  index = 0
+): GeneratedImageArtifact | null {
+  if (!item) {
+    return null;
+  }
+
+  const type = normalizeOptionalString(item.type);
+  if (type !== "imageGeneration" && type !== "image_generation_call") {
+    return null;
+  }
+
+  const savedPath = normalizeOptionalString(item.savedPath) ?? normalizeOptionalString(item.saved_path);
+  const result = normalizeOptionalString(item.result);
+  const { contentBase64, contentType } = normalizeImageResult(result);
+  const id = normalizeOptionalString(item.id) ?? savedPath ?? `generated-image-${index + 1}`;
+  const revisedPrompt = normalizeOptionalString(item.revisedPrompt) ?? normalizeOptionalString(item.revised_prompt);
+
+  if (!savedPath && !contentBase64) {
+    return null;
+  }
+
+  return {
+    id,
+    contentBase64,
+    contentType,
+    savedPath,
+    revisedPrompt
+  };
+}
+
+function normalizeImageResult(
+  value: string | undefined
+): {
+  readonly contentBase64?: string;
+  readonly contentType?: string;
+} {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return {};
+  }
+
+  const dataUrlMatch = normalized.match(/^data:(image\/[^;]+);base64,(.+)$/i);
+  if (dataUrlMatch) {
+    return {
+      contentType: dataUrlMatch[1]!,
+      contentBase64: dataUrlMatch[2]!.replace(/\s+/g, "")
+    };
+  }
+
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(normalized)) {
+    return {};
+  }
+
+  return {
+    contentType: "image/png",
+    contentBase64: normalized.replace(/\s+/g, "")
+  };
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function upsertGeneratedImage(target: GeneratedImageArtifact[], image: GeneratedImageArtifact): void {
+  const existingIndex = target.findIndex((entry) => entry.id === image.id);
+  if (existingIndex === -1) {
+    target.push(image);
+    return;
+  }
+
+  target[existingIndex] = {
+    ...target[existingIndex],
+    ...image
   };
 }

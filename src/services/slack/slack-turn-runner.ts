@@ -272,7 +272,8 @@ export class SlackTurnRunner {
           threadId: session.codexThreadId ?? "",
           turnId,
           finalMessage: snapshot.finalMessage,
-          aborted: false
+          aborted: false,
+          generatedImages: snapshot.generatedImages
         };
       }
 
@@ -281,7 +282,8 @@ export class SlackTurnRunner {
           threadId: session.codexThreadId ?? "",
           turnId,
           finalMessage: snapshot.finalMessage,
-          aborted: true
+          aborted: true,
+          generatedImages: snapshot.generatedImages
         };
       }
 

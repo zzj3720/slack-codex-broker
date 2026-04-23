@@ -217,4 +217,13 @@ export interface CodexTurnResult {
   readonly turnId: string;
   readonly finalMessage: string;
   readonly aborted: boolean;
+  readonly generatedImages?: readonly GeneratedImageArtifact[] | undefined;
+}
+
+export interface GeneratedImageArtifact {
+  readonly id: string;
+  readonly contentBase64?: string | undefined;
+  readonly contentType?: string | undefined;
+  readonly savedPath?: string | undefined;
+  readonly revisedPrompt?: string | undefined;
 }

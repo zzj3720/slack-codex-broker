@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import path from "node:path";
 
 import { AppServerClient } from "./app-server-client.js";
 import { AppServerProcess } from "./app-server-process.js";
@@ -24,6 +25,7 @@ export class CodexBroker extends EventEmitter {
   readonly #codexAppServerUrl?: string | undefined;
   readonly #personalMemoryFilePath: string;
   readonly #reposRoot: string;
+  readonly #codexGeneratedImagesRoot: string;
   #slackBotIdentity: SlackUserIdentity | null = null;
   #reconnectPromise: Promise<void> | undefined;
   #connectQueue: Promise<void> = Promise.resolve();
@@ -54,6 +56,7 @@ export class CodexBroker extends EventEmitter {
     this.#codexAppServerUrl = options.codexAppServerUrl;
     this.#personalMemoryFilePath = getPersonalMemoryPath(options.codexHome);
     this.#reposRoot = options.reposRoot;
+    this.#codexGeneratedImagesRoot = path.join(options.codexHome, "generated_images");
 
     if (options.codexAppServerUrl) {
       this.#client = this.#createClient(options.codexAppServerUrl);
@@ -177,7 +180,8 @@ export class CodexBroker extends EventEmitter {
       brokerHttpBaseUrl: this.#brokerHttpBaseUrl,
       openAiApiKey: this.#openAiApiKey,
       personalMemoryFilePath: this.#personalMemoryFilePath,
-      reposRoot: this.#reposRoot
+      reposRoot: this.#reposRoot,
+      codexGeneratedImagesRoot: this.#codexGeneratedImagesRoot
     });
     client.setSlackBotIdentity(this.#slackBotIdentity);
     return client;

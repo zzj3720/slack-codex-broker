@@ -16,6 +16,7 @@ export interface BuildSlackThreadBaseInstructionsOptions {
   readonly rootThreadTs: string;
   readonly workspacePath: string;
   readonly reposRoot: string;
+  readonly codexGeneratedImagesRoot: string;
   readonly slackBotIdentity: SlackUserIdentity | null;
   readonly personalMemory?: string | undefined;
 }
@@ -92,6 +93,7 @@ export async function buildSlackThreadBaseInstructions(
     execution_environment_section: await buildExecutionEnvironmentSection(),
     session_workspace: options.workspacePath,
     shared_repos_root: options.reposRoot,
+    codex_generated_images_root: options.codexGeneratedImagesRoot,
     channel_id: options.channelId,
     thread_ts: options.rootThreadTs,
     post_message_command:

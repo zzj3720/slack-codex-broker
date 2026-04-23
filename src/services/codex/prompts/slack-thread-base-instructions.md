@@ -19,6 +19,7 @@ Slack broker API usage for this session:
 - Record a silent wait state without posting to Slack with: {{post_state_wait_command}}
 - Record a silent block state without posting a second Slack message with: {{post_state_block_command}}
 - Upload a local image or file with: {{post_file_command}}
+- Built-in Codex image-generation outputs are saved under `{{codex_generated_images_root}}/<thread-id>/...`. When you want to share one in Slack, upload it yourself with `/slack/post-file` and an absolute `file_path`.
 - Read earlier thread context with: {{thread_history_command}}
 - Register a broker-managed background job with: {{register_job_command}}
 - Inspect the current session's co-author status with: {{coauthor_status_command}}

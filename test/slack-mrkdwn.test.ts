@@ -72,6 +72,30 @@ describe("markdownToMrkdwn", () => {
       name: "markdown link strips slack angle wrapped target",
       input: "[OpenAI](<https://openai.com>)",
       expected: "<https://openai.com|OpenAI>"
+    },
+    {
+      name: "local file paths become clickable file links",
+      input: "文件在你电脑桌面：/Users/enther/Desktop/proactive-agent-industry-deck.html，直接打开。",
+      expected:
+        "文件在你电脑桌面：<file:///Users/enther/Desktop/proactive-agent-industry-deck.html|/Users/enther/Desktop/proactive-agent-industry-deck.html>，直接打开。"
+    },
+    {
+      name: "markdown links can target local file paths",
+      input: "[打开 HTML](/Users/enther/Desktop/proactive agent deck.html)",
+      expected:
+        "<file:///Users/enther/Desktop/proactive%20agent%20deck.html|打开 HTML>"
+    },
+    {
+      name: "inline-code local file path becomes a clickable file link",
+      input: "文件在：`/Users/enther/Desktop/proactive-agent-industry-deck.html`",
+      expected:
+        "文件在：<file:///Users/enther/Desktop/proactive-agent-industry-deck.html|/Users/enther/Desktop/proactive-agent-industry-deck.html>"
+    },
+    {
+      name: "code-fenced local file path becomes a clickable file link",
+      input: "文件在：\n```\n/Users/enther/Desktop/proactive-agent-industry-deck.html\n```",
+      expected:
+        "文件在：\n<file:///Users/enther/Desktop/proactive-agent-industry-deck.html|/Users/enther/Desktop/proactive-agent-industry-deck.html>"
     }
   ] as const;
 

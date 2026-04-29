@@ -1,3 +1,5 @@
+import { pathToFileURL } from "node:url";
+
 const mdBoldItalicRe = /\*\*\*(.+?)\*\*\*/g;
 const mdBoldRe = /\*\*(.+?)\*\*/g;
 const mdItalicRe = /\*([^*\n]+?)\*/g;
@@ -9,8 +11,11 @@ const mdOrderedListRe = /^(\s*)\d+\.\s+/gm;
 const mdTableRowRe = /^\|(.+)\|$/m;
 const mdTableSepRe = /^\|[\s:]*-{2,}[\s:]*(\|[\s:]*-{2,}[\s:]*)*\|$/m;
 const inlineCodeUrlRe = /(https?:\/\/|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[:/]|$))/i;
+const localFilePathCandidateRe = /\/(?:Users|Volumes|tmp|private\/tmp|var\/folders)\/[A-Za-z0-9._~!$&'()*+,;=:@%#/-]+/g;
+const localFilePathRe = /^\/(?:Users|Volumes|tmp|private\/tmp|var\/folders)\/.+/;
 const slackLinkLabelRe = /^<([^>|]+)\|([^>]+)>$/;
 const slackLinkBareRe = /^<([^>]+)>$/;
+const slackLinkTokenRe = /<[^>\n]+>/g;
 
 const phBIOpen = "\x00BI\x01";
 const phBIClose = "\x00BI\x02";
@@ -47,6 +52,10 @@ export function markdownToSlackFallbackText(text: string): string {
 
 function sanitizeSlackCodeSegment(text: string): string {
   if (text.startsWith("```")) {
+    const linkifiedFence = linkifyLocalFilePathCodeFence(text);
+    if (linkifiedFence) {
+      return linkifiedFence;
+    }
     return text;
   }
   if (text.length < 2 || text[0] !== "`" || text[text.length - 1] !== "`") {
@@ -54,6 +63,11 @@ function sanitizeSlackCodeSegment(text: string): string {
   }
 
   let inner = text.slice(1, -1);
+  const linkifiedPath = formatLocalFilePathLink(inner.trim());
+  if (linkifiedPath) {
+    return linkifiedPath;
+  }
+
   inner = normalizeInlineCodeSlackLink(inner);
   if (!inlineCodeUrlRe.test(inner)) {
     return text;
@@ -218,7 +232,7 @@ function convertCommonMarkdown(text: string): string {
   converted = converted.replaceAll("\n---\n", "\n———\n");
   converted = converted.replaceAll("\n***\n", "\n———\n");
   converted = converted.replaceAll("\n___\n", "\n———\n");
-  return converted;
+  return linkifyLocalFilePaths(converted);
 }
 
 function normalizeMarkdownLinkTarget(target: string): string {
@@ -227,7 +241,108 @@ function normalizeMarkdownLinkTarget(target: string): string {
   if (bareMatch) {
     return bareMatch[1]!;
   }
+  const fileUrl = localFilePathToFileUrl(trimmed);
+  if (fileUrl) {
+    return fileUrl;
+  }
   return trimmed;
+}
+
+function linkifyLocalFilePathCodeFence(text: string): string | undefined {
+  if (!text.endsWith("```")) {
+    return undefined;
+  }
+
+  let body = text.slice(3, -3).trim();
+  const firstLineBreakIndex = body.indexOf("\n");
+  if (
+    firstLineBreakIndex > 0 &&
+    /^[A-Za-z0-9_-]+$/.test(body.slice(0, firstLineBreakIndex).trim()) &&
+    isLocalFilePath(body.slice(firstLineBreakIndex + 1).trim())
+  ) {
+    body = body.slice(firstLineBreakIndex + 1).trim();
+  }
+
+  const lines = body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+
+  if (lines.length === 0 || !lines.every(isLocalFilePath)) {
+    return undefined;
+  }
+
+  return lines.map((line) => formatLocalFilePathLink(line) ?? line).join("\n");
+}
+
+function linkifyLocalFilePaths(text: string): string {
+  let result = "";
+  let index = 0;
+
+  for (const match of text.matchAll(slackLinkTokenRe)) {
+    const matchIndex = match.index ?? 0;
+    result += linkifyLocalFilePathsInPlainText(text.slice(index, matchIndex));
+    result += match[0];
+    index = matchIndex + match[0].length;
+  }
+
+  result += linkifyLocalFilePathsInPlainText(text.slice(index));
+  return result;
+}
+
+function linkifyLocalFilePathsInPlainText(text: string): string {
+  return text.replaceAll(localFilePathCandidateRe, (match, offset: number) => {
+    const previous = text.slice(Math.max(0, offset - 7), offset);
+    if (previous.includes("://")) {
+      return match;
+    }
+
+    const [filePath, suffix] = splitTrailingLocalFilePathPunctuation(match);
+    return `${formatLocalFilePathLink(filePath) ?? match}${suffix}`;
+  });
+}
+
+function formatLocalFilePathLink(filePath: string): string | undefined {
+  const fileUrl = localFilePathToFileUrl(filePath);
+  if (!fileUrl) {
+    return undefined;
+  }
+
+  return `<${fileUrl}|${escapeSlackLinkLabel(filePath)}>`;
+}
+
+function localFilePathToFileUrl(filePath: string): string | undefined {
+  const trimmed = filePath.trim();
+  if (!isLocalFilePath(trimmed)) {
+    return undefined;
+  }
+
+  return pathToFileURL(trimmed).href;
+}
+
+function isLocalFilePath(value: string): boolean {
+  return localFilePathRe.test(value.trim());
+}
+
+function splitTrailingLocalFilePathPunctuation(filePath: string): readonly [string, string] {
+  let end = filePath.length;
+  while (end > 0 && /[.,;:!?)}\]]/.test(filePath[end - 1]!)) {
+    end -= 1;
+  }
+
+  if (end === filePath.length) {
+    return [filePath, ""];
+  }
+
+  return [filePath.slice(0, end), filePath.slice(end)];
+}
+
+function escapeSlackLinkLabel(label: string): string {
+  return label
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("|", "¦");
 }
 
 function normalizeOrderedListPrefix(match: string): string {

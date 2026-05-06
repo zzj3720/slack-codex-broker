@@ -206,7 +206,7 @@ The fixed clone is the Git source of truth for release worktrees. Runtime servic
 - `<service-root>/current`:
   - symlink to the active admin/worker release
 - `<service-root>/previous`:
-  - symlink to the last good worker release
+  - symlink to the last good admin/worker release
 - `<service-root>/failed`:
   - symlink to the most recent failed cutover
 - `<service-root>/.data/`:
@@ -214,7 +214,7 @@ The fixed clone is the Git source of truth for release worktrees. Runtime servic
 
 ### Deploy and rollback
 
-The admin service fetches from the VM's local Git clone and deploys a selected ref into a new release directory. Both launchd agents are written to execute through `current`; the deploy operation switches `current` before restarting the worker.
+The admin service fetches from the VM's local Git clone and deploys a selected ref into a new release directory. Both launchd agents are written to execute through `current`; the deploy operation switches `current`, restarts the worker immediately, then schedules the admin launchd restart after the API response so the request is not killed mid-flight.
 
 - deploy:
   - `git fetch origin`
@@ -222,12 +222,13 @@ The admin service fetches from the VM's local Git clone and deploys a selected r
   - create or reuse `releases/<sha>`
   - build there
   - switch `current` to the new release
-  - restart only the worker launchd service
-  - run health + Codex-ready checks
+  - restart the worker launchd service
+  - run worker health + Codex-ready checks
+  - schedule the admin launchd service restart from the same `current` release
   - auto-rollback on failed cutover
 - rollback:
   - switch `current` back to `previous`, or to an explicitly selected ref
-  - restart the worker
+  - restart the worker and schedule the admin restart
   - run the same health checks
 
 Because old releases stay on disk, rollback is a pointer switch instead of a rebuild.
@@ -236,6 +237,7 @@ Because old releases stay on disk, rollback is a pointer switch instead of a reb
 
 ```text
 GET /admin
+GET /readyz
 GET /admin/api/status
 POST /admin/api/auth-profiles
 POST /admin/api/auth-profiles/:name/activate
@@ -331,6 +333,7 @@ Supported environment knobs:
 Notes:
 
 - Raw logs are intentionally verbose and can grow quickly during long sessions. Oversized raw payloads are truncated to `LOG_RAW_MAX_BYTES` before they are written.
+- Admin status reads only a bounded tail of recent broker JSONL files; it does not decode entire log files into memory.
 - When free space falls below `DISK_CLEANUP_MIN_FREE_BYTES`, the worker removes old hourly log files first. If space is still below `DISK_CLEANUP_TARGET_FREE_BYTES`, it removes sessions inactive for at least `DISK_CLEANUP_INACTIVE_SESSION_MS`, oldest activity first. Active turns, pending inbound work, and running jobs protect sessions only until `DISK_CLEANUP_JOB_PROTECTION_MS`; older sessions can be removed with their jobs.
 - `/slack/post-file` request logging redacts inline `content_base64` payloads into a size marker instead of writing the full blob.
 - Session and job log files are written independently, so one noisy thread no longer forces the entire broker state or log history into one giant file.

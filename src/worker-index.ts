@@ -2,78 +2,43 @@ import http from "node:http";
 
 import { loadConfig } from "./config.js";
 import { createHttpHandler } from "./http/router.js";
-import { configureLogger, logger } from "./logger.js";
-import { CodexBroker } from "./services/codex/codex-broker.js";
-import { DiskPressureCleanupService } from "./services/disk-pressure-cleanup-service.js";
-import { IsolatedMcpService } from "./services/codex/isolated-mcp-service.js";
-import { GitHubAuthorMappingService } from "./services/github-author-mapping-service.js";
-import { JobManager } from "./services/job-manager.js";
-import { SessionManager } from "./services/session-manager.js";
-import { SlackCodexBridge } from "./services/slack/slack-codex-bridge.js";
-import { StateStore } from "./store/state-store.js";
+import { logger } from "./logger.js";
+import {
+  configureServiceLogger,
+  createCodexBroker,
+  createDiskPressureCleanup,
+  createGitHubAuthorMappings,
+  createIsolatedMcpService,
+  createJobManager,
+  createSessionServices,
+  createSlackBridge
+} from "./services/service-components.js";
 
 export async function startWorkerService(): Promise<{
   readonly stop: () => Promise<void>;
 }> {
   const config = loadConfig();
-  configureLogger({
-    logDir: config.logDir,
-    level: config.logLevel,
-    rawSlackEvents: config.logRawSlackEvents,
-    rawCodexRpc: config.logRawCodexRpc,
-    rawHttpRequests: config.logRawHttpRequests,
-    rawMaxBytes: config.logRawMaxBytes
-  });
+  configureServiceLogger(config);
 
-  const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
-  const sessionManager = new SessionManager({
-    stateStore,
-    sessionsRoot: config.sessionsRoot
-  });
-  const githubAuthorMappings = new GitHubAuthorMappingService({
-    stateDir: config.stateDir
-  });
-  await githubAuthorMappings.load();
-  const codexBroker = new CodexBroker({
-    serviceName: config.serviceName,
-    brokerHttpBaseUrl: config.brokerHttpBaseUrl,
-    codexHome: config.codexHome,
-    reposRoot: config.reposRoot,
-    hostCodexHomePath: config.codexHostHomePath,
-    hostGeminiHomePath: config.geminiHostHomePath,
-    codexAppServerPort: config.codexAppServerPort,
-    codexAppServerUrl: config.codexAppServerUrl,
-    codexAuthJsonPath: config.codexAuthJsonPath,
-    codexDisabledMcpServers: config.codexDisabledMcpServers,
-    tempadLinkServiceUrl: config.tempadLinkServiceUrl,
-    geminiHttpProxy: config.geminiHttpProxy,
-    geminiHttpsProxy: config.geminiHttpsProxy,
-    geminiAllProxy: config.geminiAllProxy,
-    openAiApiKey: config.codexOpenAiApiKey
-  });
-  const bridge = new SlackCodexBridge({
+  const { sessions: sessionManager } = createSessionServices(config);
+  const githubAuthorMappings = await createGitHubAuthorMappings(config);
+  const codexBroker = createCodexBroker(config);
+  const bridge = createSlackBridge({
     config,
     sessions: sessionManager,
     codex: codexBroker,
     mappings: githubAuthorMappings
   });
-  const isolatedMcp = new IsolatedMcpService({
-    codexHome: config.codexHome,
-    isolatedMcpServers: config.isolatedMcpServers
-  });
-  const jobManager = new JobManager({
-    sessions: sessionManager,
-    jobsRoot: config.jobsRoot,
-    reposRoot: config.reposRoot,
-    brokerHttpBaseUrl: config.brokerHttpBaseUrl,
-    onEvent: async (event) => {
-      await bridge.acceptBackgroundJobEvent(event);
-    }
-  });
-  const diskCleanup = new DiskPressureCleanupService({
+  const isolatedMcp = createIsolatedMcpService(config);
+  const jobManager = createJobManager({
     config,
     sessions: sessionManager,
-    jobTerminator: jobManager
+    bridge
+  });
+  const diskCleanup = createDiskPressureCleanup({
+    config,
+    sessions: sessionManager,
+    jobManager
   });
   const server = http.createServer(
     createHttpHandler({

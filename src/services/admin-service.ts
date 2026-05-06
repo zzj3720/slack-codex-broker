@@ -9,10 +9,10 @@ import type { AuthProfileService } from "./auth-profile-service.js";
 import type { GitHubAuthorMappingService } from "./github-author-mapping-service.js";
 import type { RuntimeControl } from "./runtime-control.js";
 import type {
-  DeployWorkerOptions,
-  RollbackWorkerOptions,
-  WorkerDeploymentService
-} from "./deploy/worker-deployment-service.js";
+  DeployReleaseOptions,
+  RollbackReleaseOptions,
+  ReleaseDeploymentService
+} from "./deploy/release-deployment-service.js";
 import {
   serializeAccountError,
   serializeAccountSummary,
@@ -21,6 +21,8 @@ import {
   type SerializedAccountStatus,
   type SerializedRateLimitsStatus
 } from "./codex/account-status.js";
+
+const LOG_TAIL_MAX_BYTES_PER_FILE = 256 * 1024;
 
 interface FileInfo {
   readonly exists: boolean;
@@ -38,7 +40,7 @@ export class AdminService {
       readonly authProfiles: AuthProfileService;
       readonly githubAuthorMappings: GitHubAuthorMappingService;
       readonly startedAt: Date;
-      readonly deployment?: WorkerDeploymentService | undefined;
+      readonly deployment?: ReleaseDeploymentService | undefined;
     }
   ) {}
 
@@ -179,18 +181,18 @@ export class AdminService {
     };
   }
 
-  async deployWorker(options: {
+  async deployRelease(options: {
     readonly ref: string;
     readonly allowActive: boolean;
   }): Promise<Record<string, unknown>> {
     if (!this.options.deployment) {
-      throw new Error("Worker deployment is not configured for this runtime.");
+      throw new Error("Release deployment is not configured for this runtime.");
     }
 
     await this.#assertSafeToInterrupt(options.allowActive, "deploy");
     const deployment = await this.options.deployment.deploy({
       ref: options.ref
-    } satisfies DeployWorkerOptions);
+    } satisfies DeployReleaseOptions);
     return {
       ok: true,
       deployment,
@@ -198,18 +200,18 @@ export class AdminService {
     };
   }
 
-  async rollbackWorker(options: {
+  async rollbackRelease(options: {
     readonly ref?: string | undefined;
     readonly allowActive: boolean;
   }): Promise<Record<string, unknown>> {
     if (!this.options.deployment) {
-      throw new Error("Worker deployment is not configured for this runtime.");
+      throw new Error("Release deployment is not configured for this runtime.");
     }
 
     await this.#assertSafeToInterrupt(options.allowActive, "rollback");
     const deployment = await this.options.deployment.rollback({
       ref: options.ref
-    } satisfies RollbackWorkerOptions);
+    } satisfies RollbackReleaseOptions);
     return {
       ok: true,
       deployment,
@@ -315,7 +317,7 @@ export class AdminService {
     for (const file of files.sort((left, right) =>
       right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path)
     )) {
-      const records = await readJsonlFile(file.path);
+      const records = await readJsonlFileTail(file.path, Math.max(0, limit - recordCount));
       chunks.push(records);
       recordCount += records.length;
       if (recordCount >= limit) {
@@ -422,19 +424,43 @@ async function listJsonlFiles(directoryPath: string): Promise<Array<{
   return files;
 }
 
-async function readJsonlFile(filePath: string): Promise<unknown[]> {
-  const raw = await fs.readFile(filePath, "utf8");
-  return raw
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return { raw: line };
-      }
-    });
+async function readJsonlFileTail(filePath: string, limit: number): Promise<unknown[]> {
+  if (limit <= 0) {
+    return [];
+  }
+
+  const handle = await fs.open(filePath, "r");
+  try {
+    const stat = await handle.stat();
+    if (stat.size === 0) {
+      return [];
+    }
+
+    const readLength = Math.min(stat.size, LOG_TAIL_MAX_BYTES_PER_FILE);
+    const start = stat.size - readLength;
+    const buffer = Buffer.alloc(readLength);
+    const { bytesRead } = await handle.read(buffer, 0, readLength, start);
+    let raw = buffer.subarray(0, bytesRead).toString("utf8");
+    if (start > 0) {
+      const firstNewline = raw.indexOf("\n");
+      raw = firstNewline >= 0 ? raw.slice(firstNewline + 1) : "";
+    }
+
+    return raw
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .slice(-limit)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return { raw: line };
+        }
+      });
+  } finally {
+    await handle.close();
+  }
 }
 
 function groupBySession<T extends { readonly sessionKey: string }>(items: readonly T[]): Map<string, T[]> {

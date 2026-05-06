@@ -36,8 +36,6 @@ import {
   parseActiveTurnMismatch,
   isMissingActiveTurnSteerError,
   isSlackMessageAfterCursor,
-  isStopExplainingTurnSignalKind,
-  isUnexpectedTurnStopMessage,
   shouldResetConflictingActiveTurnMismatch,
   shouldForceResetStaleIdleRuntime,
   shouldPostSlackRunFailure,
@@ -51,6 +49,7 @@ import {
 import { markdownishToMrkdwn } from "./slack-mrkdwn.js";
 import { SlackSelfMessageFilter } from "./slack-self-filter.js";
 import { SlackCoauthorService } from "./slack-coauthor-service.js";
+import { planCompletedTurnDisposition } from "./slack-turn-disposition.js";
 import { SlackTurnReconciler } from "./slack-turn-reconciler.js";
 import { SlackTurnRunner } from "./slack-turn-runner.js";
 
@@ -449,30 +448,22 @@ export class SlackConversationService {
     }
 
     const latestSession = this.#findSessionByKey(session.key);
-
-    if (dispatchMessages.length > 0 && dispatchMessages.every((message) => isUnexpectedTurnStopMessage(message))) {
+    const disposition = planCompletedTurnDisposition({
+      latestSession,
+      turnId,
+      dispatchMessages,
+      aborted: false,
+      hasRunningBackgroundJob: this.#hasRunningBackgroundJob(latestSession),
+      hasPendingUnexpectedStopNudge: this.#hasPendingUnexpectedStopNudge(latestSession, turnId)
+    });
+    if (disposition.kind === "none") {
       return latestSession;
     }
-
-    const signalKind = latestSession.lastTurnSignalTurnId === turnId ? latestSession.lastTurnSignalKind : undefined;
-    if (isStopExplainingTurnSignalKind(signalKind)) {
-      if (signalKind !== "wait" || this.#hasRunningBackgroundJob(latestSession)) {
-        return latestSession;
-      }
-    }
-
-    if (this.#hasPendingUnexpectedStopNudge(latestSession, turnId)) {
-      return latestSession;
-    }
-
-    const reason = signalKind === "wait"
-      ? "The previous run said it was waiting, but there is no running broker-managed async job attached to this session. Either resume the work, declare a block that clearly names the human/external blocker, or register the async job and then declare wait."
-      : "The previous run ended without an explicit final, block, or wait state. Either continue the work, send a final Slack update, declare a block that clearly names the human/external blocker, or declare a wait state backed by a running broker-managed async job.";
 
     await this.acceptUnexpectedTurnStop({
       session: latestSession,
       previousTurnId: turnId,
-      reason
+      reason: disposition.reason
     });
 
     return this.#findSessionByKey(latestSession.key);

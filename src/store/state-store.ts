@@ -13,9 +13,125 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
+export const CURRENT_STATE_SCHEMA_VERSION = 1;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
+
+interface StateMigration {
+  readonly version: number;
+  readonly name: string;
+  readonly up: (database: DatabaseSync) => void;
+}
+
+const STATE_MIGRATIONS: readonly StateMigration[] = [
+  {
+    version: 1,
+    name: "initial_sqlite_state",
+    up(database) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          key TEXT PRIMARY KEY,
+          channel_id TEXT NOT NULL,
+          root_thread_ts TEXT NOT NULL,
+          workspace_path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          codex_thread_id TEXT,
+          active_turn_id TEXT,
+          active_turn_started_at TEXT,
+          last_observed_message_ts TEXT,
+          last_delivered_message_ts TEXT,
+          last_slack_reply_at TEXT,
+          last_progress_reminder_at TEXT,
+          last_turn_signal_turn_id TEXT,
+          last_turn_signal_kind TEXT,
+          last_turn_signal_reason TEXT,
+          last_turn_signal_at TEXT,
+          co_author_candidate_user_ids TEXT,
+          co_author_candidate_revision INTEGER,
+          co_author_confirmed_user_ids TEXT,
+          co_author_confirmed_revision INTEGER,
+          co_author_ignore_missing_revision INTEGER,
+          co_author_prompt_revision INTEGER,
+          co_author_prompted_at TEXT,
+          UNIQUE(channel_id, root_thread_ts)
+        );
+
+        CREATE TABLE IF NOT EXISTS inbound_messages (
+          key TEXT NOT NULL UNIQUE,
+          session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+          channel_id TEXT NOT NULL,
+          channel_type TEXT,
+          root_thread_ts TEXT NOT NULL,
+          message_ts TEXT NOT NULL,
+          source TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          text TEXT NOT NULL,
+          sender_kind TEXT,
+          bot_id TEXT,
+          app_id TEXT,
+          sender_username TEXT,
+          mentioned_user_ids TEXT,
+          context_text TEXT,
+          images TEXT,
+          slack_message TEXT,
+          background_job TEXT,
+          unexpected_turn_stop TEXT,
+          status TEXT NOT NULL,
+          batch_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(session_key, message_ts)
+        );
+
+        CREATE TABLE IF NOT EXISTS background_jobs (
+          id TEXT PRIMARY KEY,
+          token TEXT NOT NULL,
+          session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+          channel_id TEXT NOT NULL,
+          root_thread_ts TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          shell TEXT NOT NULL,
+          cwd TEXT NOT NULL,
+          script_path TEXT NOT NULL,
+          restart_on_boot INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          heartbeat_at TEXT,
+          completed_at TEXT,
+          cancelled_at TEXT,
+          exit_code INTEGER,
+          error TEXT,
+          last_event_at TEXT,
+          last_event_kind TEXT,
+          last_event_summary TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS processed_events (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_id TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS slack_events (
+          event_id TEXT PRIMARY KEY,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(updated_at);
+        CREATE INDEX IF NOT EXISTS idx_inbound_session_status ON inbound_messages(session_key, status, batch_id);
+        CREATE INDEX IF NOT EXISTS idx_inbound_source ON inbound_messages(session_key, source, message_ts);
+        CREATE INDEX IF NOT EXISTS idx_jobs_session_status ON background_jobs(session_key, status);
+        CREATE INDEX IF NOT EXISTS idx_slack_events_status ON slack_events(status, created_at);
+      `);
+    }
+  }
+];
 
 export class StateStore {
   readonly #stateDir: string;
@@ -359,114 +475,28 @@ export class StateStore {
 
   #migrate(): void {
     this.#transaction(() => {
-      this.#databaseRequired().exec(`
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-          version INTEGER PRIMARY KEY,
-          applied_at TEXT NOT NULL
-        );
+      const database = this.#databaseRequired();
+      ensureSchemaMigrationsTable(database);
+      const appliedVersions = new Set(
+        (database
+          .prepare("SELECT version FROM schema_migrations")
+          .all() as Array<{ version: number | bigint }>)
+          .map((row) => Number(row.version))
+      );
 
-        CREATE TABLE IF NOT EXISTS sessions (
-          key TEXT PRIMARY KEY,
-          channel_id TEXT NOT NULL,
-          root_thread_ts TEXT NOT NULL,
-          workspace_path TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          codex_thread_id TEXT,
-          active_turn_id TEXT,
-          active_turn_started_at TEXT,
-          last_observed_message_ts TEXT,
-          last_delivered_message_ts TEXT,
-          last_slack_reply_at TEXT,
-          last_progress_reminder_at TEXT,
-          last_turn_signal_turn_id TEXT,
-          last_turn_signal_kind TEXT,
-          last_turn_signal_reason TEXT,
-          last_turn_signal_at TEXT,
-          co_author_candidate_user_ids TEXT,
-          co_author_candidate_revision INTEGER,
-          co_author_confirmed_user_ids TEXT,
-          co_author_confirmed_revision INTEGER,
-          co_author_ignore_missing_revision INTEGER,
-          co_author_prompt_revision INTEGER,
-          co_author_prompted_at TEXT,
-          UNIQUE(channel_id, root_thread_ts)
-        );
+      for (const migration of STATE_MIGRATIONS) {
+        if (!appliedVersions.has(migration.version)) {
+          migration.up(database);
+          database
+            .prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)")
+            .run(migration.version, migration.name, new Date().toISOString());
+          continue;
+        }
 
-        CREATE TABLE IF NOT EXISTS inbound_messages (
-          key TEXT NOT NULL UNIQUE,
-          session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
-          channel_id TEXT NOT NULL,
-          channel_type TEXT,
-          root_thread_ts TEXT NOT NULL,
-          message_ts TEXT NOT NULL,
-          source TEXT NOT NULL,
-          user_id TEXT NOT NULL,
-          text TEXT NOT NULL,
-          sender_kind TEXT,
-          bot_id TEXT,
-          app_id TEXT,
-          sender_username TEXT,
-          mentioned_user_ids TEXT,
-          context_text TEXT,
-          images TEXT,
-          slack_message TEXT,
-          background_job TEXT,
-          unexpected_turn_stop TEXT,
-          status TEXT NOT NULL,
-          batch_id TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY(session_key, message_ts)
-        );
-
-        CREATE TABLE IF NOT EXISTS background_jobs (
-          id TEXT PRIMARY KEY,
-          token TEXT NOT NULL,
-          session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
-          channel_id TEXT NOT NULL,
-          root_thread_ts TEXT NOT NULL,
-          kind TEXT NOT NULL,
-          shell TEXT NOT NULL,
-          cwd TEXT NOT NULL,
-          script_path TEXT NOT NULL,
-          restart_on_boot INTEGER NOT NULL,
-          status TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          started_at TEXT,
-          heartbeat_at TEXT,
-          completed_at TEXT,
-          cancelled_at TEXT,
-          exit_code INTEGER,
-          error TEXT,
-          last_event_at TEXT,
-          last_event_kind TEXT,
-          last_event_summary TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS processed_events (
-          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-          event_id TEXT NOT NULL UNIQUE
-        );
-
-        CREATE TABLE IF NOT EXISTS slack_events (
-          event_id TEXT PRIMARY KEY,
-          payload TEXT NOT NULL,
-          status TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(updated_at);
-        CREATE INDEX IF NOT EXISTS idx_inbound_session_status ON inbound_messages(session_key, status, batch_id);
-        CREATE INDEX IF NOT EXISTS idx_inbound_source ON inbound_messages(session_key, source, message_ts);
-        CREATE INDEX IF NOT EXISTS idx_jobs_session_status ON background_jobs(session_key, status);
-        CREATE INDEX IF NOT EXISTS idx_slack_events_status ON slack_events(status, created_at);
-      `);
-      this.#databaseRequired()
-        .prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)")
-        .run(1, new Date().toISOString());
+        database
+          .prepare("UPDATE schema_migrations SET name = ? WHERE version = ? AND name != ?")
+          .run(migration.name, migration.version, migration.name);
+      }
     });
   }
 
@@ -898,6 +928,24 @@ export class StateStore {
       db.exec("ROLLBACK");
       throw error;
     }
+  }
+}
+
+function ensureSchemaMigrationsTable(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      applied_at TEXT NOT NULL
+    );
+  `);
+
+  const columns = new Set(
+    (database.prepare("PRAGMA table_info(schema_migrations)").all() as Array<{ name: string }>)
+      .map((row) => row.name)
+  );
+  if (!columns.has("name")) {
+    database.exec("ALTER TABLE schema_migrations ADD COLUMN name TEXT NOT NULL DEFAULT ''");
   }
 }
 

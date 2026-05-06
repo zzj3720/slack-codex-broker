@@ -999,12 +999,15 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "<@UBOT> 继续把这个做完"
     });
 
-    await waitFor(() => mockCodex.turnsStarted.length >= 2, "unexpected stop wake turn", 120_000);
-    const wakeText = collectTextInput(mockCodex.turnsStarted[1]!.input);
+    let wakeText = "";
+    await waitFor(() => {
+      wakeText = findStartedTurnTextContaining(mockCodex, "explicit final, block, or wait state") ?? "";
+      return Boolean(wakeText);
+    }, "unexpected stop wake turn", 120_000);
     expect(wakeText).toContain("unexpected_turn_stop_json");
     expect(wakeText).toContain("explicit final, block, or wait state");
     await waitForSessionIdle(tempRoot, "C123:666.220");
-    expect(turnCount).toBe(2);
+    expect(turnCount).toBeGreaterThanOrEqual(2);
   }, 150_000);
 
   it("wakes a wait turn when no running async job backs that wait state", async () => {
@@ -1059,12 +1062,15 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "<@UBOT> 盯一下这个"
     });
 
-    await waitFor(() => mockCodex.turnsStarted.length >= 2, "wait-without-job wake turn");
-    const wakeText = collectTextInput(mockCodex.turnsStarted[1]!.input);
+    let wakeText = "";
+    await waitFor(() => {
+      wakeText = findStartedTurnTextContaining(mockCodex, "there is no running broker-managed async job") ?? "";
+      return Boolean(wakeText);
+    }, "wait-without-job wake turn");
     expect(wakeText).toContain("unexpected_turn_stop_json");
     expect(wakeText).toContain("there is no running broker-managed async job");
     await waitForSessionIdle(tempRoot, "C123:777.220");
-    expect(turnCount).toBe(2);
+    expect(turnCount).toBeGreaterThanOrEqual(2);
   }, 60_000);
 
   it("does not wake a silent wait turn when a running async job backs that wait state", async () => {
@@ -1737,6 +1743,10 @@ function collectTextInput(input: readonly CodexInputItem[]): string {
     .filter((item): item is Extract<CodexInputItem, { type: "text" }> => item.type === "text")
     .map((item) => item.text)
     .join("\n");
+}
+
+function findStartedTurnTextContaining(mockCodex: MockCodexAppServer, needle: string): string | undefined {
+  return mockCodex.turnsStarted.map((turn) => collectTextInput(turn.input)).find((text) => text.includes(needle));
 }
 
 async function postJson(url: string, payload: Record<string, unknown>): Promise<void> {

@@ -2,47 +2,35 @@ import http from "node:http";
 
 import { loadConfig } from "./config.js";
 import { createHttpHandler } from "./http/router.js";
-import { configureLogger, logger } from "./logger.js";
+import { logger } from "./logger.js";
 import { AdminService } from "./services/admin-service.js";
 import { AuthProfileService } from "./services/auth-profile-service.js";
 import { AuthFileRuntimeControl } from "./services/auth-file-runtime-control.js";
-import { WorkerDeploymentService } from "./services/deploy/worker-deployment-service.js";
-import { GitHubAuthorMappingService } from "./services/github-author-mapping-service.js";
-import { SessionManager } from "./services/session-manager.js";
-import { StateStore } from "./store/state-store.js";
+import { ReleaseDeploymentService } from "./services/deploy/release-deployment-service.js";
+import {
+  configureServiceLogger,
+  createGitHubAuthorMappings,
+  createSessionServices
+} from "./services/service-components.js";
 
 export async function startAdminService(): Promise<{
   readonly stop: () => Promise<void>;
 }> {
   const startedAt = new Date();
   const config = loadConfig();
-  configureLogger({
-    logDir: config.logDir,
-    level: config.logLevel,
-    rawSlackEvents: config.logRawSlackEvents,
-    rawCodexRpc: config.logRawCodexRpc,
-    rawHttpRequests: config.logRawHttpRequests,
-    rawMaxBytes: config.logRawMaxBytes
-  });
+  configureServiceLogger(config);
 
-  const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
-  const sessions = new SessionManager({
-    stateStore,
-    sessionsRoot: config.sessionsRoot
-  });
+  const { sessions } = createSessionServices(config);
   await sessions.load();
   const authProfiles = new AuthProfileService({
     config
   });
-  const githubAuthorMappings = new GitHubAuthorMappingService({
-    stateDir: config.stateDir
-  });
-  await githubAuthorMappings.load();
-  const deployment = createWorkerDeploymentService(config);
+  const githubAuthorMappings = await createGitHubAuthorMappings(config);
+  const deployment = createReleaseDeploymentService(config);
   const runtime = new AuthFileRuntimeControl(config, {
     onRestart: async (reason) => {
       if (!deployment) {
-        throw new Error("Worker deployment is not configured for this admin runtime.");
+        throw new Error("Release deployment is not configured for this admin runtime.");
       }
       await deployment.restartWorker(reason);
     }
@@ -89,7 +77,7 @@ export async function startAdminService(): Promise<{
   };
 }
 
-function createWorkerDeploymentService(config: ReturnType<typeof loadConfig>): WorkerDeploymentService | undefined {
+function createReleaseDeploymentService(config: ReturnType<typeof loadConfig>): ReleaseDeploymentService | undefined {
   if (
     !config.serviceRoot ||
     !config.releaseRepoRoot ||
@@ -97,19 +85,24 @@ function createWorkerDeploymentService(config: ReturnType<typeof loadConfig>): W
     !config.currentReleasePath ||
     !config.previousReleasePath ||
     !config.failedReleasePath ||
+    !config.adminPlistPath ||
+    !config.adminLaunchdLabel ||
     !config.workerPlistPath ||
     !config.workerLaunchdLabel
   ) {
     return undefined;
   }
 
-  return new WorkerDeploymentService({
+  return new ReleaseDeploymentService({
     serviceRoot: config.serviceRoot,
     repoRoot: config.releaseRepoRoot,
     releasesRoot: config.releasesRoot,
     currentReleasePath: config.currentReleasePath,
     previousReleasePath: config.previousReleasePath,
     failedReleasePath: config.failedReleasePath,
+    adminPlistPath: config.adminPlistPath,
+    adminLaunchdLabel: config.adminLaunchdLabel,
+    adminBaseUrl: config.adminBaseUrl,
     workerPlistPath: config.workerPlistPath,
     workerLaunchdLabel: config.workerLaunchdLabel,
     workerBaseUrl: config.workerBaseUrl,

@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it } from "vitest";
 
-import { STATE_DATABASE_FILENAME, StateStore } from "../src/store/state-store.js";
+import { CURRENT_STATE_SCHEMA_VERSION, STATE_DATABASE_FILENAME, StateStore } from "../src/store/state-store.js";
 
 describe("StateStore", () => {
   it("persists sessions and processed events in the SQLite database", async () => {
@@ -126,5 +127,29 @@ describe("StateStore", () => {
     expect(store.listInboundMessages({ sessionKey: "C123:111.222" })).toHaveLength(0);
     expect(store.listBackgroundJobs({ sessionKey: "C123:111.222" })).toHaveLength(0);
     store.close();
+  });
+
+  it("records explicit schema migrations and does not treat ad hoc DDL as the migration state", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-migrations-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+    store.close();
+
+    const database = new DatabaseSync(path.join(stateDir, STATE_DATABASE_FILENAME));
+    try {
+      const rows = database
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version ASC")
+        .all() as Array<{ version: number; name: string }>;
+
+      expect(rows).toEqual([
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "initial_sqlite_state"
+        }
+      ]);
+    } finally {
+      database.close();
+    }
   });
 });

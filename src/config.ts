@@ -30,6 +30,7 @@ export interface AppConfig {
   readonly codexOpenAiApiKey?: string | undefined;
   readonly tempadLinkServiceUrl?: string | undefined;
   readonly port: number;
+  readonly adminBaseUrl: string;
   readonly workerPort: number;
   readonly workerBindHost: string;
   readonly workerBaseUrl: string;
@@ -44,6 +45,7 @@ export interface AppConfig {
   readonly currentReleasePath?: string | undefined;
   readonly previousReleasePath?: string | undefined;
   readonly failedReleasePath?: string | undefined;
+  readonly adminPlistPath?: string | undefined;
   readonly workerPlistPath?: string | undefined;
   readonly logDir: string;
   readonly logLevel: "debug" | "info" | "warn" | "error";
@@ -202,6 +204,7 @@ export function loadConfig(env = process.env): AppConfig {
     workerPort,
     workerBindHost,
     workerBaseUrl: env.WORKER_BASE_URL ?? `http://${workerBindHost}:${workerPort}`,
+    adminBaseUrl: env.ADMIN_BASE_URL ?? `http://127.0.0.1:${port}`,
     brokerHttpBaseUrl: env.BROKER_HTTP_BASE_URL ?? `http://127.0.0.1:${port}`,
     serviceName: env.SERVICE_NAME ?? "slack-codex-broker",
     brokerAdminToken: getOptional(env, "BROKER_ADMIN_TOKEN"),
@@ -213,6 +216,7 @@ export function loadConfig(env = process.env): AppConfig {
     currentReleasePath: env.CURRENT_RELEASE_PATH ? path.resolve(env.CURRENT_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "current") : undefined,
     previousReleasePath: env.PREVIOUS_RELEASE_PATH ? path.resolve(env.PREVIOUS_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "previous") : undefined,
     failedReleasePath: env.FAILED_RELEASE_PATH ? path.resolve(env.FAILED_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "failed") : undefined,
+    adminPlistPath: env.ADMIN_PLIST_PATH ? path.resolve(env.ADMIN_PLIST_PATH) : undefined,
     workerPlistPath: env.WORKER_PLIST_PATH ? path.resolve(env.WORKER_PLIST_PATH) : undefined,
     logDir,
     logLevel: getLogLevel(env, "LOG_LEVEL", "info"),

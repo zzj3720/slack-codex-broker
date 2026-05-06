@@ -32,11 +32,6 @@ export async function handleSlackRequest(
     return true;
   }
 
-  if (method === "POST" && url.pathname === "/slack/resume-pending-session") {
-    await handleSlackResumePendingSessionRequest(request, response, options);
-    return true;
-  }
-
   if (method === "POST" && url.pathname === "/slack/post-message") {
     await handleSlackPostMessageRequest(request, response, options);
     return true;
@@ -325,74 +320,6 @@ async function handleSlackPostStateRequest(
       reason
     });
     respondJson(response, 200, { ok: true });
-  } catch (error) {
-    respondJson(response, 500, {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
-    });
-  }
-}
-
-async function handleSlackResumePendingSessionRequest(
-  request: http.IncomingMessage,
-  response: http.ServerResponse,
-  options: {
-    readonly bridge: SlackCodexBridge;
-  }
-): Promise<void> {
-  let body: Record<string, string>;
-
-  try {
-    body = await readFormBody(request);
-  } catch (error) {
-    respondJson(response, 400, {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    return;
-  }
-
-  logger.raw("http-requests", {
-    method: "POST",
-    path: "/slack/resume-pending-session",
-    body
-  }, {
-    channelId: body.channel_id,
-    rootThreadTs: body.thread_ts
-  });
-
-  const channelId = body.channel_id;
-  const rootThreadTs = body.thread_ts;
-  const forceReset = body.force_reset !== "false";
-
-  if (!channelId || !rootThreadTs) {
-    respondJson(response, 400, {
-      ok: false,
-      error: "missing_required_body",
-      required: ["channel_id", "thread_ts"]
-    });
-    return;
-  }
-
-  try {
-    const result = await options.bridge.resumePendingSession({
-      channelId,
-      rootThreadTs,
-      forceReset
-    });
-
-    if (!result) {
-      respondJson(response, 404, {
-        ok: false,
-        error: "session_not_found"
-      });
-      return;
-    }
-
-    respondJson(response, 200, {
-      ok: true,
-      ...result
-    });
   } catch (error) {
     respondJson(response, 500, {
       ok: false,

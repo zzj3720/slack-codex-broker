@@ -7,6 +7,7 @@ import { AdminService } from "./services/admin-service.js";
 import { AuthProfileService } from "./services/auth-profile-service.js";
 import { CodexBroker } from "./services/codex/codex-broker.js";
 import { CodexRuntimeControl } from "./services/codex-runtime-control.js";
+import { DiskPressureCleanupService } from "./services/disk-pressure-cleanup-service.js";
 import { IsolatedMcpService } from "./services/codex/isolated-mcp-service.js";
 import { GitHubAuthorMappingService } from "./services/github-author-mapping-service.js";
 import { JobManager } from "./services/job-manager.js";
@@ -71,6 +72,11 @@ export async function startService(): Promise<{
       await bridge.acceptBackgroundJobEvent(event);
     }
   });
+  const diskCleanup = new DiskPressureCleanupService({
+    config,
+    sessions: sessionManager,
+    jobTerminator: jobManager
+  });
   const authProfiles = new AuthProfileService({
     config
   });
@@ -93,13 +99,17 @@ export async function startService(): Promise<{
   );
 
   try {
+    await sessionManager.load();
+    await diskCleanup.runOnce("startup");
     await bridge.start();
     await jobManager.start();
+    diskCleanup.start();
     await new Promise<void>((resolve, reject) => {
       server.listen(config.port, () => resolve());
       server.once("error", reject);
     });
   } catch (error) {
+    diskCleanup.stop();
     await jobManager.stop().catch(() => {});
     await bridge.stop().catch(() => {});
     if (server.listening) {
@@ -118,6 +128,7 @@ export async function startService(): Promise<{
 
   return {
     stop: async () => {
+      diskCleanup.stop();
       await bridge.stop();
       await jobManager.stop();
       await new Promise<void>((resolve, reject) => {

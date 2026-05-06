@@ -54,6 +54,7 @@ Copy `.env.example` to `.env` and fill in:
 - optional `LOG_RAW_SLACK_EVENTS`
 - optional `LOG_RAW_CODEX_RPC`
 - optional `LOG_RAW_HTTP_REQUESTS`
+- optional disk cleanup settings (`DISK_CLEANUP_*`)
 - one Codex auth mode
 - optional host Codex home mount if you want the container to inherit your global `~/.codex` memory/instructions
 
@@ -134,7 +135,6 @@ Operational scripts for the real container:
 ```bash
 pnpm ops:check:real
 pnpm ops:rollout:real
-pnpm ops:resume:real -- --channel-id C123 --thread-ts 111.222
 pnpm ops:status:real
 pnpm ops:auth:real status
 pnpm ops:auth:profiles bootstrap
@@ -150,7 +150,6 @@ pnpm ops:ui:real
 `ops:auth:real status` prints the live container's Codex auth files, runtime account identity, any quota/usage fields exposed by `account/read`, plus the current session state snapshot.
 `ops:auth:profiles` manages a local auth-profile directory under the live data root. The host auth is kept as a reference copy, while the docker auth points at a selectable `active` profile. Use `bootstrap` once, then `import-host --name <profile>` or `import --name <profile> --from <path>` to add more docker-side auth profiles, and `use <profile>` to switch the live container.
 `ops:ui:real` starts a local-only admin page on `127.0.0.1` so you can inspect sessions/account state and upload a replacement `auth.json` without using CLI flags directly.
-`ops:resume:real` manually re-queues a stuck Slack session that still has pending inbound backlog but no active Codex turn. Use it as an operator fallback while debugging a broken thread.
 
 ## Run On a macOS VM
 
@@ -300,17 +299,17 @@ The broker now keeps a layered JSONL log set intended for postmortem debugging.
 
 Default layout under `LOG_DIR`:
 
-- `broker.jsonl`
-  Global structured application log for every `info` / `warn` / `error` / `debug` event.
-- `sessions/<session-key>.jsonl`
+- `broker/<yyyy-mm-dd-hh>.jsonl`
+  Hourly global structured application logs for every `info` / `warn` / `error` / `debug` event.
+- `sessions/<base64url-session-key>/<yyyy-mm-dd-hh>.jsonl`
   Per-session fan-out log. Useful when one Slack thread goes bad and you want only its history.
-- `jobs/<job-id>.jsonl`
+- `jobs/<base64url-job-id>/<yyyy-mm-dd-hh>.jsonl`
   Per-background-job fan-out log.
-- `raw/slack-events.jsonl`
+- `raw/slack-events/<yyyy-mm-dd-hh>.jsonl`
   Raw Socket Mode envelopes from Slack.
-- `raw/codex-rpc.jsonl`
+- `raw/codex-rpc/<yyyy-mm-dd-hh>.jsonl`
   Raw Codex app-server RPC requests, responses, and notifications.
-- `raw/http-requests.jsonl`
+- `raw/http-requests/<yyyy-mm-dd-hh>.jsonl`
   Raw local broker HTTP traffic for `/slack/*` and `/jobs/*`.
 
 Supported environment knobs:
@@ -319,10 +318,18 @@ Supported environment knobs:
 - `LOG_RAW_SLACK_EVENTS=true|false`
 - `LOG_RAW_CODEX_RPC=true|false`
 - `LOG_RAW_HTTP_REQUESTS=true|false`
+- `DISK_CLEANUP_ENABLED=true|false`
+- `DISK_CLEANUP_CHECK_INTERVAL_MS=300000`
+- `DISK_CLEANUP_MIN_FREE_BYTES=10737418240`
+- `DISK_CLEANUP_TARGET_FREE_BYTES=21474836480`
+- `DISK_CLEANUP_INACTIVE_SESSION_MS=86400000`
+- `DISK_CLEANUP_JOB_PROTECTION_MS=172800000`
+- `DISK_CLEANUP_OLD_LOG_MS=86400000`
 
 Notes:
 
 - Raw logs are intentionally verbose and can grow quickly during long sessions.
+- When free space falls below `DISK_CLEANUP_MIN_FREE_BYTES`, the worker removes old hourly log files first. If space is still below `DISK_CLEANUP_TARGET_FREE_BYTES`, it removes sessions inactive for at least `DISK_CLEANUP_INACTIVE_SESSION_MS`, oldest activity first. Active turns, pending inbound work, and running jobs protect sessions only until `DISK_CLEANUP_JOB_PROTECTION_MS`; older sessions can be removed with their jobs.
 - `/slack/post-file` request logging redacts inline `content_base64` payloads into a size marker instead of writing the full blob.
 - Session and job log files are written independently, so one noisy thread no longer forces the entire broker state or log history into one giant file.
 
@@ -390,21 +397,6 @@ Optional fields:
 - `content_type`
 
 `initial_comment` accepts normal Markdown/markdownish input and is converted to Slack `mrkdwn` before upload completion.
-
-## Slack Recovery API
-
-The broker also exposes a local-only operator endpoint for manually resuming a stuck session:
-
-```bash
-curl -sS -X POST http://127.0.0.1:3000/slack/resume-pending-session \
-  -H 'content-type: application/x-www-form-urlencoded' \
-  --data-urlencode 'channel_id=C123' \
-  --data-urlencode 'thread_ts=111.222'
-```
-
-Optional fields:
-
-- `force_reset=true|false` (defaults to `true`)
 
 ## Notes
 

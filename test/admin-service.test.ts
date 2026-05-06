@@ -35,7 +35,9 @@ describe("AdminService", () => {
 
     await fs.mkdir(config.codexHome, { recursive: true });
     await fs.mkdir(config.logDir, { recursive: true });
-    await fs.writeFile(path.join(config.logDir, "broker.jsonl"), "", "utf8");
+    await fs.mkdir(path.join(config.logDir, "broker"), { recursive: true });
+    await fs.writeFile(path.join(config.logDir, "broker", "2026-03-19-00.jsonl"), "{\"message\":\"older\"}\n", "utf8");
+    await fs.writeFile(path.join(config.logDir, "broker", "2026-03-19-01.jsonl"), "{\"message\":\"newer\"}\n", "utf8");
 
     const service = new AdminService({
       config,
@@ -116,6 +118,10 @@ describe("AdminService", () => {
     });
 
     const status = await service.getStatus();
+    expect((status.state as { recentBrokerLogs: unknown[] }).recentBrokerLogs).toEqual([
+      { message: "older" },
+      { message: "newer" }
+    ]);
     expect(status).toMatchObject({
       account: {
         ok: true,
@@ -161,7 +167,6 @@ describe("AdminService", () => {
 
     await fs.mkdir(config.codexHome, { recursive: true });
     await fs.mkdir(config.logDir, { recursive: true });
-    await fs.writeFile(path.join(config.logDir, "broker.jsonl"), "", "utf8");
 
     const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
     const sessions = new SessionManager({
@@ -269,7 +274,6 @@ describe("AdminService", () => {
 
     await fs.mkdir(config.codexHome, { recursive: true });
     await fs.mkdir(config.logDir, { recursive: true });
-    await fs.writeFile(path.join(config.logDir, "broker.jsonl"), "", "utf8");
 
     const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
     const sessions = new SessionManager({

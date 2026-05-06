@@ -63,6 +63,38 @@ export class StateStore {
     );
   }
 
+  async deleteSession(key: string): Promise<boolean> {
+    const filePath = path.join(this.#sessionsDirPath, `${encodeKey(key)}.json`);
+    let deleted = false;
+
+    await this.#runSerialized(filePath, async () => {
+      if (!this.#sessions.has(key)) {
+        return;
+      }
+
+      const jobIds = [...this.#backgroundJobs.values()]
+        .filter((job) => job.sessionKey === key)
+        .map((job) => job.id);
+
+      this.#sessions.delete(key);
+      this.#inboundMessagesBySession.delete(key);
+      for (const jobId of jobIds) {
+        this.#backgroundJobs.delete(jobId);
+      }
+
+      await Promise.all([
+        fs.rm(filePath, { force: true }),
+        fs.rm(path.join(this.#inboundDirPath, `${encodeKey(key)}.json`), { force: true }),
+        ...jobIds.map((jobId) =>
+          fs.rm(path.join(this.#jobsDirPath, `${encodeKey(jobId)}.json`), { force: true })
+        )
+      ]);
+      deleted = true;
+    });
+
+    return deleted;
+  }
+
   async patchSession(
     key: string,
     patch:

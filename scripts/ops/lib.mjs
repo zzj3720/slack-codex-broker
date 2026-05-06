@@ -361,6 +361,10 @@ async function readJsonRecordsFromDirectory(directory) {
 }
 
 async function readLastJsonlLines(filePath, limit) {
+  if (limit <= 0) {
+    return [];
+  }
+
   try {
     const text = await fsp.readFile(filePath, "utf8");
     return text
@@ -384,6 +388,45 @@ async function readLastJsonlLines(filePath, limit) {
   }
 }
 
+async function readRecentBrokerLogRecords(logsRoot, limit) {
+  if (limit <= 0) {
+    return [];
+  }
+
+  const brokerLogRoot = path.join(logsRoot, "broker");
+  const entries = await fsp.readdir(brokerLogRoot, { withFileTypes: true }).catch((error) => {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  });
+  const files = await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+    .map(async (entry) => {
+      const filePath = path.join(brokerLogRoot, entry.name);
+      const stat = await fsp.stat(filePath);
+      return {
+        path: filePath,
+        mtimeMs: stat.mtimeMs
+      };
+    }));
+  const chunks = [];
+  let recordCount = 0;
+
+  for (const file of files.sort((left, right) =>
+    right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path)
+  )) {
+    const records = await readLastJsonlLines(file.path, limit);
+    chunks.push(records);
+    recordCount += records.length;
+    if (recordCount >= limit) {
+      break;
+    }
+  }
+
+  return chunks.reverse().flat().slice(-limit);
+}
+
 export async function readDetailedStateFromHost(dataRootSource, options = {}) {
   const openInboundLimit = options.openInboundLimit ?? 20;
   const logLineLimit = options.logLineLimit ?? 40;
@@ -402,7 +445,7 @@ export async function readDetailedStateFromHost(dataRootSource, options = {}) {
     .filter((message) => message?.status === "pending" || message?.status === "inflight")
     .sort((left, right) => String(left.updatedAt ?? "").localeCompare(String(right.updatedAt ?? "")));
 
-  const brokerLogs = await readLastJsonlLines(path.join(logsRoot, "broker.jsonl"), logLineLimit);
+  const brokerLogs = await readRecentBrokerLogRecords(logsRoot, logLineLimit);
 
   return {
     sessionCount: sessions.length,

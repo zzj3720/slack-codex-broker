@@ -66,7 +66,6 @@ export class SlackCodexBridge {
   }
 
   async start(): Promise<void> {
-    await this.#sessions.load();
     await this.#codex.start();
 
     const auth = await this.#slackApi.authTest();
@@ -121,14 +120,6 @@ export class SlackCodexBridge {
     readonly messageTs: string;
   }) {
     return await this.#conversations.replayThreadMessage(options);
-  }
-
-  async resumePendingSession(options: {
-    readonly channelId: string;
-    readonly rootThreadTs: string;
-    readonly forceReset?: boolean | undefined;
-  }) {
-    return await this.#conversations.resumePendingSession(options);
   }
 
   async acceptBackgroundJobEvent(options: {

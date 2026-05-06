@@ -211,18 +211,12 @@ export class SlackInboundStore {
     readonly markedDoneCount: number;
     readonly resetToPendingCount: number;
   }> {
-    if (session.activeTurnId) {
-      return {
-        markedDoneCount: 0,
-        resetToPendingCount: 0
-      };
-    }
-
+    const activeTurnId = session.activeTurnId;
     const inflightMessages = this.#sessions.listInboundMessages({
       channelId: session.channelId,
       rootThreadTs: session.rootThreadTs,
       status: "inflight"
-    });
+    }).filter((message) => !activeTurnId || message.batchId !== activeTurnId);
 
     if (inflightMessages.length === 0) {
       return {

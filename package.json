@@ -5,12 +5,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zzj3720/slack-codex-broker.git"
+    "url": "git+https://github.com/HOOLC/slack-codex-broker.git"
   },
   "bugs": {
-    "url": "https://github.com/zzj3720/slack-codex-broker/issues"
+    "url": "https://github.com/HOOLC/slack-codex-broker/issues"
   },
-  "homepage": "https://github.com/zzj3720/slack-codex-broker#readme",
+  "homepage": "https://github.com/HOOLC/slack-codex-broker#readme",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "engines": {

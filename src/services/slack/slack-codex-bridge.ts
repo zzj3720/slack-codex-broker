@@ -14,6 +14,7 @@ import {
   isSlackMessageEffectivelyEmpty,
   parseSlackEvent
 } from "./slack-event-parser.js";
+import { shouldDispatchThreadReplyFromSlack } from "./slack-conversation-utils.js";
 import { SlackApi } from "./slack-api.js";
 import { SlackCoauthorService } from "./slack-coauthor-service.js";
 import { SlackConversationService } from "./slack-conversation-service.js";
@@ -294,6 +295,10 @@ export class SlackCodexBridge {
         }
 
         if (isSlackMessageEffectivelyEmpty(parsed.input.text, parsed.input.images, parsed.input.slackMessage)) {
+          return;
+        }
+
+        if (!shouldDispatchThreadReplyFromSlack(parsed.input, this.#botUserId)) {
           return;
         }
 

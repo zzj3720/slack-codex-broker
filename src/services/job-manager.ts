@@ -144,11 +144,13 @@ export class JobManager {
     }
   ): Promise<PersistedBackgroundJob> {
     const job = this.#authorizeJob(id, token);
+    const eventKind = payload.eventKind.trim();
+    const summary = payload.summary.trim();
     const updated = await this.#persistJob({
       ...job,
       lastEventAt: new Date().toISOString(),
-      lastEventKind: payload.eventKind,
-      lastEventSummary: payload.summary.trim()
+      lastEventKind: eventKind,
+      lastEventSummary: summary
     });
 
     if (this.#shouldSuppressEventForFinalizedSession(updated)) {
@@ -159,11 +161,20 @@ export class JobManager {
       return this.#requireJob(updated.id);
     }
 
+    if (shouldSuppressDuplicateJobStateEvent(job, eventKind, summary)) {
+      logger.info("Suppressing duplicate background job state event", {
+        jobId: updated.id,
+        eventKind,
+        summary
+      });
+      return updated;
+    }
+
     await this.#emitEvent(updated, {
       jobId: updated.id,
       jobKind: updated.kind,
-      eventKind: payload.eventKind,
-      summary: payload.summary.trim(),
+      eventKind,
+      summary,
       detailsText: payload.detailsText?.trim() || undefined,
       detailsJson: payload.detailsJson
     });
@@ -505,6 +516,18 @@ function normalizeScript(script: string, shell: string): string {
     : `#!/usr/bin/env ${interpreter}`;
 
   return `${shebang}\n${normalized}\n`;
+}
+
+function shouldSuppressDuplicateJobStateEvent(
+  previousJob: PersistedBackgroundJob,
+  eventKind: string,
+  summary: string
+): boolean {
+  return (
+    eventKind === "state_changed" &&
+    previousJob.lastEventKind === eventKind &&
+    previousJob.lastEventSummary === summary
+  );
 }
 
 function resolveJobCwd(workspacePath: string, cwd?: string | undefined): string {

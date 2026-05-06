@@ -62,9 +62,22 @@ export class AppServerProcess {
     return `ws://127.0.0.1:${this.#port}`;
   }
 
-  async start(): Promise<void> {
+  async start(options?: {
+    readonly reuseExisting?: boolean | undefined;
+  }): Promise<void> {
     if (this.#child) {
       return;
+    }
+
+    if (options?.reuseExisting ?? true) {
+      const existingPids = await listListeningPortPids(this.#port);
+      if (existingPids.length > 0 && await isHealthyCodexAppServer(this.#port)) {
+        logger.warn("Reusing existing codex app-server listener", {
+          port: this.#port,
+          pids: existingPids
+        });
+        return;
+      }
     }
 
     await this.#prepareCodexHome();
@@ -106,7 +119,10 @@ export class AppServerProcess {
 
   async restart(): Promise<void> {
     await this.stop();
-    await this.start();
+    await reclaimPortListeners(this.#port, [process.pid]);
+    await this.start({
+      reuseExisting: false
+    });
   }
 
   async stop(): Promise<void> {
@@ -612,6 +628,17 @@ async function isHealthyHttpService(baseUrl: string): Promise<boolean> {
   try {
     const response = await fetch(new URL("/health", baseUrl), {
       signal: AbortSignal.timeout(3_000)
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function isHealthyCodexAppServer(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/readyz`, {
+      signal: AbortSignal.timeout(1_000)
     });
     return response.ok;
   } catch {

@@ -77,8 +77,8 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("\"title\": \"Screenshot\"");
     expect(result).toContain("\"dimensions\": \"1280x720\"");
     expect(result).toContain("\"text\": \"Please fix the flaky test.\"");
-    expect(result).toContain("\"slack_message\": {");
-    expect(result).toContain("\"blocks\": [");
+    expect(result).not.toContain("\"slack_message\":");
+    expect(result).not.toContain("\"slack_card\":");
   });
 
   it("falls back to ids when profile lookup is unavailable", () => {
@@ -242,7 +242,7 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("\"mentioned_users\": [");
   });
 
-  it("renders bot/app card messages with raw Slack payload intact", () => {
+  it("renders bot/app card messages with compact Slack card details", () => {
     const result = formatSlackMessageForCodex(
       {
         source: "thread_reply",
@@ -276,8 +276,11 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("\"bot_id\": \"B123\"");
     expect(result).toContain("\"app_id\": \"A123\"");
     expect(result).toContain("\"username\": \"Linear\"");
+    expect(result).toContain("\"slack_card\": {");
     expect(result).toContain("\"attachments\": [");
     expect(result).toContain("CUE-1180 感觉 ai chat webview 帧率很低");
+    expect(result).toContain("https://linear.app/surf-cue/issue/CUE-1180");
+    expect(result).not.toContain("\"slack_message\":");
   });
 
   it("renders background job events without pretending they came from a Slack user", () => {
@@ -385,6 +388,6 @@ describe("formatSlackHistoryContextForCodex", () => {
     expect(result).toContain("\"display_name\": \"Bob\"");
     expect(result).toContain("\"images\": [");
     expect(result).toContain("\"text\": \"Earlier note\"");
-    expect(result).toContain("\"slack_message\": {");
+    expect(result).not.toContain("\"slack_message\":");
   });
 });

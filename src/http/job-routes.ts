@@ -190,7 +190,9 @@ async function handleJobActionRequest(
         if (!token) {
           throw new Error("missing_job_token");
         }
-        job = await options.jobManager.cancelJob(action.jobId, token);
+        job = await options.jobManager.cancelJob(action.jobId, token, {
+          skipEvent: readBoolean(body.skip_event ?? body.skipEvent, false)
+        });
         break;
     }
 

@@ -10,6 +10,7 @@ export interface AppConfig {
   readonly slackHistoryApiMaxLimit: number;
   readonly slackActiveTurnReconcileIntervalMs: number;
   readonly slackMissedThreadRecoveryIntervalMs: number;
+  readonly slackStaleIdleRuntimeResetAfterMs: number;
   readonly slackProgressReminderAfterMs: number;
   readonly slackProgressReminderRepeatMs: number;
   readonly stateDir: string;
@@ -50,9 +51,18 @@ export interface AppConfig {
   readonly logRawSlackEvents: boolean;
   readonly logRawCodexRpc: boolean;
   readonly logRawHttpRequests: boolean;
+  readonly diskCleanupEnabled: boolean;
+  readonly diskCleanupCheckIntervalMs: number;
+  readonly diskCleanupMinFreeBytes: number;
+  readonly diskCleanupTargetFreeBytes: number;
+  readonly diskCleanupInactiveSessionMs: number;
+  readonly diskCleanupJobProtectionMs: number;
+  readonly diskCleanupOldLogMs: number;
 }
 
 const ALL_CODEX_MCP_SERVERS = "*";
+const GIB = 1024 * 1024 * 1024;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function getRequired(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
@@ -167,7 +177,12 @@ export function loadConfig(env = process.env): AppConfig {
     slackMissedThreadRecoveryIntervalMs: getNumber(
       env,
       "SLACK_MISSED_THREAD_RECOVERY_INTERVAL_MS",
-      15_000
+      120_000
+    ),
+    slackStaleIdleRuntimeResetAfterMs: getNumber(
+      env,
+      "SLACK_STALE_IDLE_RUNTIME_RESET_AFTER_MS",
+      120_000
     ),
     slackProgressReminderAfterMs: getNumber(env, "SLACK_PROGRESS_REMINDER_AFTER_MS", 120_000),
     slackProgressReminderRepeatMs: getNumber(env, "SLACK_PROGRESS_REMINDER_REPEAT_MS", 120_000),
@@ -208,6 +223,13 @@ export function loadConfig(env = process.env): AppConfig {
     logLevel: getLogLevel(env, "LOG_LEVEL", "info"),
     logRawSlackEvents: getBoolean(env, "LOG_RAW_SLACK_EVENTS", true),
     logRawCodexRpc: getBoolean(env, "LOG_RAW_CODEX_RPC", true),
-    logRawHttpRequests: getBoolean(env, "LOG_RAW_HTTP_REQUESTS", true)
+    logRawHttpRequests: getBoolean(env, "LOG_RAW_HTTP_REQUESTS", true),
+    diskCleanupEnabled: getBoolean(env, "DISK_CLEANUP_ENABLED", true),
+    diskCleanupCheckIntervalMs: getNumber(env, "DISK_CLEANUP_CHECK_INTERVAL_MS", 5 * 60 * 1000),
+    diskCleanupMinFreeBytes: getNumber(env, "DISK_CLEANUP_MIN_FREE_BYTES", 10 * GIB),
+    diskCleanupTargetFreeBytes: getNumber(env, "DISK_CLEANUP_TARGET_FREE_BYTES", 20 * GIB),
+    diskCleanupInactiveSessionMs: getNumber(env, "DISK_CLEANUP_INACTIVE_SESSION_MS", DAY_MS),
+    diskCleanupJobProtectionMs: getNumber(env, "DISK_CLEANUP_JOB_PROTECTION_MS", 2 * DAY_MS),
+    diskCleanupOldLogMs: getNumber(env, "DISK_CLEANUP_OLD_LOG_MS", DAY_MS)
   };
 }

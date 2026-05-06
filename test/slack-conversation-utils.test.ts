@@ -10,7 +10,8 @@ import {
   shouldAutoRecoverSession,
   shouldForceResetStaleIdleRuntime,
   shouldPostSlackRunFailure,
-  shouldNotifySlackFailure
+  shouldNotifySlackFailure,
+  shouldDispatchThreadReplyFromSlack
 } from "../src/services/slack/slack-conversation-utils.js";
 
 describe("slack conversation utils", () => {
@@ -168,6 +169,48 @@ describe("slack conversation utils", () => {
       nowMs: Date.parse("2026-04-17T04:01:00.000Z"),
       staleAfterMs: 30_000
     })).toBe(false);
+  });
+
+  it("does not dispatch plain bot chatter unless it mentions the Codex bot", () => {
+    expect(shouldDispatchThreadReplyFromSlack({
+      senderKind: "bot",
+      botId: "BOTHER",
+      text: "Let me check that now.",
+      mentionedUserIds: [],
+      slackMessage: {
+        bot_id: "BOTHER",
+        text: "Let me check that now."
+      }
+    }, "UBOT")).toBe(false);
+
+    expect(shouldDispatchThreadReplyFromSlack({
+      senderKind: "bot",
+      botId: "BOTHER",
+      text: "<@UBOT> please look at this",
+      mentionedUserIds: ["UBOT"],
+      slackMessage: {
+        bot_id: "BOTHER",
+        text: "<@UBOT> please look at this"
+      }
+    }, "UBOT")).toBe(true);
+  });
+
+  it("still dispatches structured bot cards", () => {
+    expect(shouldDispatchThreadReplyFromSlack({
+      senderKind: "bot",
+      botId: "BLINEAR",
+      text: "",
+      mentionedUserIds: [],
+      slackMessage: {
+        bot_id: "BLINEAR",
+        app_id: "ALINEAR",
+        attachments: [
+          {
+            title: "CUE-1180"
+          }
+        ]
+      }
+    }, "UBOT")).toBe(true);
   });
 
 });

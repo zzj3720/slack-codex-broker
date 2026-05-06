@@ -206,6 +206,7 @@ describe("SlackApi.listThreadMessages", () => {
             {
               ts: "111.222",
               subtype: "bot_message",
+              user: "U_BOTUSER",
               bot_id: "B123",
               app_id: "A123",
               username: "Linear",
@@ -255,6 +256,7 @@ describe("SlackApi.listThreadMessages", () => {
         slackMessage: {
           ts: "111.222",
           subtype: "bot_message",
+          user: "U_BOTUSER",
           bot_id: "B123",
           app_id: "A123",
           username: "Linear",

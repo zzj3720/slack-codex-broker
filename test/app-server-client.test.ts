@@ -904,108 +904,76 @@ describe("AppServerClient disconnect handling", () => {
     expect(threadStartParams?.baseInstructions).toEqual(expect.stringContaining("bot_mention: <@U999>"));
     expect(threadStartParams?.baseInstructions).toEqual(expect.stringContaining("bot_display_name: codex-3720"));
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Do not assume it is addressed to you")
+      expect.stringContaining("Base URL: http://127.0.0.1:3000")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("bias toward sending a short direct Slack answer")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("BROKER_JOB_HELPER")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Write normal Markdown in the `text` field")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("the broker converts markdownish output to `mrkdwn` before posting")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("The main Codex runtime for this Slack broker does not load the linear or notion MCPs directly")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("/integrations/mcp-tools?server=linear")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("/integrations/mcp-tools?server=notion")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("/integrations/mcp-call")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("UI/frontend/layout/styling contract")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("kimi --work-dir /absolute/project/path")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("consult Kimi first by default")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Keep APIs, data contracts, and non-UI behavior unchanged")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("user explicitly asks you to do the UI work directly yourself")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Kimi is unavailable right now and then continue the UI work yourself")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("\"server\":\"linear\"")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("\"name\":\"replace_with_linear_tool_name\"")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("\"server\":\"notion\"")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("\"name\":\"replace_with_notion_tool_name\"")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Turn stopping contract")
-    );
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("kind=wait")
+      expect.stringContaining("/slack/post-message")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("/slack/post-state")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("silent block state")
+      expect.stringContaining("/slack/post-file")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("silent final state")
+      expect.stringContaining("/jobs/register")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Do not send one plain Slack reply and then a second state-only reply")
+      expect.stringContaining("BROKER_JOB_HELPER")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Do not prefix the message body with tags like [final], [block], or [wait]")
+      expect.stringContaining("/integrations/mcp-tools?server=linear|notion")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Do not emit repeated wait updates for routine watcher ticks")
+      expect.stringContaining("/integrations/mcp-call")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("do not mirror every watcher update back into Slack")
+      expect.stringContaining("UI work:")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("kimi --work-dir /absolute/project/path")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Keep APIs/data contracts unchanged")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Turn stopping contract")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("wait only for broker-managed async jobs")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("/slack/post-state")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Do not send duplicate state-only replies")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("forwarded message only means the thread changed")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Direct status/follow-up questions")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Only speak when watcher updates are materially useful")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("shared_repos_root: /tmp/repos")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Git commit co-author contract")
+      expect.stringContaining("Git/co-authors")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Do not bypass git hooks")
+      expect.stringContaining("do not bypass hooks")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("The broker may append `Co-authored-by:` trailers automatically")
-    );
-    expect(String(threadStartParams?.baseInstructions)).toContain("node \\\"$BROKER_JOB_HELPER\\\" event");
-    expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Identity and instruction boundaries")
+      expect.stringContaining("Co-authored-by")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Do not store personal operating memory in repository AGENTS.md files")
+      expect.stringContaining("Instruction boundaries")
     );
+    expect(String(threadStartParams?.baseInstructions)).not.toContain("replace_with_linear_tool_name");
+    expect(String(threadStartParams?.baseInstructions)).not.toContain("curl -sS -X POST");
     expect(String(threadStartParams?.baseInstructions)).not.toContain("{{");
     expect(threadResumeParams?.baseInstructions).toBeNull();
   });

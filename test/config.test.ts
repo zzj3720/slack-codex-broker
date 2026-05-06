@@ -25,12 +25,21 @@ describe("loadConfig", () => {
     expect(config.slackInitialThreadHistoryCount).toBe(8);
     expect(config.slackHistoryApiMaxLimit).toBe(50);
     expect(config.slackActiveTurnReconcileIntervalMs).toBe(15_000);
+    expect(config.slackMissedThreadRecoveryIntervalMs).toBe(120_000);
+    expect(config.slackStaleIdleRuntimeResetAfterMs).toBe(120_000);
     expect(config.slackProgressReminderAfterMs).toBe(120_000);
     expect(config.slackProgressReminderRepeatMs).toBe(120_000);
     expect(config.logLevel).toBe("info");
     expect(config.logRawSlackEvents).toBe(true);
     expect(config.logRawCodexRpc).toBe(true);
     expect(config.logRawHttpRequests).toBe(true);
+    expect(config.diskCleanupEnabled).toBe(true);
+    expect(config.diskCleanupCheckIntervalMs).toBe(300_000);
+    expect(config.diskCleanupMinFreeBytes).toBe(10 * 1024 * 1024 * 1024);
+    expect(config.diskCleanupTargetFreeBytes).toBe(20 * 1024 * 1024 * 1024);
+    expect(config.diskCleanupInactiveSessionMs).toBe(24 * 60 * 60 * 1000);
+    expect(config.diskCleanupJobProtectionMs).toBe(2 * 24 * 60 * 60 * 1000);
+    expect(config.diskCleanupOldLogMs).toBe(24 * 60 * 60 * 1000);
     expect(config.brokerAdminToken).toBeUndefined();
     expect(config.geminiHostHomePath).toBeUndefined();
     expect(config.geminiHttpProxy).toBeUndefined();
@@ -106,13 +115,27 @@ describe("loadConfig", () => {
       LOG_LEVEL: "debug",
       LOG_RAW_SLACK_EVENTS: "false",
       LOG_RAW_CODEX_RPC: "false",
-      LOG_RAW_HTTP_REQUESTS: "true"
+      LOG_RAW_HTTP_REQUESTS: "true",
+      DISK_CLEANUP_ENABLED: "false",
+      DISK_CLEANUP_CHECK_INTERVAL_MS: "60000",
+      DISK_CLEANUP_MIN_FREE_BYTES: "100",
+      DISK_CLEANUP_TARGET_FREE_BYTES: "200",
+      DISK_CLEANUP_INACTIVE_SESSION_MS: "300",
+      DISK_CLEANUP_JOB_PROTECTION_MS: "400",
+      DISK_CLEANUP_OLD_LOG_MS: "500"
     } as NodeJS.ProcessEnv);
 
     expect(config.logLevel).toBe("debug");
     expect(config.logRawSlackEvents).toBe(false);
     expect(config.logRawCodexRpc).toBe(false);
     expect(config.logRawHttpRequests).toBe(true);
+    expect(config.diskCleanupEnabled).toBe(false);
+    expect(config.diskCleanupCheckIntervalMs).toBe(60_000);
+    expect(config.diskCleanupMinFreeBytes).toBe(100);
+    expect(config.diskCleanupTargetFreeBytes).toBe(200);
+    expect(config.diskCleanupInactiveSessionMs).toBe(300);
+    expect(config.diskCleanupJobProtectionMs).toBe(400);
+    expect(config.diskCleanupOldLogMs).toBe(500);
   });
 
   it("loads an optional broker admin token", () => {

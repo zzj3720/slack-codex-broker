@@ -218,9 +218,111 @@ function buildSlackMessagePayload(
       height: image.height,
       dimensions: formatImageDimensions(image)
     })),
-    slack_message: message.slackMessage,
+    slack_card: shouldIncludeSlackCardPayload(message)
+      ? buildSlackCardPayload(message.slackMessage)
+      : undefined,
     unexpected_turn_stop: message.unexpectedTurnStop
   };
+}
+
+function shouldIncludeSlackCardPayload(message: SlackRenderableMessage): boolean {
+  return message.senderKind !== "user" || !message.text.trim();
+}
+
+function buildSlackCardPayload(value: JsonLike | undefined): Record<string, unknown> | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const card = dropUndefined({
+    subtype: readString(record.subtype),
+    text: readString(record.text),
+    bot_id: readString(record.bot_id),
+    app_id: readString(record.app_id),
+    username: readString(record.username),
+    blocks: summarizeSlackBlocks(record.blocks),
+    attachments: summarizeSlackAttachments(record.attachments)
+  });
+
+  return Object.keys(card).length > 0 ? card : undefined;
+}
+
+function summarizeSlackBlocks(value: unknown): unknown[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const blocks = value.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record) {
+      return [];
+    }
+
+    const block = dropUndefined({
+      type: readString(record.type),
+      text: extractSlackText(record.text) ?? extractSlackText(record.title),
+      fields: Array.isArray(record.fields)
+        ? record.fields.map(extractSlackText).filter((text): text is string => Boolean(text))
+        : undefined,
+      accessory_text: extractSlackText(asRecord(record.accessory)?.text)
+    });
+
+    return Object.keys(block).length > 0 ? [block] : [];
+  });
+
+  return blocks.length > 0 ? blocks : undefined;
+}
+
+function summarizeSlackAttachments(value: unknown): unknown[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const attachments = value.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record) {
+      return [];
+    }
+
+    const attachment = dropUndefined({
+      fallback: readString(record.fallback),
+      pretext: readString(record.pretext),
+      title: readString(record.title),
+      title_link: readString(record.title_link),
+      text: readString(record.text),
+      footer: readString(record.footer)
+    });
+
+    return Object.keys(attachment).length > 0 ? [attachment] : [];
+  });
+
+  return attachments.length > 0 ? attachments : undefined;
+}
+
+function extractSlackText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value.trim() || undefined;
+  }
+
+  const record = asRecord(value);
+  return readString(record?.text);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function dropUndefined<T extends Record<string, unknown>>(record: T): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).filter((entry): entry is [string, unknown] => entry[1] !== undefined)
+  );
 }
 
 function buildSenderPayload(

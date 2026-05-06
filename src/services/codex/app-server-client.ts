@@ -13,6 +13,8 @@ import { buildSlackThreadBaseInstructions } from "./slack-thread-base-instructio
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+const APP_SERVER_MAX_PAYLOAD_BYTES = 512 * 1024 * 1024;
+
 interface RawRateLimitWindow {
   readonly usedPercent?: number;
   readonly windowDurationMins?: number | null;
@@ -154,7 +156,9 @@ export class AppServerClient extends EventEmitter {
 
   async connect(): Promise<void> {
     this.#disconnectHandled = false;
-    this.#socket = new WebSocket(this.options.url);
+    this.#socket = new WebSocket(this.options.url, {
+      maxPayload: APP_SERVER_MAX_PAYLOAD_BYTES
+    });
 
     await new Promise<void>((resolve, reject) => {
       this.#socket?.once("open", () => resolve());

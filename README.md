@@ -54,6 +54,7 @@ Copy `.env.example` to `.env` and fill in:
 - optional `LOG_RAW_SLACK_EVENTS`
 - optional `LOG_RAW_CODEX_RPC`
 - optional `LOG_RAW_HTTP_REQUESTS`
+- optional disk cleanup settings (`DISK_CLEANUP_*`)
 - one Codex auth mode
 - optional host Codex home mount if you want the container to inherit your global `~/.codex` memory/instructions
 
@@ -166,7 +167,7 @@ There is no host-side code sync step in the normal path anymore.
 ### First bootstrap on the VM
 
 ```bash
-git clone https://github.com/zzj3720/slack-codex-broker.git ~/services/slack-codex-broker
+git clone https://github.com/HOOLC/slack-codex-broker.git ~/services/slack-codex-broker
 cd ~/services/slack-codex-broker
 node scripts/ops/macos-bootstrap.mjs --start-worker
 ```
@@ -319,10 +320,18 @@ Supported environment knobs:
 - `LOG_RAW_SLACK_EVENTS=true|false`
 - `LOG_RAW_CODEX_RPC=true|false`
 - `LOG_RAW_HTTP_REQUESTS=true|false`
+- `DISK_CLEANUP_ENABLED=true|false` (defaults to `true`)
+- `DISK_CLEANUP_CHECK_INTERVAL_MS=300000`
+- `DISK_CLEANUP_MIN_FREE_BYTES=10737418240`
+- `DISK_CLEANUP_TARGET_FREE_BYTES=21474836480`
+- `DISK_CLEANUP_INACTIVE_SESSION_MS=86400000`
+- `DISK_CLEANUP_JOB_PROTECTION_MS=172800000`
+- `DISK_CLEANUP_OLD_LOG_MS=86400000`
 
 Notes:
 
 - Raw logs are intentionally verbose and can grow quickly during long sessions.
+- When disk free space falls below `DISK_CLEANUP_MIN_FREE_BYTES`, the worker first removes old raw logs, then removes sessions that have been inactive longer than `DISK_CLEANUP_INACTIVE_SESSION_MS`. Active turns, pending inbound work, and running background jobs protect sessions only until `DISK_CLEANUP_JOB_PROTECTION_MS`; older sessions can be removed with their jobs. Cleanup deletes oldest activity first until free space reaches `DISK_CLEANUP_TARGET_FREE_BYTES` or there are no candidates left.
 - `/slack/post-file` request logging redacts inline `content_base64` payloads into a size marker instead of writing the full blob.
 - Session and job log files are written independently, so one noisy thread no longer forces the entire broker state or log history into one giant file.
 

@@ -214,7 +214,7 @@ class StoredOauthProvider implements OAuthClientProvider {
     return {
       redirect_uris: [],
       client_name: "slack-codex-broker",
-      client_uri: "https://github.com/zzj3720/slack-codex-broker",
+      client_uri: "https://github.com/HOOLC/slack-codex-broker",
       grant_types: this.#entry.refresh_token
         ? ["refresh_token"]
         : ["authorization_code", "refresh_token"],

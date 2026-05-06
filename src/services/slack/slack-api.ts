@@ -553,14 +553,6 @@ function resolveSlackMessageAuthor(message: Record<string, unknown>): {
   readonly appId?: string | undefined;
   readonly senderUsername?: string | undefined;
 } {
-  const userId = normalizeSlackField(message.user);
-  if (userId) {
-    return {
-      userId,
-      senderKind: "user"
-    };
-  }
-
   const botId = normalizeSlackField(message.bot_id);
   const appId = normalizeSlackField(message.app_id);
   const senderUsername = normalizeSlackField(message.username);
@@ -581,6 +573,14 @@ function resolveSlackMessageAuthor(message: Record<string, unknown>): {
       senderKind: "app",
       appId,
       senderUsername
+    };
+  }
+
+  const userId = normalizeSlackField(message.user);
+  if (userId) {
+    return {
+      userId,
+      senderKind: "user"
     };
   }
 

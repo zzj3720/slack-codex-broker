@@ -1,7 +1,10 @@
 import type {
+  JsonLike,
   PersistedInboundMessage,
   PersistedInboundSource,
   SlackInboundSource,
+  SlackInputMessage,
+  SlackThreadMessage,
   SlackSessionRecord,
   SlackTurnSignalKind
 } from "../../types.js";
@@ -227,10 +230,68 @@ export function isSlackInboundSource(
   return source === "app_mention" || source === "direct_message" || source === "thread_reply";
 }
 
-export function isStopExplainingTurnSignalKind(kind: SlackTurnSignalKind | undefined): boolean {
+export function shouldDispatchThreadReplyFromSlack(
+  message: Pick<
+    SlackInputMessage | SlackThreadMessage,
+    "senderKind" | "botId" | "appId" | "text" | "mentionedUserIds" | "slackMessage"
+  >,
+  botUserId: string
+): boolean {
+  if (!isBotOrAppAuthoredSlackMessage(message)) {
+    return true;
+  }
+
+  if (botUserId && (
+    message.mentionedUserIds?.includes(botUserId) ||
+    message.text.includes(`<@${botUserId}>`)
+  )) {
+    return true;
+  }
+
+  return hasSlackCardPayload(message.slackMessage);
+}
+
+export function isStopExplainingTurnSignalKind(
+  kind: SlackTurnSignalKind | undefined
+): kind is Exclude<SlackTurnSignalKind, "progress"> {
   return kind === "final" || kind === "block" || kind === "wait";
 }
 
 export function isUnexpectedTurnStopMessage(message: PersistedInboundMessage): boolean {
   return message.source === "unexpected_turn_stop";
+}
+
+function isBotOrAppAuthoredSlackMessage(
+  message: Pick<
+    SlackInputMessage | SlackThreadMessage,
+    "senderKind" | "botId" | "appId" | "slackMessage"
+  >
+): boolean {
+  if (message.senderKind === "bot" || message.senderKind === "app" || message.botId || message.appId) {
+    return true;
+  }
+
+  const raw = asRecord(message.slackMessage);
+  return Boolean(readString(raw?.bot_id) || readString(raw?.app_id));
+}
+
+function hasSlackCardPayload(value: JsonLike | undefined): boolean {
+  const raw = asRecord(value);
+  return hasNonEmptyArray(raw?.blocks) || hasNonEmptyArray(raw?.attachments);
+}
+
+function hasNonEmptyArray(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function asRecord(value: JsonLike | undefined): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }

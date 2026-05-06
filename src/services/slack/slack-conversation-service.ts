@@ -38,6 +38,7 @@ import {
   isSlackMessageAfterCursor,
   isStopExplainingTurnSignalKind,
   isUnexpectedTurnStopMessage,
+  shouldDispatchThreadReplyFromSlack,
   shouldResetConflictingActiveTurnMismatch,
   shouldForceResetStaleIdleRuntime,
   shouldPostSlackRunFailure,
@@ -53,6 +54,8 @@ import { SlackSelfMessageFilter } from "./slack-self-filter.js";
 import { SlackCoauthorService } from "./slack-coauthor-service.js";
 import { SlackTurnReconciler } from "./slack-turn-reconciler.js";
 import { SlackTurnRunner } from "./slack-turn-runner.js";
+
+type TerminalSlackTurnSignalKind = Exclude<SlackTurnSignalKind, "progress">;
 
 interface RuntimeSessionState {
   readonly queue: PendingDispatchRequest[];
@@ -93,8 +96,11 @@ export class SlackConversationService {
   readonly #codexNotificationHandler: (method: string, params: Record<string, unknown> | undefined) => void;
   #botUserId = "";
   #activeTurnReconcileTimer: NodeJS.Timeout | undefined;
+  #activeTurnReconcilePromise: Promise<void> | undefined;
+  #startupRecoveryPromise: Promise<void> | undefined;
   #catchUpPromise: Promise<void> | undefined;
   #lastMissedThreadRecoveryAtMs = 0;
+  #missedThreadRecoveryBlockedUntilMs = 0;
 
   constructor(options: {
     readonly config: AppConfig;
@@ -138,11 +144,16 @@ export class SlackConversationService {
   }
 
   async start(): Promise<void> {
-    await this.#reconcilePersistedActiveTurns();
-    await this.recoverMissedThreadMessages("socket_ready");
-    await this.#recoverPendingSessionsOnBoot();
-    await this.#recoverPendingSyntheticMessages();
     this.#startActiveTurnReconciler();
+    this.#startupRecoveryPromise = this.#runStartupRecovery()
+      .catch((error) => {
+        logger.warn("Failed to complete Slack conversation startup recovery", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        this.#startupRecoveryPromise = undefined;
+      });
   }
 
   async stop(): Promise<void> {
@@ -349,9 +360,11 @@ export class SlackConversationService {
 
     this.#catchUpPromise = this.#runMissedThreadRecovery(reason)
       .catch((error) => {
+        const retryAfterMs = this.#scheduleMissedThreadRecoveryBackoff(error);
         logger.error("Failed to recover missed Slack thread messages", {
           reason,
-          error: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error),
+          retryAfterMs
         });
       })
       .finally(() => {
@@ -477,6 +490,10 @@ export class SlackConversationService {
       return session;
     }
 
+    if (this.#canBackgroundJobEventTurnStaySilent(session, dispatchMessages)) {
+      return session;
+    }
+
     const signalKind = session.lastTurnSignalTurnId === turnId ? session.lastTurnSignalKind : undefined;
     if (isStopExplainingTurnSignalKind(signalKind)) {
       if (signalKind !== "wait" || this.#hasRunningBackgroundJob(session)) {
@@ -506,6 +523,20 @@ export class SlackConversationService {
       channelId: session.channelId,
       rootThreadTs: session.rootThreadTs
     }).some((job) => job.status === "registered" || job.status === "running");
+  }
+
+  #canBackgroundJobEventTurnStaySilent(
+    session: SlackSessionRecord,
+    dispatchMessages: readonly PersistedInboundMessage[]
+  ): boolean {
+    if (dispatchMessages.length === 0 || !this.#hasRunningBackgroundJob(session)) {
+      return false;
+    }
+
+    return dispatchMessages.every((message) => (
+      message.source === "background_job_event" &&
+      !isTerminalBackgroundJobEventKind(message.backgroundJob?.eventKind)
+    ));
   }
 
   #hasPendingUnexpectedStopNudge(session: SlackSessionRecord, turnId: string): boolean {
@@ -610,7 +641,7 @@ export class SlackConversationService {
   #startActiveTurnReconciler(): void {
     this.#stopActiveTurnReconciler();
     this.#activeTurnReconcileTimer = setInterval(() => {
-      void this.#reconcileLiveActiveTurns();
+      this.#triggerLiveActiveTurnReconcile();
     }, this.#config.slackActiveTurnReconcileIntervalMs);
   }
 
@@ -621,6 +652,28 @@ export class SlackConversationService {
 
     clearInterval(this.#activeTurnReconcileTimer);
     this.#activeTurnReconcileTimer = undefined;
+  }
+
+  #triggerLiveActiveTurnReconcile(): void {
+    if (this.#startupRecoveryPromise) {
+      logger.debug("Skipping live Slack session reconciliation while startup recovery is running");
+      return;
+    }
+
+    if (this.#activeTurnReconcilePromise) {
+      logger.debug("Skipping overlapping live Slack session reconciliation");
+      return;
+    }
+
+    this.#activeTurnReconcilePromise = this.#reconcileLiveActiveTurns()
+      .catch((error) => {
+        logger.warn("Failed to reconcile live Slack session state", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        this.#activeTurnReconcilePromise = undefined;
+      });
   }
 
   async #reconcileLiveActiveTurns(): Promise<void> {
@@ -651,6 +704,13 @@ export class SlackConversationService {
     }
   }
 
+  async #runStartupRecovery(): Promise<void> {
+    await this.#reconcilePersistedActiveTurns();
+    await this.recoverMissedThreadMessages("socket_ready");
+    await this.#recoverPendingSessionsOnBoot();
+    await this.#recoverPendingSyntheticMessages();
+  }
+
   async #reconcileSingleActiveTurn(
     session: SlackSessionRecord,
     options?: {
@@ -666,6 +726,15 @@ export class SlackConversationService {
       this.#clearAssistantStatus(latestSession.channelId, latestSession.rootThreadTs);
       if (options?.resumePending ?? true) {
         await this.#resumePendingDispatch(session.key);
+      }
+    } else {
+      const reconciled = await this.#inboundStore.reconcileOrphanedInflightMessages(this.#findSessionByKey(session.key));
+      if (reconciled.markedDoneCount > 0 || reconciled.resetToPendingCount > 0) {
+        logger.warn("Reconciled stale inflight Slack messages for active session", {
+          sessionKey: session.key,
+          markedDoneCount: reconciled.markedDoneCount,
+          resetToPendingCount: reconciled.resetToPendingCount
+        });
       }
     }
 
@@ -702,6 +771,7 @@ export class SlackConversationService {
         session.lastObservedMessageTs;
       const missedMessages = messages
         .filter((message) => !this.#selfMessageFilter.shouldIgnoreThreadMessage(message))
+        .filter((message) => shouldDispatchThreadReplyFromSlack(message, this.#botUserId))
         .filter((message) => isSlackMessageAfterCursor(message.messageTs, latestPersistedMessageTs));
 
       if (missedMessages.length > 0) {
@@ -756,10 +826,11 @@ export class SlackConversationService {
       this.#selfMessageFilter.rememberPostedMessageTs(ts);
       const occurredAt = new Date().toISOString();
       const session = await this.#sessions.setLastSlackReplyAt(channelId, rootThreadTs, occurredAt);
-      if (options?.turnSignal?.kind) {
+      const turnSignal = options?.turnSignal;
+      if (isStopExplainingTurnSignalKind(turnSignal?.kind)) {
         await this.#recordStopSignal(session, {
-          kind: options.turnSignal.kind,
-          reason: options.turnSignal.reason,
+          kind: turnSignal.kind,
+          reason: turnSignal.reason,
           occurredAt
         });
       }
@@ -770,7 +841,7 @@ export class SlackConversationService {
   async #recordStopSignal(
     session: SlackSessionRecord,
     signal: {
-      readonly kind: SlackTurnSignalKind;
+      readonly kind: TerminalSlackTurnSignalKind;
       readonly reason?: string | undefined;
       readonly occurredAt: string;
     }
@@ -1310,9 +1381,24 @@ export class SlackConversationService {
   async #resumePendingDispatch(sessionKey: string, options?: {
     readonly forceReset?: boolean | undefined;
   }): Promise<number> {
-    const session = this.#sessions.listSessions().find((entry) => entry.key === sessionKey);
+    let session = this.#sessions.listSessions().find((entry) => entry.key === sessionKey);
     if (!session) {
       return 0;
+    }
+
+    if (!session.activeTurnId) {
+      const reconciled = await this.#inboundStore.reconcileOrphanedInflightMessages(session);
+      if (reconciled.markedDoneCount > 0 || reconciled.resetToPendingCount > 0) {
+        logger.warn("Reconciled orphaned inflight Slack messages before resuming pending dispatch", {
+          sessionKey,
+          markedDoneCount: reconciled.markedDoneCount,
+          resetToPendingCount: reconciled.resetToPendingCount
+        });
+      }
+      session = this.#findSessionByKey(sessionKey);
+      if (session.activeTurnId) {
+        return 0;
+      }
     }
 
     const pendingMessages = this.#inboundStore.listPendingMessages(session);
@@ -1418,7 +1504,7 @@ export class SlackConversationService {
         runtimeProcessing: runtime.processing,
         latestOpenMessageUpdatedAt,
         nowMs,
-        staleAfterMs: this.#config.slackActiveTurnReconcileIntervalMs
+        staleAfterMs: this.#config.slackStaleIdleRuntimeResetAfterMs
       })) {
         logger.warn("Force-resetting stale idle Slack runtime state", {
           sessionKey: session.key,
@@ -1469,11 +1555,27 @@ export class SlackConversationService {
   }
 
   #shouldRunPeriodicMissedThreadRecovery(): boolean {
+    const nowMs = Date.now();
+    if (nowMs < this.#missedThreadRecoveryBlockedUntilMs) {
+      return false;
+    }
+
     const intervalMs = Math.max(
       this.#config.slackMissedThreadRecoveryIntervalMs,
       this.#config.slackActiveTurnReconcileIntervalMs
     );
-    return Date.now() - this.#lastMissedThreadRecoveryAtMs >= intervalMs;
+    return nowMs - this.#lastMissedThreadRecoveryAtMs >= intervalMs;
+  }
+
+  #scheduleMissedThreadRecoveryBackoff(error: unknown): number {
+    const retryAfterMs = isSlackRateLimitError(error)
+      ? Math.max(this.#config.slackMissedThreadRecoveryIntervalMs, 5 * 60_000)
+      : this.#config.slackMissedThreadRecoveryIntervalMs;
+    this.#missedThreadRecoveryBlockedUntilMs = Math.max(
+      this.#missedThreadRecoveryBlockedUntilMs,
+      Date.now() + retryAfterMs
+    );
+    return retryAfterMs;
   }
 
   #setAssistantThinking(session: SlackSessionRecord): void {
@@ -1583,6 +1685,15 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   }
 
   return value as Record<string, unknown>;
+}
+
+function isTerminalBackgroundJobEventKind(kind: string | undefined): boolean {
+  return kind === "job_completed" || kind === "job_failed" || kind === "job_cancelled";
+}
+
+function isSlackRateLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Slack API request failed \(429\b/i.test(message) || /Slack API error .*rate_limited/i.test(message);
 }
 
 function normalizeCodexTurnId(params: Record<string, unknown>): string | undefined {

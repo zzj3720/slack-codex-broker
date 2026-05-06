@@ -22,6 +22,7 @@ const TEST_CONFIG = {
   slackHistoryApiMaxLimit: 50,
   slackActiveTurnReconcileIntervalMs: 15_000,
   slackMissedThreadRecoveryIntervalMs: 15_000,
+  slackStaleIdleRuntimeResetAfterMs: 120_000,
   slackProgressReminderAfterMs: 120_000,
   slackProgressReminderRepeatMs: 120_000
 } as AppConfig;
@@ -242,6 +243,53 @@ describe("SlackConversationService", () => {
       kind: "final"
     }));
     expect(setActiveTurnId).toHaveBeenCalledWith("C123", "111.222", undefined);
+
+    await service.stop();
+  });
+
+  it("does not clear the active turn when posting a visible progress Slack message", async () => {
+    const codex = new EventEmitter();
+    const recordTurnSignal = vi.fn(async () => TEST_SESSION);
+    const setActiveTurnId = vi.fn(async () => ({
+      ...TEST_SESSION,
+      activeTurnId: undefined
+    }));
+    const postThreadMessage = vi.fn(async () => "333.444");
+    const setLastSlackReplyAt = vi.fn(async () => TEST_SESSION);
+
+    const service = new SlackConversationService({
+      config: TEST_CONFIG,
+      sessions: {
+        recordTurnSignal,
+        setActiveTurnId,
+        setLastSlackReplyAt,
+        listInboundMessages: vi.fn((): PersistedInboundMessage[] => []),
+        updateInboundMessagesForBatch: vi.fn(async () => []),
+        setLastDeliveredMessageTs: vi.fn(async () => TEST_SESSION)
+      } as never,
+      codex: codex as never,
+      slackApi: {
+        postThreadMessage,
+        setAssistantThreadStatus: vi.fn(),
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {
+        rememberPostedMessageTs: vi.fn()
+      } as never
+    });
+
+    await service.postSlackMessage({
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      text: "still working",
+      kind: "progress"
+    });
+
+    expect(postThreadMessage).toHaveBeenCalledTimes(1);
+    expect(setLastSlackReplyAt).toHaveBeenCalledTimes(1);
+    expect(recordTurnSignal).not.toHaveBeenCalled();
+    expect(setActiveTurnId).not.toHaveBeenCalled();
 
     await service.stop();
   });

@@ -46,6 +46,10 @@ export class SessionManager {
     return this.#stateStore.getSession(key);
   }
 
+  async deleteSessionByKey(key: string): Promise<boolean> {
+    return await this.#stateStore.deleteSession(key);
+  }
+
   hasProcessedEvent(eventId: string): boolean {
     return this.#stateStore.hasProcessedEvent(eventId);
   }

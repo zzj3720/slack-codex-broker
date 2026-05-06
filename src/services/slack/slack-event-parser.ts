@@ -175,14 +175,6 @@ export function isSlackMessageEffectivelyEmpty(
 }
 
 export function resolveSlackEventAuthor(event: Record<string, any>): SlackEventAuthor {
-  const userId = typeof event.user === "string" ? event.user : undefined;
-  if (userId) {
-    return {
-      userId,
-      senderKind: "user"
-    };
-  }
-
   const botId = typeof event.bot_id === "string" ? event.bot_id : undefined;
   const appId = typeof event.app_id === "string" ? event.app_id : undefined;
   const senderUsername = typeof event.username === "string" ? event.username : undefined;
@@ -203,6 +195,14 @@ export function resolveSlackEventAuthor(event: Record<string, any>): SlackEventA
       senderKind: "app",
       appId,
       senderUsername
+    };
+  }
+
+  const userId = typeof event.user === "string" ? event.user : undefined;
+  if (userId) {
+    return {
+      userId,
+      senderKind: "user"
     };
   }
 

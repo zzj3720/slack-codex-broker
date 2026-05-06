@@ -108,6 +108,68 @@ describe("JobManager", () => {
     });
   });
 
+  it("suppresses unchanged state events while preserving job metadata", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const jobsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-jobs-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));
+    const reposRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-repos-"));
+    const store = new StateStore(stateDir, sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore: store,
+      sessionsRoot
+    });
+    await sessions.load();
+    const session = await sessions.ensureSession("C123", "222.444");
+    await fs.mkdir(session.workspacePath, { recursive: true });
+
+    const seenEvents: Array<{ payload: { summary: string; jobId: string; eventKind: string } }> = [];
+    const jobs = new JobManager({
+      sessions,
+      jobsRoot,
+      reposRoot,
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      onEvent: async (event) => {
+        seenEvents.push({
+          payload: {
+            summary: event.payload.summary,
+            jobId: event.payload.jobId,
+            eventKind: event.payload.eventKind
+          }
+        });
+      }
+    });
+
+    const job = await jobs.registerJob({
+      channelId: "C123",
+      rootThreadTs: "222.444",
+      kind: "watch_ci",
+      script: "#!/usr/bin/env bash\nsleep 30"
+    });
+
+    await jobs.emitJobEvent(job.id, job.token, {
+      eventKind: "state_changed",
+      summary: "CI still pending."
+    });
+    const firstEventAt = sessions.getBackgroundJob(job.id)?.lastEventAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await jobs.emitJobEvent(job.id, job.token, {
+      eventKind: "state_changed",
+      summary: "CI still pending."
+    });
+
+    expect(seenEvents).toHaveLength(1);
+    expect(sessions.getBackgroundJob(job.id)).toMatchObject({
+      id: job.id,
+      status: "running",
+      lastEventKind: "state_changed",
+      lastEventSummary: "CI still pending."
+    });
+    expect(sessions.getBackgroundJob(job.id)?.lastEventAt).not.toBe(firstEventAt);
+
+    await jobs.cancelJob(job.id, job.token);
+    await jobs.stop();
+  });
+
   it("suppresses stale job events after the session already recorded final", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
     const jobsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-jobs-"));

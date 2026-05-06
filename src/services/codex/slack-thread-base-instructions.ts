@@ -91,6 +91,7 @@ export async function buildSlackThreadBaseInstructions(
 
   return renderTemplate(template, {
     execution_environment_section: await buildExecutionEnvironmentSection(),
+    broker_http_base_url: options.brokerHttpBaseUrl,
     session_workspace: options.workspacePath,
     shared_repos_root: options.reposRoot,
     codex_generated_images_root: options.codexGeneratedImagesRoot,

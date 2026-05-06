@@ -98,18 +98,18 @@ describe("admin routes", () => {
 
     expect(html).toContain("open-add-profile-dialog");
     expect(html).toContain("auth-profiles-panel");
-    expect(html).toContain("Auth Profiles");
+    expect(html).toContain("认证档案");
     expect(html).toContain("github-authors-panel");
-    expect(html).toContain("GitHub Authors");
-    expect(html).toContain("Deploy");
+    expect(html).toContain("GitHub 作者映射");
+    expect(html).toContain("发布");
     expect(html).toContain("deploy-release-button");
-    expect(html).toContain("Runtime Info");
+    expect(html).toContain("运行信息");
     expect(html).toContain("add-profile-dialog");
     expect(html).toContain("session-search");
-    expect(html).toContain("System Logs");
-    expect(html).toContain("OPEN: ");
-    expect(html).toContain("(H:");
-    expect(html).toContain(" S:");
+    expect(html).toContain("系统日志");
+    expect(html).toContain("待处理：");
+    expect(html).toContain("人：");
+    expect(html).toContain("系统：");
     expect(html).not.toContain("MSG: ");
     expect(html).not.toContain("profile-name-input");
     expect(html).not.toContain("Account Quota");

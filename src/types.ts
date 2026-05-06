@@ -128,6 +128,41 @@ export interface PersistedBackgroundJob {
   readonly lastEventSummary?: string | undefined;
 }
 
+export type AdminOperationKind =
+  | "deploy"
+  | "rollback"
+  | "auth_profile_add"
+  | "auth_profile_delete"
+  | "auth_profile_activate"
+  | "github_author_upsert"
+  | "github_author_delete";
+
+export type AdminOperationStatus = "running" | "succeeded" | "failed";
+
+export interface PersistedAdminOperation {
+  readonly id: string;
+  readonly kind: AdminOperationKind;
+  readonly status: AdminOperationStatus;
+  readonly request: JsonLike;
+  readonly result?: JsonLike | undefined;
+  readonly error?: string | undefined;
+  readonly actor?: string | undefined;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly startedAt?: string | undefined;
+  readonly completedAt?: string | undefined;
+}
+
+export interface PersistedAdminAuditEvent {
+  readonly id: string;
+  readonly operationId?: string | undefined;
+  readonly action: AdminOperationKind | string;
+  readonly status: AdminOperationStatus | "started";
+  readonly detail?: JsonLike | undefined;
+  readonly actor?: string | undefined;
+  readonly createdAt: string;
+}
+
 export interface SlackInputMessage {
   readonly channelId: string;
   readonly channelType?: string | undefined;

@@ -3,6 +3,8 @@ import path from "node:path";
 
 import type {
   JsonLike,
+  PersistedAdminAuditEvent,
+  PersistedAdminOperation,
   PersistedBackgroundJob,
   PersistedInboundMessage,
   PersistedInboundMessageStatus,
@@ -349,6 +351,29 @@ export class SessionManager {
 
   async upsertBackgroundJob(record: PersistedBackgroundJob): Promise<void> {
     await this.#stateStore.upsertBackgroundJob(record);
+  }
+
+  listAdminOperations(limit?: number): PersistedAdminOperation[] {
+    return this.#stateStore.listAdminOperations(limit);
+  }
+
+  getAdminOperation(id: string): PersistedAdminOperation | undefined {
+    return this.#stateStore.getAdminOperation(id);
+  }
+
+  async upsertAdminOperation(record: PersistedAdminOperation): Promise<void> {
+    await this.#stateStore.upsertAdminOperation(record);
+  }
+
+  listAdminAuditEvents(options?: {
+    readonly operationId?: string | undefined;
+    readonly limit?: number | undefined;
+  }): PersistedAdminAuditEvent[] {
+    return this.#stateStore.listAdminAuditEvents(options);
+  }
+
+  async appendAdminAuditEvent(record: PersistedAdminAuditEvent): Promise<void> {
+    await this.#stateStore.appendAdminAuditEvent(record);
   }
 
   #requireSession(channelId: string, rootThreadTs: string): SlackSessionRecord {

@@ -50,6 +50,7 @@ export interface AppConfig {
   readonly logRawSlackEvents: boolean;
   readonly logRawCodexRpc: boolean;
   readonly logRawHttpRequests: boolean;
+  readonly logRawMaxBytes: number;
   readonly diskCleanupEnabled: boolean;
   readonly diskCleanupCheckIntervalMs: number;
   readonly diskCleanupMinFreeBytes: number;
@@ -218,6 +219,7 @@ export function loadConfig(env = process.env): AppConfig {
     logRawSlackEvents: getBoolean(env, "LOG_RAW_SLACK_EVENTS", true),
     logRawCodexRpc: getBoolean(env, "LOG_RAW_CODEX_RPC", true),
     logRawHttpRequests: getBoolean(env, "LOG_RAW_HTTP_REQUESTS", true),
+    logRawMaxBytes: getNumber(env, "LOG_RAW_MAX_BYTES", 128 * 1024),
     diskCleanupEnabled: getBoolean(env, "DISK_CLEANUP_ENABLED", true),
     diskCleanupCheckIntervalMs: getNumber(env, "DISK_CLEANUP_CHECK_INTERVAL_MS", 5 * 60 * 1000),
     diskCleanupMinFreeBytes: getNumber(env, "DISK_CLEANUP_MIN_FREE_BYTES", 10 * GIB),

@@ -206,7 +206,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(mockSlack.assistantStatusUpdates).toHaveLength(0);
   }, 90_000);
 
-  it("starts a new session, backfills history, and forwards full Slack card payloads", async () => {
+  it("starts a new session, backfills history, and forwards selected Slack card payloads", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {
       await removeTempRoot(tempRoot);

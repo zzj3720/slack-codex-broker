@@ -54,6 +54,7 @@ Copy `.env.example` to `.env` and fill in:
 - optional `LOG_RAW_SLACK_EVENTS`
 - optional `LOG_RAW_CODEX_RPC`
 - optional `LOG_RAW_HTTP_REQUESTS`
+- optional `LOG_RAW_MAX_BYTES`
 - optional disk cleanup settings (`DISK_CLEANUP_*`)
 - one Codex auth mode
 - optional host Codex home mount if you want the container to inherit your global `~/.codex` memory/instructions
@@ -318,6 +319,7 @@ Supported environment knobs:
 - `LOG_RAW_SLACK_EVENTS=true|false`
 - `LOG_RAW_CODEX_RPC=true|false`
 - `LOG_RAW_HTTP_REQUESTS=true|false`
+- `LOG_RAW_MAX_BYTES=131072`
 - `DISK_CLEANUP_ENABLED=true|false`
 - `DISK_CLEANUP_CHECK_INTERVAL_MS=300000`
 - `DISK_CLEANUP_MIN_FREE_BYTES=10737418240`
@@ -328,7 +330,7 @@ Supported environment knobs:
 
 Notes:
 
-- Raw logs are intentionally verbose and can grow quickly during long sessions.
+- Raw logs are intentionally verbose and can grow quickly during long sessions. Oversized raw payloads are truncated to `LOG_RAW_MAX_BYTES` before they are written.
 - When free space falls below `DISK_CLEANUP_MIN_FREE_BYTES`, the worker removes old hourly log files first. If space is still below `DISK_CLEANUP_TARGET_FREE_BYTES`, it removes sessions inactive for at least `DISK_CLEANUP_INACTIVE_SESSION_MS`, oldest activity first. Active turns, pending inbound work, and running jobs protect sessions only until `DISK_CLEANUP_JOB_PROTECTION_MS`; older sessions can be removed with their jobs.
 - `/slack/post-file` request logging redacts inline `content_base64` payloads into a size marker instead of writing the full blob.
 - Session and job log files are written independently, so one noisy thread no longer forces the entire broker state or log history into one giant file.

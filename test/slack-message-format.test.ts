@@ -77,8 +77,8 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("\"title\": \"Screenshot\"");
     expect(result).toContain("\"dimensions\": \"1280x720\"");
     expect(result).toContain("\"text\": \"Please fix the flaky test.\"");
-    expect(result).toContain("\"slack_message\": {");
-    expect(result).toContain("\"blocks\": [");
+    expect(result).not.toContain("\"slack_message\":");
+    expect(result).not.toContain("\"blocks\": [");
   });
 
   it("falls back to ids when profile lookup is unavailable", () => {
@@ -280,6 +280,47 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("CUE-1180 感觉 ai chat webview 帧率很低");
   });
 
+  it("includes only selected Slack payload fields for bot cards", () => {
+    const result = formatSlackMessageForCodex(
+      {
+        source: "thread_reply",
+        channelId: "C123",
+        rootThreadTs: "111.222",
+        messageTs: "111.226",
+        userId: "bot:B123",
+        text: "issue created",
+        senderKind: "bot",
+        botId: "B123",
+        appId: "A123",
+        senderUsername: "Linear",
+        slackMessage: {
+          subtype: "bot_message",
+          bot_id: "B123",
+          app_id: "A123",
+          username: "Linear",
+          text: "issue created",
+          channel: "C123",
+          team: "T123",
+          attachments: [
+            {
+              title: "CUE-1180",
+              title_link: "https://linear.app/cue/issue/CUE-1180"
+            }
+          ],
+          metadata: {
+            noisy: "not needed by Codex"
+          }
+        }
+      },
+      null
+    );
+
+    expect(result).toContain("\"slack_message\": {");
+    expect(result).toContain("\"attachments\": [");
+    expect(result).not.toContain("\"metadata\"");
+    expect(result).not.toContain("\"team\"");
+  });
+
   it("renders background job events without pretending they came from a Slack user", () => {
     const result = formatSlackMessageForCodex(
       {
@@ -385,6 +426,6 @@ describe("formatSlackHistoryContextForCodex", () => {
     expect(result).toContain("\"display_name\": \"Bob\"");
     expect(result).toContain("\"images\": [");
     expect(result).toContain("\"text\": \"Earlier note\"");
-    expect(result).toContain("\"slack_message\": {");
+    expect(result).not.toContain("\"slack_message\":");
   });
 });

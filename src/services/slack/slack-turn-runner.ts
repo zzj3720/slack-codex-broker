@@ -95,12 +95,12 @@ export class SlackTurnRunner {
         senderUserId: options.senderUserId,
         attempt: attempt + 1
       });
-      await this.#inboundStore.markMessagesInflightByTs(session, options.messageTsList, startedTurn.turnId);
       session = await this.#sessions.setActiveTurnId(
         session.channelId,
         session.rootThreadTs,
         startedTurn.turnId
       );
+      await this.#inboundStore.markMessagesInflightByTs(session, options.messageTsList, startedTurn.turnId);
 
       try {
         const result = await startedTurn.completion;

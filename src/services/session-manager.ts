@@ -2,10 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type {
+  JsonLike,
   PersistedBackgroundJob,
   PersistedInboundMessage,
   PersistedInboundMessageStatus,
   PersistedInboundSource,
+  PersistedSlackEvent,
   SlackSessionRecord,
   SlackTurnSignalKind
 } from "../types.js";
@@ -64,6 +66,18 @@ export class SessionManager {
 
   async markProcessedEvent(eventId: string): Promise<void> {
     await this.#stateStore.markProcessedEvent(eventId);
+  }
+
+  async enqueueSlackEvent(eventId: string, payload: JsonLike): Promise<void> {
+    await this.#stateStore.enqueueSlackEvent(eventId, payload);
+  }
+
+  listPendingSlackEvents(limit?: number): PersistedSlackEvent[] {
+    return this.#stateStore.listPendingSlackEvents(limit);
+  }
+
+  async markSlackEventProcessed(eventId: string): Promise<void> {
+    await this.#stateStore.markSlackEventProcessed(eventId);
   }
 
   async ensureSession(channelId: string, rootThreadTs: string): Promise<SlackSessionRecord> {

@@ -35,6 +35,18 @@ export function configureLogger(config: LoggerConfig): void {
   currentConfig = config;
 }
 
+export function getBrokerLogDirectory(logDir: string): string {
+  return path.join(logDir, "broker");
+}
+
+export function getSessionLogDirectory(logDir: string, sessionKey: string): string {
+  return path.join(logDir, "sessions", encodeKey(sessionKey));
+}
+
+export function getJobLogDirectory(logDir: string, jobId: string): string {
+  return path.join(logDir, "jobs", encodeKey(jobId));
+}
+
 export const logger = {
   info(message: string, meta?: Record<string, unknown>): void {
     writeLog("info", message, meta);
@@ -53,14 +65,15 @@ export const logger = {
       return;
     }
 
+    const ts = new Date().toISOString();
     const record = {
-      ts: new Date().toISOString(),
+      ts,
       type: "raw",
       stream,
       payload,
       meta: sanitizeMeta(meta)
     };
-    queueFileWrites(record, meta, path.join("raw", `${stream}.jsonl`));
+    queueFileWrites(record, meta, path.join("raw", stream, `${getLogBucket(ts)}.jsonl`));
   }
 };
 
@@ -69,18 +82,19 @@ function writeLog(level: LogLevel, message: string, meta?: Record<string, unknow
     return;
   }
 
+  const ts = new Date().toISOString();
   const sanitizedMeta = sanitizeMeta(meta);
   const payload = sanitizedMeta ? ` ${JSON.stringify(sanitizedMeta)}` : "";
-  process.stdout.write(`${new Date().toISOString()} ${level.toUpperCase()} ${message}${payload}\n`);
+  process.stdout.write(`${ts} ${level.toUpperCase()} ${message}${payload}\n`);
 
   const record = {
-    ts: new Date().toISOString(),
+    ts,
     type: "log",
     level,
     message,
     meta: sanitizedMeta
   };
-  queueFileWrites(record, sanitizedMeta, "broker.jsonl");
+  queueFileWrites(record, sanitizedMeta, path.join("broker", `${getLogBucket(ts)}.jsonl`));
 }
 
 function queueFileWrites(record: Record<string, unknown>, meta: Record<string, unknown> | undefined, relativePath: string): void {
@@ -91,13 +105,14 @@ function queueFileWrites(record: Record<string, unknown>, meta: Record<string, u
   const targets = new Set<string>([path.join(currentConfig.logDir, relativePath)]);
   const sessionKey = resolveSessionKey(meta);
   const jobId = typeof meta?.jobId === "string" ? meta.jobId : undefined;
+  const bucket = getLogBucket(String(record.ts));
 
   if (sessionKey) {
-    targets.add(path.join(currentConfig.logDir, "sessions", `${encodeKey(sessionKey)}.jsonl`));
+    targets.add(path.join(getSessionLogDirectory(currentConfig.logDir, sessionKey), `${bucket}.jsonl`));
   }
 
   if (jobId) {
-    targets.add(path.join(currentConfig.logDir, "jobs", `${encodeKey(jobId)}.jsonl`));
+    targets.add(path.join(getJobLogDirectory(currentConfig.logDir, jobId), `${bucket}.jsonl`));
   }
 
   for (const target of targets) {
@@ -148,6 +163,10 @@ function sanitizeMeta(meta?: Record<string, unknown>): Record<string, unknown> |
 
 function encodeKey(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function getLogBucket(timestamp: string): string {
+  return timestamp.slice(0, 13).replace("T", "-");
 }
 
 function isRawStreamEnabled(stream: RawStream): boolean {

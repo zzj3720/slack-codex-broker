@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -44,6 +45,17 @@ export class SessionManager {
 
   getSessionByKey(key: string): SlackSessionRecord | undefined {
     return this.#stateStore.getSession(key);
+  }
+
+  async deleteSessionByKey(key: string): Promise<boolean> {
+    const session = this.#stateStore.getSession(key);
+    if (session) {
+      const sessionRoot = this.#resolveSessionRoot(session.workspacePath);
+      if (sessionRoot) {
+        await fs.rm(sessionRoot, { force: true, recursive: true });
+      }
+    }
+    return await this.#stateStore.deleteSession(key);
   }
 
   hasProcessedEvent(eventId: string): boolean {
@@ -340,6 +352,16 @@ export class SessionManager {
       `${channelId}-${rootThreadTs}`.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
       "workspace"
     );
+  }
+
+  #resolveSessionRoot(workspacePath: string): string | undefined {
+    const resolvedSessionsRoot = path.resolve(this.#sessionsRoot);
+    const resolvedWorkspacePath = path.resolve(workspacePath);
+    const sessionRoot = path.basename(resolvedWorkspacePath) === "workspace"
+      ? path.dirname(resolvedWorkspacePath)
+      : resolvedWorkspacePath;
+
+    return isSubpathOf(resolvedSessionsRoot, sessionRoot) ? sessionRoot : undefined;
   }
 
   async #patchSession(

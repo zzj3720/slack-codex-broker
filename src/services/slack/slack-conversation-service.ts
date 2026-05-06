@@ -259,31 +259,6 @@ export class SlackConversationService {
     return input;
   }
 
-  async resumePendingSession(options: {
-    readonly channelId: string;
-    readonly rootThreadTs: string;
-    readonly forceReset?: boolean | undefined;
-  }): Promise<{
-    readonly sessionKey: string;
-    readonly pendingCount: number;
-    readonly resumed: boolean;
-  } | null> {
-    const session = this.#sessions.getSession(options.channelId, options.rootThreadTs);
-    if (!session) {
-      return null;
-    }
-
-    const pendingCount = await this.#resumePendingDispatch(session.key, {
-      forceReset: options.forceReset ?? true
-    });
-
-    return {
-      sessionKey: session.key,
-      pendingCount,
-      resumed: pendingCount > 0
-    };
-  }
-
   async acceptBackgroundJobEvent(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { AppConfig } from "../config.js";
+import { getBrokerLogDirectory } from "../logger.js";
 import type { PersistedBackgroundJob, PersistedInboundMessage, SlackSessionRecord } from "../types.js";
 import type { SessionManager } from "./session-manager.js";
 import type { AuthProfileService } from "./auth-profile-service.js";
@@ -303,29 +304,26 @@ export class AdminService {
   }
 
   async #readRecentBrokerLogs(limit: number): Promise<readonly unknown[]> {
-    const filePath = path.join(this.options.config.logDir, "broker.jsonl");
-
-    try {
-      const raw = await fs.readFile(filePath, "utf8");
-      return raw
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .slice(-limit)
-        .map((line) => {
-          try {
-            return JSON.parse(line);
-          } catch {
-            return { raw: line };
-          }
-        });
-    } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-        return [];
-      }
-
-      throw error;
+    if (limit <= 0) {
+      return [];
     }
+
+    const files = await listJsonlFiles(getBrokerLogDirectory(this.options.config.logDir));
+    const chunks: unknown[][] = [];
+    let recordCount = 0;
+
+    for (const file of files.sort((left, right) =>
+      right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path)
+    )) {
+      const records = await readJsonlFile(file.path);
+      chunks.push(records);
+      recordCount += records.length;
+      if (recordCount >= limit) {
+        break;
+      }
+    }
+
+    return chunks.reverse().flat().slice(-limit);
   }
 
   #summarizeInbound(message: PersistedInboundMessage): Record<string, unknown> {
@@ -396,6 +394,47 @@ function compareSessions(left: SlackSessionRecord, right: SlackSessionRecord): n
     return rightActive - leftActive;
   }
   return String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""));
+}
+
+async function listJsonlFiles(directoryPath: string): Promise<Array<{
+  readonly path: string;
+  readonly mtimeMs: number;
+}>> {
+  const entries = await fs.readdir(directoryPath, { withFileTypes: true }).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  });
+
+  const files = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+      continue;
+    }
+    const filePath = path.join(directoryPath, entry.name);
+    const stat = await fs.stat(filePath);
+    files.push({
+      path: filePath,
+      mtimeMs: stat.mtimeMs
+    });
+  }
+  return files;
+}
+
+async function readJsonlFile(filePath: string): Promise<unknown[]> {
+  const raw = await fs.readFile(filePath, "utf8");
+  return raw
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return { raw: line };
+      }
+    });
 }
 
 function groupBySession<T extends { readonly sessionKey: string }>(items: readonly T[]): Map<string, T[]> {

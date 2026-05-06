@@ -150,6 +150,26 @@ describe("SessionManager", () => {
     });
   });
 
+  it("deletes the session-owned workspace root with the session record", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));
+    const store = new StateStore(stateDir, sessionsRoot);
+    const manager = new SessionManager({
+      stateStore: store,
+      sessionsRoot
+    });
+
+    await manager.load();
+    const session = await manager.ensureSession("C123", "333.444");
+    const sessionRoot = path.dirname(session.workspacePath);
+    await fs.writeFile(path.join(session.workspacePath, "marker.txt"), "owned workspace");
+
+    await expect(manager.deleteSessionByKey(session.key)).resolves.toBe(true);
+
+    expect(manager.getSessionByKey(session.key)).toBeUndefined();
+    await expect(fs.access(sessionRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("does not restore a stale active turn when turn state and turn signal write concurrently", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
     const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));

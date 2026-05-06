@@ -31,6 +31,13 @@ describe("loadConfig", () => {
     expect(config.logRawSlackEvents).toBe(true);
     expect(config.logRawCodexRpc).toBe(true);
     expect(config.logRawHttpRequests).toBe(true);
+    expect(config.diskCleanupEnabled).toBe(true);
+    expect(config.diskCleanupCheckIntervalMs).toBe(300_000);
+    expect(config.diskCleanupMinFreeBytes).toBe(10 * 1024 * 1024 * 1024);
+    expect(config.diskCleanupTargetFreeBytes).toBe(20 * 1024 * 1024 * 1024);
+    expect(config.diskCleanupInactiveSessionMs).toBe(24 * 60 * 60 * 1000);
+    expect(config.diskCleanupJobProtectionMs).toBe(48 * 60 * 60 * 1000);
+    expect(config.diskCleanupOldLogMs).toBe(24 * 60 * 60 * 1000);
     expect(config.brokerAdminToken).toBeUndefined();
     expect(config.geminiHostHomePath).toBeUndefined();
     expect(config.geminiHttpProxy).toBeUndefined();
@@ -123,5 +130,27 @@ describe("loadConfig", () => {
     } as NodeJS.ProcessEnv);
 
     expect(config.brokerAdminToken).toBe("secret-admin-token");
+  });
+
+  it("parses disk cleanup configuration", () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      DISK_CLEANUP_ENABLED: "false",
+      DISK_CLEANUP_CHECK_INTERVAL_MS: "60000",
+      DISK_CLEANUP_MIN_FREE_BYTES: "123",
+      DISK_CLEANUP_TARGET_FREE_BYTES: "456",
+      DISK_CLEANUP_INACTIVE_SESSION_MS: "789",
+      DISK_CLEANUP_JOB_PROTECTION_MS: "101112",
+      DISK_CLEANUP_OLD_LOG_MS: "131415"
+    } as NodeJS.ProcessEnv);
+
+    expect(config.diskCleanupEnabled).toBe(false);
+    expect(config.diskCleanupCheckIntervalMs).toBe(60_000);
+    expect(config.diskCleanupMinFreeBytes).toBe(123);
+    expect(config.diskCleanupTargetFreeBytes).toBe(456);
+    expect(config.diskCleanupInactiveSessionMs).toBe(789);
+    expect(config.diskCleanupJobProtectionMs).toBe(101_112);
+    expect(config.diskCleanupOldLogMs).toBe(131_415);
   });
 });

@@ -463,7 +463,8 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(existingSession?.activeTurnId).toBeTruthy();
 
     const fakeTurnId = "turn-fake-new";
-    await writerSessions.setActiveTurnId("C123", "223.220", fakeTurnId);
+    const fakeActiveSession = await writerSessions.setActiveTurnId("C123", "223.220", fakeTurnId);
+    expect(fakeActiveSession.activeTurnId).toBe(fakeTurnId);
     const inflightMessages = writerSessions.listInboundMessages({
       channelId: "C123",
       rootThreadTs: "223.220",
@@ -487,6 +488,15 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "MISSED_AFTER_MISMATCH",
       user: "U234"
     });
+    const codexThread = existingSession?.codexThreadId ? mockCodex.getThread(existingSession.codexThreadId) : undefined;
+    if (codexThread) {
+      codexThread.activeTurnId = undefined;
+      for (const turn of codexThread.turns) {
+        if (turn.status === "inProgress") {
+          turn.status = "interrupted";
+        }
+      }
+    }
 
     const restarted = await startBrokerProcess({
       port,
@@ -500,17 +510,30 @@ describe.sequential("slack-codex-broker e2e", () => {
     });
     cleanups.push(() => restarted.stop());
 
-    await waitFor(() => mockCodex.turnsStarted.length >= 2, "replacement turn after steer mismatch");
+    try {
+      await waitFor(() => mockCodex.turnsStarted.length >= 2, "replacement turn after steer mismatch", 60_000);
+    } catch (error) {
+      console.error(restarted.logs.join("").slice(-8_000));
+      throw error;
+    }
     await waitForSessionIdle(tempRoot, sessionKey);
 
     const recoveredTurnText = collectTextInput(mockCodex.turnsStarted[1]!.input);
     expect(recoveredTurnText).toContain("recovered_message_batch_json");
     expect(recoveredTurnText).toContain("MISSED_AFTER_MISMATCH");
 
+    await waitFor(async () => {
+      const session = await readSessionRecord(tempRoot, sessionKey);
+      return !session.activeTurnId && session.lastDeliveredMessageTs === "223.222";
+    }, "steer-mismatch recovered delivery cursor");
     const finalSession = await readSessionRecord(tempRoot, sessionKey);
     expect(finalSession.activeTurnId).toBeUndefined();
     expect(finalSession.lastDeliveredMessageTs).toBe("223.222");
 
+    await waitFor(async () => {
+      const inbound = await readInboundMessages(tempRoot, sessionKey);
+      return inbound.every((message) => message.status === "done");
+    }, "all recovered steer-mismatch inbound messages done");
     const finalInbound = await readInboundMessages(tempRoot, sessionKey);
     expect(finalInbound.filter((message) => message.status !== "done")).toHaveLength(0);
   }, 90_000);
@@ -671,6 +694,124 @@ describe.sequential("slack-codex-broker e2e", () => {
       const deliveredTexts = mockCodex.turnsStarted.slice(1).map((turn) => collectTextInput(turn.input));
       return deliveredTexts.some((text) => text.includes("BOOT_PENDING_RECOVERY"));
     }, "startup recovery of persisted pending backlog");
+  }, 90_000);
+
+  it("reclaims sessions older than the hard protection window even when they still look active", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const stateStore = new StateStore(path.join(tempRoot, "state"), path.join(tempRoot, "sessions"));
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot: path.join(tempRoot, "sessions")
+    });
+    await sessions.load();
+
+    const oldAt = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+    const protectedAt = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
+    const recentStateWriteAt = new Date().toISOString();
+    const staleSession = await sessions.ensureSession("CSTALE", "777.100");
+    await stateStore.upsertSession({
+      ...staleSession,
+      activeTurnId: "turn-stale",
+      activeTurnStartedAt: oldAt,
+      createdAt: oldAt,
+      updatedAt: recentStateWriteAt
+    });
+    await fs.writeFile(path.join(staleSession.workspacePath, "marker.txt"), "stale active session");
+
+    const staleJobDir = path.join(tempRoot, "jobs", "job-stale-active");
+    await fs.mkdir(staleJobDir, { recursive: true });
+    const staleJobScript = path.join(staleJobDir, "run.sh");
+    await fs.writeFile(staleJobScript, "#!/bin/sh\nsleep 300\n");
+    await fs.chmod(staleJobScript, 0o755);
+    await sessions.upsertBackgroundJob({
+      id: "job-stale-active",
+      token: "token-stale-active",
+      sessionKey: staleSession.key,
+      channelId: staleSession.channelId,
+      rootThreadTs: staleSession.rootThreadTs,
+      kind: "watch_ci",
+      shell: "sh",
+      cwd: staleSession.workspacePath,
+      scriptPath: staleJobScript,
+      restartOnBoot: true,
+      status: "running",
+      createdAt: oldAt,
+      updatedAt: oldAt,
+      startedAt: oldAt,
+      heartbeatAt: oldAt
+    });
+
+    const protectedSession = await sessions.ensureSession("CPROTECTED", "888.100");
+    await stateStore.upsertSession({
+      ...protectedSession,
+      createdAt: protectedAt,
+      updatedAt: protectedAt
+    });
+    await fs.writeFile(path.join(protectedSession.workspacePath, "marker.txt"), "protected job session");
+
+    const protectedJobDir = path.join(tempRoot, "jobs", "job-protected");
+    await fs.mkdir(protectedJobDir, { recursive: true });
+    const protectedJobScript = path.join(protectedJobDir, "run.sh");
+    await fs.writeFile(protectedJobScript, "#!/bin/sh\nsleep 300\n");
+    await fs.chmod(protectedJobScript, 0o755);
+    await sessions.upsertBackgroundJob({
+      id: "job-protected",
+      token: "token-protected",
+      sessionKey: protectedSession.key,
+      channelId: protectedSession.channelId,
+      rootThreadTs: protectedSession.rootThreadTs,
+      kind: "watch_ci",
+      shell: "sh",
+      cwd: protectedSession.workspacePath,
+      scriptPath: protectedJobScript,
+      restartOnBoot: true,
+      status: "running",
+      createdAt: protectedAt,
+      updatedAt: protectedAt,
+      startedAt: protectedAt,
+      heartbeatAt: protectedAt
+    });
+
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot,
+      extraEnv: {
+        DISK_CLEANUP_MIN_FREE_BYTES: "1000000000000000",
+        DISK_CLEANUP_TARGET_FREE_BYTES: "1000000000000000",
+        DISK_CLEANUP_INACTIVE_SESSION_MS: String(24 * 60 * 60 * 1000),
+        DISK_CLEANUP_JOB_PROTECTION_MS: String(48 * 60 * 60 * 1000),
+        DISK_CLEANUP_OLD_LOG_MS: String(24 * 60 * 60 * 1000)
+      }
+    });
+    cleanups.push(() => broker.stop());
+
+    await waitFor(async () => !(await pathExists(staleSession.workspacePath)), "stale active session cleanup");
+    await stateStore.load();
+
+    expect(sessions.getSessionByKey(staleSession.key)).toBeUndefined();
+    expect(sessions.getBackgroundJob("job-stale-active")).toBeUndefined();
+    expect(await pathExists(staleJobDir)).toBe(false);
+    expect(sessions.getSessionByKey(protectedSession.key)).toBeDefined();
+    expect(await pathExists(protectedSession.workspacePath)).toBe(true);
+    expect(await pathExists(protectedJobDir)).toBe(true);
   }, 90_000);
 
   it("injects background job events back into the same session", async () => {
@@ -1364,6 +1505,7 @@ async function startBrokerProcess(options: {
       SESSIONS_ROOT: path.join(options.tempRoot, "sessions"),
       REPOS_ROOT: path.join(options.tempRoot, "repos"),
       JOBS_ROOT: path.join(options.tempRoot, "jobs"),
+      LOG_DIR: path.join(options.tempRoot, "logs"),
       CODEX_HOME: path.join(options.tempRoot, "codex-home"),
       PORT: String(options.port),
       BROKER_HTTP_BASE_URL: `http://127.0.0.1:${options.port}`,
@@ -1424,10 +1566,10 @@ async function waitForHttpReady(url: string, logs: readonly string[], timeoutMs 
   throw new Error(`Timed out waiting for broker readiness: ${url}\n${logs.join("")}`);
 }
 
-async function waitFor(predicate: () => boolean, label: string, timeoutMs = DEFAULT_E2E_TIMEOUT_MS): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, label: string, timeoutMs = DEFAULT_E2E_TIMEOUT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
     await delay(100);
@@ -1506,6 +1648,15 @@ async function readInboundMessages(tempRoot: string, sessionKey: string): Promis
 
 async function delay(timeoutMs: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, timeoutMs));
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function removeTempRoot(tempRoot: string): Promise<void> {

@@ -1625,25 +1625,27 @@ async function waitForSessionActive(
 }
 
 async function readSessionRecord(tempRoot: string, sessionKey: string): Promise<SlackSessionRecord> {
-  const sessionFile = path.join(
-    tempRoot,
-    "state",
-    "sessions",
-    `${Buffer.from(sessionKey, "utf8").toString("base64url")}.json`
-  );
-  const raw = await fs.readFile(sessionFile, "utf8");
-  return JSON.parse(raw) as SlackSessionRecord;
+  const store = new StateStore(path.join(tempRoot, "state"), path.join(tempRoot, "sessions"));
+  await store.load();
+  try {
+    const session = store.getSession(sessionKey);
+    if (!session) {
+      throw new Error(`Unknown session: ${sessionKey}`);
+    }
+    return session;
+  } finally {
+    store.close();
+  }
 }
 
 async function readInboundMessages(tempRoot: string, sessionKey: string): Promise<PersistedInboundMessage[]> {
-  const inboundFile = path.join(
-    tempRoot,
-    "state",
-    "inbound-messages",
-    `${Buffer.from(sessionKey, "utf8").toString("base64url")}.json`
-  );
-  const raw = await fs.readFile(inboundFile, "utf8");
-  return JSON.parse(raw) as PersistedInboundMessage[];
+  const store = new StateStore(path.join(tempRoot, "state"), path.join(tempRoot, "sessions"));
+  await store.load();
+  try {
+    return store.listInboundMessages({ sessionKey });
+  } finally {
+    store.close();
+  }
 }
 
 async function delay(timeoutMs: number): Promise<void> {

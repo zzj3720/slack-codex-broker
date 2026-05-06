@@ -448,19 +448,21 @@ export class SlackConversationService {
       return session;
     }
 
+    const latestSession = this.#findSessionByKey(session.key);
+
     if (dispatchMessages.length > 0 && dispatchMessages.every((message) => isUnexpectedTurnStopMessage(message))) {
-      return session;
+      return latestSession;
     }
 
-    const signalKind = session.lastTurnSignalTurnId === turnId ? session.lastTurnSignalKind : undefined;
+    const signalKind = latestSession.lastTurnSignalTurnId === turnId ? latestSession.lastTurnSignalKind : undefined;
     if (isStopExplainingTurnSignalKind(signalKind)) {
-      if (signalKind !== "wait" || this.#hasRunningBackgroundJob(session)) {
-        return session;
+      if (signalKind !== "wait" || this.#hasRunningBackgroundJob(latestSession)) {
+        return latestSession;
       }
     }
 
-    if (this.#hasPendingUnexpectedStopNudge(session, turnId)) {
-      return session;
+    if (this.#hasPendingUnexpectedStopNudge(latestSession, turnId)) {
+      return latestSession;
     }
 
     const reason = signalKind === "wait"
@@ -468,12 +470,12 @@ export class SlackConversationService {
       : "The previous run ended without an explicit final, block, or wait state. Either continue the work, send a final Slack update, declare a block that clearly names the human/external blocker, or declare a wait state backed by a running broker-managed async job.";
 
     await this.acceptUnexpectedTurnStop({
-      session,
+      session: latestSession,
       previousTurnId: turnId,
       reason
     });
 
-    return this.#findSessionByKey(session.key);
+    return this.#findSessionByKey(latestSession.key);
   }
 
   #hasRunningBackgroundJob(session: SlackSessionRecord): boolean {
@@ -760,11 +762,6 @@ export class SlackConversationService {
 
     if (turnId) {
       latestSession = await this.#inboundStore.markTurnBatchDone(latestSession, turnId);
-    }
-
-    if (session.activeTurnId) {
-      latestSession = await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
-      this.#resetRuntimeProcessing(session.key);
     }
 
     this.#clearAssistantStatus(session.channelId, session.rootThreadTs);

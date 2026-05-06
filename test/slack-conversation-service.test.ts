@@ -146,7 +146,7 @@ describe("SlackConversationService", () => {
     await service.stop();
   });
 
-  it("clears the active turn when a silent stop state is recorded", async () => {
+  it("records a silent stop state without owning active turn completion", async () => {
     const codex = new EventEmitter();
     const recordTurnSignal = vi.fn(async () => TEST_SESSION);
     const setActiveTurnId = vi.fn(async () => ({
@@ -186,7 +186,7 @@ describe("SlackConversationService", () => {
       kind: "wait",
       reason: "waiting on async job"
     }));
-    expect(setActiveTurnId).toHaveBeenCalledWith("C123", "111.222", undefined);
+    expect(setActiveTurnId).not.toHaveBeenCalled();
     expect(listInboundMessages).toHaveBeenCalledWith(expect.objectContaining({
       channelId: "C123",
       rootThreadTs: "111.222",
@@ -197,7 +197,7 @@ describe("SlackConversationService", () => {
     await service.stop();
   });
 
-  it("clears the active turn when posting a visible final Slack message", async () => {
+  it("records a visible final Slack message without owning active turn completion", async () => {
     const codex = new EventEmitter();
     const recordTurnSignal = vi.fn(async () => TEST_SESSION);
     const setActiveTurnId = vi.fn(async () => ({
@@ -241,7 +241,7 @@ describe("SlackConversationService", () => {
       turnId: "turn-1",
       kind: "final"
     }));
-    expect(setActiveTurnId).toHaveBeenCalledWith("C123", "111.222", undefined);
+    expect(setActiveTurnId).not.toHaveBeenCalled();
 
     await service.stop();
   });

@@ -4,6 +4,8 @@ import path from "node:path";
 import { AppServerClient } from "./app-server-client.js";
 import { AppServerProcess } from "./app-server-process.js";
 import type { SlackSessionRecord, SlackUserIdentity } from "../../types.js";
+import type { AuthPoolLease } from "../auth-pool-service.js";
+import type { AuthPoolService } from "../auth-pool-service.js";
 import type {
   AppServerAccountSummary,
   CodexInputItem,
@@ -26,9 +28,11 @@ export class CodexBroker extends EventEmitter {
   readonly #personalMemoryFilePath: string;
   readonly #reposRoot: string;
   readonly #codexGeneratedImagesRoot: string;
+  readonly #authPool?: AuthPoolService | undefined;
   #slackBotIdentity: SlackUserIdentity | null = null;
   #reconnectPromise: Promise<void> | undefined;
   #connectQueue: Promise<void> = Promise.resolve();
+  #authTurnQueue: Promise<void> = Promise.resolve();
   #stopping = false;
   readonly #ignoredDisconnectClients = new WeakSet<AppServerClient>();
 
@@ -48,6 +52,7 @@ export class CodexBroker extends EventEmitter {
     readonly geminiHttpsProxy?: string | undefined;
     readonly geminiAllProxy?: string | undefined;
     readonly openAiApiKey?: string | undefined;
+    readonly authPool?: AuthPoolService | undefined;
   }) {
     super();
     this.#serviceName = options.serviceName;
@@ -57,6 +62,7 @@ export class CodexBroker extends EventEmitter {
     this.#personalMemoryFilePath = getPersonalMemoryPath(options.codexHome);
     this.#reposRoot = options.reposRoot;
     this.#codexGeneratedImagesRoot = path.join(options.codexHome, "generated_images");
+    this.#authPool = options.authPool;
 
     if (options.codexAppServerUrl) {
       this.#client = this.#createClient(options.codexAppServerUrl);
@@ -117,6 +123,10 @@ export class CodexBroker extends EventEmitter {
   async startTurn(session: SlackSessionRecord, input: readonly CodexInputItem[]): Promise<StartedTurn> {
     if (!session.codexThreadId) {
       throw new Error(`Session ${session.key} has no Codex thread id`);
+    }
+
+    if (this.#authPool?.mode === "on") {
+      return await this.#startTurnWithAuthPool(session, input);
     }
 
     return await this.#withRecovery(() =>
@@ -181,10 +191,69 @@ export class CodexBroker extends EventEmitter {
       openAiApiKey: this.#openAiApiKey,
       personalMemoryFilePath: this.#personalMemoryFilePath,
       reposRoot: this.#reposRoot,
-      codexGeneratedImagesRoot: this.#codexGeneratedImagesRoot
+      codexGeneratedImagesRoot: this.#codexGeneratedImagesRoot,
+      chatGptAuthTokensProvider: this.#authPool
+        ? {
+            refresh: async (context) => {
+              const tokens = await this.#authPool!.refreshForPreviousAccount(context.previousAccountId);
+              return {
+                accessToken: tokens.accessToken,
+                chatgptAccountId: tokens.chatgptAccountId,
+                chatgptPlanType: tokens.chatgptPlanType
+              };
+            }
+          }
+        : undefined
     });
     client.setSlackBotIdentity(this.#slackBotIdentity);
     return client;
+  }
+
+  async #startTurnWithAuthPool(
+    session: SlackSessionRecord,
+    input: readonly CodexInputItem[]
+  ): Promise<StartedTurn> {
+    const previousTurn = this.#authTurnQueue.catch(() => {});
+    let unlock!: () => void;
+    const currentTurnGate = new Promise<void>((resolve) => {
+      unlock = resolve;
+    });
+    this.#authTurnQueue = previousTurn.then(() => currentTurnGate);
+    await previousTurn;
+
+    let lease: AuthPoolLease | null = null;
+    try {
+      lease = await this.#authPool!.leaseForSession(session.key);
+      if (lease) {
+        logger.info("Using Auth Pool profile for Codex turn", {
+          sessionKey: session.key,
+          profileName: lease.tokens.profileName
+        });
+        await this.#withRecovery(() =>
+          this.#client.loginWithChatGptAuthTokens({
+            accessToken: lease!.tokens.accessToken,
+            chatgptAccountId: lease!.tokens.chatgptAccountId,
+            chatgptPlanType: lease!.tokens.chatgptPlanType
+          })
+        );
+      }
+
+      const started = await this.#withRecovery(() =>
+        this.#client.startTurn(session.codexThreadId!, session.workspacePath, input)
+      );
+      const completion = started.completion.finally(() => {
+        lease?.release();
+        unlock();
+      });
+      return {
+        turnId: started.turnId,
+        completion
+      };
+    } catch (error) {
+      lease?.release();
+      unlock();
+      throw error;
+    }
   }
 
   #bindClient(client: AppServerClient): void {

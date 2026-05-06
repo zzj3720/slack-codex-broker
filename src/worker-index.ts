@@ -3,6 +3,7 @@ import http from "node:http";
 import { loadConfig } from "./config.js";
 import { createHttpHandler } from "./http/router.js";
 import { configureLogger, logger } from "./logger.js";
+import { AuthPoolService } from "./services/auth-pool-service.js";
 import { CodexBroker } from "./services/codex/codex-broker.js";
 import { IsolatedMcpService } from "./services/codex/isolated-mcp-service.js";
 import { GitHubAuthorMappingService } from "./services/github-author-mapping-service.js";
@@ -32,6 +33,9 @@ export async function startWorkerService(): Promise<{
     stateDir: config.stateDir
   });
   await githubAuthorMappings.load();
+  const authPool = new AuthPoolService({
+    config
+  });
   const codexBroker = new CodexBroker({
     serviceName: config.serviceName,
     brokerHttpBaseUrl: config.brokerHttpBaseUrl,
@@ -47,7 +51,8 @@ export async function startWorkerService(): Promise<{
     geminiHttpProxy: config.geminiHttpProxy,
     geminiHttpsProxy: config.geminiHttpsProxy,
     geminiAllProxy: config.geminiAllProxy,
-    openAiApiKey: config.codexOpenAiApiKey
+    openAiApiKey: config.codexOpenAiApiKey,
+    authPool
   });
   const bridge = new SlackCodexBridge({
     config,

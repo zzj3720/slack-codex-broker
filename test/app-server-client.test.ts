@@ -144,6 +144,119 @@ describe("AppServerClient disconnect handling", () => {
     await expect(started.completion).rejects.toThrow(/closed/i);
   });
 
+  it("responds to app-server ChatGPT auth token refresh requests", async () => {
+    let resolveRefreshResponse!: (value: Record<string, unknown>) => void;
+    const refreshResponse = new Promise<Record<string, unknown>>((resolve) => {
+      resolveRefreshResponse = resolve;
+    });
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        socket.send(JSON.stringify({
+          id: "server-refresh-1",
+          method: "account/chatgptAuthTokens/refresh",
+          params: {
+            reason: "unauthorized",
+            previousAccountId: "account-1"
+          }
+        }));
+        return;
+      }
+
+      if (message.id === "server-refresh-1") {
+        resolveRefreshResponse(message as Record<string, unknown>);
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos",
+      chatGptAuthTokensProvider: {
+        refresh: async (context) => {
+          expect(context).toEqual({
+            reason: "unauthorized",
+            previousAccountId: "account-1"
+          });
+          return {
+            accessToken: "new-access",
+            chatgptAccountId: "account-1",
+            chatgptPlanType: "pro"
+          };
+        }
+      }
+    });
+
+    await client.connect();
+
+    await expect(refreshResponse).resolves.toMatchObject({
+      id: "server-refresh-1",
+      result: {
+        accessToken: "new-access",
+        chatgptAccountId: "account-1",
+        chatgptPlanType: "pro"
+      }
+    });
+  });
+
+  it("starts and cancels ChatGPT device-code login", async () => {
+    const requests: string[] = [];
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        return;
+      }
+
+      requests.push(message.method ?? "");
+      if (message.method === "account/login/start") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            loginId: "login-1",
+            verificationUrl: "https://chatgpt.example/codex/device",
+            userCode: "CODE-1234"
+          }
+        }));
+        return;
+      }
+
+      if (message.method === "account/login/cancel") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            status: "canceled"
+          }
+        }));
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos"
+    });
+
+    await client.connect();
+
+    await expect(client.loginWithChatGptDeviceCode()).resolves.toEqual({
+      loginId: "login-1",
+      verificationUrl: "https://chatgpt.example/codex/device",
+      userCode: "CODE-1234"
+    });
+    await expect(client.cancelLogin("login-1")).resolves.toBe("canceled");
+    expect(requests).toEqual(["account/login/start", "account/login/cancel"]);
+  });
+
   it("buffers turn events that arrive before startTurn finishes registering the turn", async () => {
     const server = await createServer((socket, message) => {
       if (message.method === "initialize") {

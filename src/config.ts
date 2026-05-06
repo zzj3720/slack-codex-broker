@@ -19,6 +19,7 @@ export interface AppConfig {
   readonly codexHome: string;
   readonly codexHostHomePath?: string | undefined;
   readonly codexAuthJsonPath?: string | undefined;
+  readonly authPoolLbMode: "off" | "shadow" | "on";
   readonly geminiHostHomePath?: string | undefined;
   readonly geminiHttpProxy?: string | undefined;
   readonly geminiHttpsProxy?: string | undefined;
@@ -133,6 +134,19 @@ function getLogLevel(env: NodeJS.ProcessEnv, name: string, fallback: AppConfig["
   throw new Error(`Invalid log level environment variable: ${name}`);
 }
 
+function getAuthPoolLbMode(env: NodeJS.ProcessEnv): AppConfig["authPoolLbMode"] {
+  const value = env.AUTH_POOL_LB?.trim().toLowerCase();
+  if (!value) {
+    return "off";
+  }
+
+  if (value === "off" || value === "shadow" || value === "on") {
+    return value;
+  }
+
+  throw new Error("Invalid AUTH_POOL_LB value; expected off, shadow, or on");
+}
+
 export function loadConfig(env = process.env): AppConfig {
   const serviceRoot = env.SERVICE_ROOT ? path.resolve(env.SERVICE_ROOT) : undefined;
   const dataRoot = env.DATA_ROOT ? path.resolve(env.DATA_ROOT) : path.resolve(".data");
@@ -178,6 +192,7 @@ export function loadConfig(env = process.env): AppConfig {
     codexHome,
     codexHostHomePath: getOptional(env, "CODEX_HOST_HOME_PATH"),
     codexAuthJsonPath: getOptional(env, "CODEX_AUTH_JSON_PATH"),
+    authPoolLbMode: getAuthPoolLbMode(env),
     geminiHostHomePath: getOptional(env, "GEMINI_HOST_HOME_PATH"),
     geminiHttpProxy: getOptional(env, "GEMINI_HTTP_PROXY"),
     geminiHttpsProxy: getOptional(env, "GEMINI_HTTPS_PROXY"),

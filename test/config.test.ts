@@ -22,6 +22,7 @@ describe("loadConfig", () => {
     expect(config.reposRoot.endsWith(".data/repos")).toBe(true);
     expect(config.logDir.endsWith(".data/logs")).toBe(true);
     expect(config.codexHostHomePath).toBeUndefined();
+    expect(config.authPoolLbMode).toBe("off");
     expect(config.slackInitialThreadHistoryCount).toBe(8);
     expect(config.slackHistoryApiMaxLimit).toBe(50);
     expect(config.slackActiveTurnReconcileIntervalMs).toBe(15_000);
@@ -123,5 +124,22 @@ describe("loadConfig", () => {
     } as NodeJS.ProcessEnv);
 
     expect(config.brokerAdminToken).toBe("secret-admin-token");
+  });
+
+  it("parses auth pool load balancing mode", () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      AUTH_POOL_LB: "on"
+    } as NodeJS.ProcessEnv);
+
+    expect(config.authPoolLbMode).toBe("on");
+    expect(() =>
+      loadConfig({
+        SLACK_APP_TOKEN: "xapp-test",
+        SLACK_BOT_TOKEN: "xoxb-test",
+        AUTH_POOL_LB: "maybe"
+      } as NodeJS.ProcessEnv)
+    ).toThrowError("Invalid AUTH_POOL_LB value");
   });
 });

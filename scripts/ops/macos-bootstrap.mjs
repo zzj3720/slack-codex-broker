@@ -152,9 +152,9 @@ function printHelp() {
       "",
       "What it does:",
       "  - expects to run inside the VM's long-lived git clone",
-      "  - uses that clone as the stable admin/control repo",
+      "  - uses that clone as the stable Git source for release worktrees",
       "  - prepares shared runtime directories under the service root",
-      "  - creates a worker release from the current commit under releases/<sha>",
+      "  - creates an admin/worker release from the current commit under releases/<sha>",
       "  - writes admin/worker launchd plists and env files",
       "  - starts admin immediately; worker is optional",
       "",
@@ -580,12 +580,12 @@ async function ensureInitialWorkerRelease(paths, options) {
 }
 
 async function writeLaunchdFiles(paths, options, seedBrokerEnv) {
-  const launcherPath = path.join(paths.repoRoot, "scripts", "ops", "macos-launchd-launcher.mjs");
+  const launcherPath = path.join(paths.currentReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
   const adminPlist = renderPlist({
     label: options.adminLabel,
     nodePath: options.nodePath,
     launcherPath,
-    repoRootPath: paths.repoRoot,
+    repoRootPath: paths.currentReleasePath,
     envFilePath: paths.adminEnvFile,
     entryPoint: "dist/src/admin-index.js",
     stdoutPath: paths.adminStdoutPath,

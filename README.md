@@ -180,7 +180,7 @@ Before running it, make sure the Slack app credentials are available through one
 
 What it prepares:
 
-- `releases/<sha>` worktrees for worker releases
+- `releases/<sha>` worktrees for admin and worker releases
 - `current`, `previous`, and `failed` release links
 - shared runtime state under `.data/`
 - support homes under `runtime-support/`
@@ -196,15 +196,15 @@ What it does not do:
 
 ### Runtime layout on the VM
 
-The fixed clone is both the admin code root and the Git source of truth for worker releases.
+The fixed clone is the Git source of truth for release worktrees. Runtime services execute code through the `current` release link, not directly from the fixed clone.
 
 - `<service-root>/`:
   - long-lived git clone
-  - admin launchd working directory
+  - release manager and shared runtime root
 - `<service-root>/releases/<sha>/`:
-  - worker build for a specific commit
+  - admin and worker build for a specific commit
 - `<service-root>/current`:
-  - symlink to the active worker release
+  - symlink to the active admin/worker release
 - `<service-root>/previous`:
   - symlink to the last good worker release
 - `<service-root>/failed`:
@@ -214,7 +214,7 @@ The fixed clone is both the admin code root and the Git source of truth for work
 
 ### Deploy and rollback
 
-The admin service fetches from the VM's local Git clone and deploys a selected ref into a new worker release directory.
+The admin service fetches from the VM's local Git clone and deploys a selected ref into a new release directory. Both launchd agents are written to execute through `current`; the deploy operation switches `current` before restarting the worker.
 
 - deploy:
   - `git fetch origin`

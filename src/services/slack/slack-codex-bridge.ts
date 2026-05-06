@@ -2,6 +2,7 @@ import type { AppConfig } from "../../config.js";
 import { logger } from "../../logger.js";
 import type {
   BackgroundJobEventPayload,
+  JsonLike,
   ResolvedSlackThreadMessage,
   SlackSessionRecord,
   SlackUserIdentity
@@ -31,6 +32,9 @@ export class SlackCodexBridge {
   readonly #conversations: SlackConversationService;
   #botUserId = "";
   #botIdentity: SlackUserIdentity | null = null;
+  #slackEventDrainPromise: Promise<void> | undefined;
+  #slackEventDrainTimer: NodeJS.Timeout | undefined;
+  #slackEventRetryTimer: NodeJS.Timeout | undefined;
 
   constructor(options: {
     readonly config: AppConfig;
@@ -77,24 +81,27 @@ export class SlackCodexBridge {
     this.#codex.setSlackBotIdentity(this.#botIdentity);
 
     await this.#conversations.start();
+    await this.#drainPersistedSlackEvents("startup");
 
     this.#slackSocket.on("ready", () => {
       void this.#conversations.recoverMissedThreadMessages("socket_ready");
     });
-    this.#slackSocket.on("events_api", (payload) => {
-      void this.#handleEventsApi(payload as {
+    this.#slackSocket.on("events_api", (payload) =>
+      this.#acceptEventsApi(payload as {
         readonly event?: Record<string, any>;
         readonly event_id?: string;
-      });
-    });
-    this.#slackSocket.on("interactive", (payload) => {
-      void this.#handleInteractive(payload as Record<string, unknown>);
-    });
+      })
+    );
+    this.#slackSocket.on("interactive", (payload) =>
+      this.#handleInteractive(payload as Record<string, unknown>)
+    );
 
     await this.#slackSocket.start();
   }
 
   async stop(): Promise<void> {
+    this.#clearSlackEventDrainTimer();
+    this.#clearSlackEventRetryTimer();
     await this.#slackSocket.stop();
     await this.#conversations.stop();
     await this.#codex.stop();
@@ -205,7 +212,7 @@ export class SlackCodexBridge {
     return await this.#coauthors.resolveCommitCoauthors(options);
   }
 
-  async #handleEventsApi(payload: {
+  async #acceptEventsApi(payload: {
     readonly event?: Record<string, any>;
     readonly event_id?: string;
   }): Promise<void> {
@@ -217,14 +224,126 @@ export class SlackCodexBridge {
       return;
     }
 
-    try {
-      await this.#routeSlackEvent(payload.event);
-      await this.#sessions.markProcessedEvent(payload.event_id);
-    } catch (error) {
-      logger.error("Failed to process Slack event", {
-        eventId: payload.event_id,
-        error: error instanceof Error ? error.message : String(error)
+    await this.#sessions.enqueueSlackEvent(payload.event_id, payload as JsonLike);
+    this.#scheduleSlackEventDrain("socket_event");
+  }
+
+  #scheduleSlackEventDrain(reason: "socket_event" | "retry"): void {
+    if (this.#slackEventDrainTimer) {
+      return;
+    }
+    this.#slackEventDrainTimer = setTimeout(() => {
+      this.#slackEventDrainTimer = undefined;
+      void this.#drainPersistedSlackEvents(reason);
+    }, 0);
+    this.#slackEventDrainTimer.unref();
+  }
+
+  #clearSlackEventDrainTimer(): void {
+    if (!this.#slackEventDrainTimer) {
+      return;
+    }
+    clearTimeout(this.#slackEventDrainTimer);
+    this.#slackEventDrainTimer = undefined;
+  }
+
+  #scheduleSlackEventRetry(): void {
+    if (this.#slackEventRetryTimer) {
+      return;
+    }
+    this.#slackEventRetryTimer = setTimeout(() => {
+      this.#slackEventRetryTimer = undefined;
+      this.#scheduleSlackEventDrain("retry");
+    }, 5_000);
+    this.#slackEventRetryTimer.unref();
+  }
+
+  #clearSlackEventRetryTimer(): void {
+    if (!this.#slackEventRetryTimer) {
+      return;
+    }
+    clearTimeout(this.#slackEventRetryTimer);
+    this.#slackEventRetryTimer = undefined;
+  }
+
+  async #drainPersistedSlackEvents(reason: "startup" | "socket_event" | "retry"): Promise<void> {
+    if (this.#slackEventDrainPromise) {
+      await this.#slackEventDrainPromise;
+      return;
+    }
+
+    this.#slackEventDrainPromise = this.#runSlackEventDrain(reason)
+      .catch((error) => {
+        logger.error("Failed to drain persisted Slack event queue", {
+          reason,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        this.#scheduleSlackEventRetry();
+      })
+      .finally(() => {
+        this.#slackEventDrainPromise = undefined;
       });
+
+    await this.#slackEventDrainPromise;
+  }
+
+  async #runSlackEventDrain(reason: "startup" | "socket_event" | "retry"): Promise<void> {
+    let failedCount = 0;
+    let processedCount = 0;
+
+    while (true) {
+      const pendingEvents = this.#sessions.listPendingSlackEvents();
+      if (pendingEvents.length === 0) {
+        break;
+      }
+
+      let batchFailedCount = 0;
+      for (const queuedEvent of pendingEvents) {
+        const payload = queuedEvent.payload as {
+          readonly event?: Record<string, any>;
+          readonly event_id?: string;
+        };
+
+        if (!payload.event || payload.event_id !== queuedEvent.eventId) {
+          await this.#sessions.markSlackEventProcessed(queuedEvent.eventId);
+          continue;
+        }
+
+        if (this.#sessions.hasProcessedEvent(queuedEvent.eventId)) {
+          await this.#sessions.markSlackEventProcessed(queuedEvent.eventId);
+          continue;
+        }
+
+        try {
+          await this.#routeSlackEvent(payload.event);
+          await this.#sessions.markSlackEventProcessed(queuedEvent.eventId);
+          processedCount += 1;
+        } catch (error) {
+          failedCount += 1;
+          batchFailedCount += 1;
+          logger.error("Failed to process persisted Slack event", {
+            reason,
+            eventId: queuedEvent.eventId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      if (batchFailedCount > 0) {
+        break;
+      }
+    }
+
+    if (processedCount > 0 || failedCount > 0) {
+      logger.info("Drained persisted Slack event queue", {
+        reason,
+        processedCount,
+        failedCount
+      });
+    }
+
+    if (failedCount > 0) {
+      this.#scheduleSlackEventRetry();
     }
   }
 

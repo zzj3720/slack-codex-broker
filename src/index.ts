@@ -25,7 +25,8 @@ export async function startService(): Promise<{
     level: config.logLevel,
     rawSlackEvents: config.logRawSlackEvents,
     rawCodexRpc: config.logRawCodexRpc,
-    rawHttpRequests: config.logRawHttpRequests
+    rawHttpRequests: config.logRawHttpRequests,
+    rawMaxBytes: config.logRawMaxBytes
   });
   const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
   const sessionManager = new SessionManager({

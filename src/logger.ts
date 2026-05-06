@@ -12,6 +12,7 @@ interface LoggerConfig {
   readonly rawSlackEvents: boolean;
   readonly rawCodexRpc: boolean;
   readonly rawHttpRequests: boolean;
+  readonly rawMaxBytes?: number | undefined;
 }
 
 const LEVEL_ORDER: Record<LogLevel, number> = {
@@ -26,13 +27,21 @@ let currentConfig: LoggerConfig = {
   level: process.env.DEBUG ? "debug" : "info",
   rawSlackEvents: false,
   rawCodexRpc: false,
-  rawHttpRequests: false
+  rawHttpRequests: false,
+  rawMaxBytes: 128 * 1024
 };
 
 const writeChains = new Map<string, Promise<void>>();
 
 export function configureLogger(config: LoggerConfig): void {
-  currentConfig = config;
+  currentConfig = {
+    ...config,
+    rawMaxBytes: config.rawMaxBytes ?? 128 * 1024
+  };
+}
+
+export async function flushLoggerForTests(): Promise<void> {
+  await Promise.all([...writeChains.values()]);
 }
 
 export function getBrokerLogDirectory(logDir: string): string {
@@ -70,7 +79,7 @@ export const logger = {
       ts,
       type: "raw",
       stream,
-      payload,
+      payload: limitRawPayload(payload, currentConfig.rawMaxBytes ?? 128 * 1024),
       meta: sanitizeMeta(meta)
     };
     queueFileWrites(record, meta, path.join("raw", stream, `${getLogBucket(ts)}.jsonl`));
@@ -159,6 +168,39 @@ function sanitizeMeta(meta?: Record<string, unknown>): Record<string, unknown> |
   }
 
   return JSON.parse(JSON.stringify(meta)) as Record<string, unknown>;
+}
+
+function limitRawPayload(payload: unknown, maxBytes: number): unknown {
+  if (maxBytes <= 0) {
+    return payload;
+  }
+
+  const json = safeStringify(payload);
+  const byteLength = Buffer.byteLength(json, "utf8");
+  if (byteLength <= maxBytes) {
+    return JSON.parse(json) as unknown;
+  }
+
+  return {
+    truncated: true,
+    originalBytes: byteLength,
+    maxBytes,
+    preview: truncateUtf8(json, maxBytes)
+  };
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    const encoded = JSON.stringify(value);
+    return typeof encoded === "string" ? encoded : "null";
+  } catch {
+    return JSON.stringify(String(value));
+  }
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value, "utf8");
+  return buffer.subarray(0, Math.max(0, maxBytes)).toString("utf8");
 }
 
 function encodeKey(value: string): string {

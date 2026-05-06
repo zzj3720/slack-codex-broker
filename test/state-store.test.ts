@@ -39,6 +39,45 @@ describe("StateStore", () => {
     reloaded.close();
   });
 
+  it("persists pending Slack events until they are processed", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+
+    await store.enqueueSlackEvent("EvA", {
+      event_id: "EvA",
+      event: {
+        type: "message",
+        channel: "C123",
+        thread_ts: "111.222",
+        ts: "111.223",
+        user: "U123",
+        text: "hello"
+      }
+    });
+
+    expect(store.listPendingSlackEvents()).toEqual([
+      expect.objectContaining({
+        eventId: "EvA",
+        status: "pending",
+        payload: expect.objectContaining({
+          event_id: "EvA"
+        })
+      })
+    ]);
+
+    store.close();
+    const reloaded = new StateStore(stateDir, sessionsRoot);
+    await reloaded.load();
+    expect(reloaded.listPendingSlackEvents()).toHaveLength(1);
+
+    await reloaded.markSlackEventProcessed("EvA");
+    expect(reloaded.hasProcessedEvent("EvA")).toBe(true);
+    expect(reloaded.listPendingSlackEvents()).toHaveLength(0);
+    reloaded.close();
+  });
+
   it("deletes session state transactionally with inbound messages and background jobs", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
     const sessionsRoot = path.join(stateDir, "sessions");

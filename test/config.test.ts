@@ -31,6 +31,7 @@ describe("loadConfig", () => {
     expect(config.logRawSlackEvents).toBe(true);
     expect(config.logRawCodexRpc).toBe(true);
     expect(config.logRawHttpRequests).toBe(true);
+    expect(config.logRawMaxBytes).toBe(128 * 1024);
     expect(config.diskCleanupEnabled).toBe(true);
     expect(config.diskCleanupCheckIntervalMs).toBe(300_000);
     expect(config.diskCleanupMinFreeBytes).toBe(10 * 1024 * 1024 * 1024);
@@ -113,13 +114,15 @@ describe("loadConfig", () => {
       LOG_LEVEL: "debug",
       LOG_RAW_SLACK_EVENTS: "false",
       LOG_RAW_CODEX_RPC: "false",
-      LOG_RAW_HTTP_REQUESTS: "true"
+      LOG_RAW_HTTP_REQUESTS: "true",
+      LOG_RAW_MAX_BYTES: "4096"
     } as NodeJS.ProcessEnv);
 
     expect(config.logLevel).toBe("debug");
     expect(config.logRawSlackEvents).toBe(false);
     expect(config.logRawCodexRpc).toBe(false);
     expect(config.logRawHttpRequests).toBe(true);
+    expect(config.logRawMaxBytes).toBe(4096);
   });
 
   it("loads an optional broker admin token", () => {

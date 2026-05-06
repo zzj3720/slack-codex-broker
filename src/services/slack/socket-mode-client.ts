@@ -181,12 +181,11 @@ export class SlackSocketModeClient extends EventEmitter {
     const envelope = JSON.parse(raw) as SlackSocketEnvelope;
     logger.raw("slack-events", envelope, buildSlackEnvelopeMeta(envelope));
 
-    if (envelope.envelope_id) {
-      await this.#ack(envelope.envelope_id);
-    }
-
     if (envelope.type === "hello") {
       this.emit("ready");
+      if (envelope.envelope_id) {
+        await this.#ack(envelope.envelope_id);
+      }
       return;
     }
 
@@ -194,17 +193,27 @@ export class SlackSocketModeClient extends EventEmitter {
       logger.warn("Slack requested disconnect", {
         payload: envelope.payload
       });
+      if (envelope.envelope_id) {
+        await this.#ack(envelope.envelope_id);
+      }
       this.#socket?.close();
       return;
     }
 
     if (envelope.type === "events_api" && envelope.payload) {
-      this.emit("events_api", envelope.payload);
+      await this.#emitAsync("events_api", envelope.payload);
+      if (envelope.envelope_id) {
+        await this.#ack(envelope.envelope_id);
+      }
       return;
     }
 
     if (envelope.type === "interactive" && envelope.payload) {
-      this.emit("interactive", envelope.payload);
+      await this.#emitAsync("interactive", envelope.payload);
+    }
+
+    if (envelope.envelope_id) {
+      await this.#ack(envelope.envelope_id);
     }
   }
 
@@ -219,6 +228,12 @@ export class SlackSocketModeClient extends EventEmitter {
         resolve();
       });
     });
+  }
+
+  async #emitAsync(eventName: "events_api" | "interactive", payload: unknown): Promise<void> {
+    for (const listener of this.listeners(eventName)) {
+      await (listener as (payload: unknown) => void | Promise<void>)(payload);
+    }
   }
 }
 

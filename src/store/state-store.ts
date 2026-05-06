@@ -2,10 +2,12 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 
 import type {
+  JsonLike,
   PersistedBackgroundJob,
   PersistedInboundMessage,
   PersistedInboundMessageStatus,
   PersistedInboundSource,
+  PersistedSlackEvent,
   SlackSessionRecord
 } from "../types.js";
 import { ensureDir } from "../utils/fs.js";
@@ -107,15 +109,55 @@ export class StateStore {
 
   async markProcessedEvent(eventId: string): Promise<void> {
     this.#transaction(() => {
+      this.#markProcessedEvent(eventId);
+    });
+  }
+
+  listPendingSlackEvents(limit = 100): PersistedSlackEvent[] {
+    return this.#databaseRequired()
+      .prepare(`
+        SELECT * FROM slack_events
+        WHERE status = 'pending'
+        ORDER BY created_at ASC
+        LIMIT ?
+      `)
+      .all(limit)
+      .map((row) => this.#rowToSlackEvent(row as SqlRow));
+  }
+
+  async enqueueSlackEvent(eventId: string, payload: JsonLike): Promise<void> {
+    const now = new Date().toISOString();
+    this.#transaction(() => {
+      if (this.hasProcessedEvent(eventId)) {
+        return;
+      }
+
+      this.#databaseRequired().prepare(`
+        INSERT INTO slack_events (
+          event_id, payload, status, created_at, updated_at
+        ) VALUES (?, ?, 'pending', ?, ?)
+        ON CONFLICT(event_id) DO UPDATE SET
+          payload = CASE
+            WHEN slack_events.status = 'done' THEN slack_events.payload
+            ELSE excluded.payload
+          END,
+          status = CASE
+            WHEN slack_events.status = 'done' THEN slack_events.status
+            ELSE 'pending'
+          END,
+          updated_at = excluded.updated_at
+      `).run(eventId, JSON.stringify(payload), now, now);
+    });
+  }
+
+  async markSlackEventProcessed(eventId: string): Promise<void> {
+    const now = new Date().toISOString();
+    this.#transaction(() => {
       this.#databaseRequired()
-        .prepare("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)")
-        .run(eventId);
-      this.#databaseRequired().exec(`
-        DELETE FROM processed_events
-        WHERE sequence NOT IN (
-          SELECT sequence FROM processed_events ORDER BY sequence DESC LIMIT 2000
-        )
-      `);
+        .prepare("UPDATE slack_events SET status = 'done', updated_at = ? WHERE event_id = ?")
+        .run(now, eventId);
+      this.#markProcessedEvent(eventId);
+      this.#pruneDoneSlackEvents();
     });
   }
 
@@ -408,10 +450,19 @@ export class StateStore {
           event_id TEXT NOT NULL UNIQUE
         );
 
+        CREATE TABLE IF NOT EXISTS slack_events (
+          event_id TEXT PRIMARY KEY,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(updated_at);
         CREATE INDEX IF NOT EXISTS idx_inbound_session_status ON inbound_messages(session_key, status, batch_id);
         CREATE INDEX IF NOT EXISTS idx_inbound_source ON inbound_messages(session_key, source, message_ts);
         CREATE INDEX IF NOT EXISTS idx_jobs_session_status ON background_jobs(session_key, status);
+        CREATE INDEX IF NOT EXISTS idx_slack_events_status ON slack_events(status, created_at);
       `);
       this.#databaseRequired()
         .prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)")
@@ -598,6 +649,31 @@ export class StateStore {
     );
   }
 
+  #markProcessedEvent(eventId: string): void {
+    this.#databaseRequired()
+      .prepare("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)")
+      .run(eventId);
+    this.#databaseRequired().exec(`
+      DELETE FROM processed_events
+      WHERE sequence NOT IN (
+        SELECT sequence FROM processed_events ORDER BY sequence DESC LIMIT 2000
+      )
+    `);
+  }
+
+  #pruneDoneSlackEvents(): void {
+    this.#databaseRequired().exec(`
+      DELETE FROM slack_events
+      WHERE status = 'done'
+        AND event_id NOT IN (
+          SELECT event_id FROM slack_events
+          WHERE status = 'done'
+          ORDER BY updated_at DESC
+          LIMIT 2000
+        )
+    `);
+  }
+
   #rowToSession(row: SqlRow): SlackSessionRecord {
     return this.#normalizeSession({
       key: stringColumn(row, "key"),
@@ -625,6 +701,16 @@ export class StateStore {
       coAuthorPromptRevision: optionalNumberColumn(row, "co_author_prompt_revision"),
       coAuthorPromptedAt: optionalStringColumn(row, "co_author_prompted_at")
     });
+  }
+
+  #rowToSlackEvent(row: SqlRow): PersistedSlackEvent {
+    return {
+      eventId: stringColumn(row, "event_id"),
+      payload: readJsonColumn<JsonLike>(row, "payload", null),
+      status: stringColumn(row, "status") as PersistedSlackEvent["status"],
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at")
+    };
   }
 
   #rowToInboundMessage(row: SqlRow): PersistedInboundMessage {

@@ -218,9 +218,32 @@ function buildSlackMessagePayload(
       height: image.height,
       dimensions: formatImageDimensions(image)
     })),
-    slack_message: message.slackMessage,
+    slack_message: buildSelectedSlackPayload(message),
     unexpected_turn_stop: message.unexpectedTurnStop
   };
+}
+
+function buildSelectedSlackPayload(message: SlackRenderableMessage): JsonLike | undefined {
+  if (message.senderKind !== "bot" && message.senderKind !== "app") {
+    return undefined;
+  }
+
+  const raw = toRecord(message.slackMessage);
+  if (!raw) {
+    return undefined;
+  }
+
+  const selected = pickJsonFields(raw, [
+    "subtype",
+    "bot_id",
+    "app_id",
+    "username",
+    "text",
+    "attachments",
+    "blocks",
+    "files"
+  ]);
+  return Object.keys(selected).length > 0 ? selected : undefined;
 }
 
 function buildSenderPayload(
@@ -253,6 +276,23 @@ function formatImageDimensions(image: SlackImageAttachment): string | undefined 
   }
 
   return `${image.width}x${image.height}`;
+}
+
+function pickJsonFields(value: Record<string, JsonLike>, keys: readonly string[]): Record<string, JsonLike> {
+  const picked: Record<string, JsonLike> = {};
+  for (const key of keys) {
+    if (value[key] !== undefined) {
+      picked[key] = value[key]!;
+    }
+  }
+  return picked;
+}
+
+function toRecord(value: JsonLike | undefined): Record<string, JsonLike> | undefined {
+  if (!value || Array.isArray(value) || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, JsonLike>;
 }
 
 function resolveMentionText(

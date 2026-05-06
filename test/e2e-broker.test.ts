@@ -1021,15 +1021,17 @@ describe.sequential("slack-codex-broker e2e", () => {
     });
     let turnCount = 0;
     const mockCodex = new MockCodexAppServer({
-      onTurnStart: async () => {
+      onTurnStart: async (context) => {
         turnCount += 1;
         if (turnCount === 1) {
+          await waitForSessionActive(tempRoot, "C123:777.220");
           await postJson(`${brokerBaseUrl}/slack/post-state`, {
             channel_id: "C123",
             thread_ts: "777.220",
             kind: "wait",
             reason: "waiting for async job"
           });
+          context.complete("");
         }
       }
     });
@@ -1078,30 +1080,39 @@ describe.sequential("slack-codex-broker e2e", () => {
       appId: "AAPP"
     });
     let turnCount = 0;
+    const firstTurnCompleted = createDeferred<void>();
     const mockCodex = new MockCodexAppServer({
-      onTurnStart: async () => {
+      onTurnStart: async (context) => {
         turnCount += 1;
         if (turnCount === 1) {
-          const registerResponse = await fetch(`${brokerBaseUrl}/jobs/register`, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json"
-            },
-            body: JSON.stringify({
+          try {
+            await waitForSessionActive(tempRoot, "C123:778.220");
+            const registerResponse = await fetch(`${brokerBaseUrl}/jobs/register`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json"
+              },
+              body: JSON.stringify({
+                channel_id: "C123",
+                thread_ts: "778.220",
+                kind: "watch_ci",
+                script: "#!/bin/sh\nsleep 30"
+              })
+            });
+            expect(registerResponse.ok).toBe(true);
+
+            await postJson(`${brokerBaseUrl}/slack/post-state`, {
               channel_id: "C123",
               thread_ts: "778.220",
-              kind: "watch_ci",
-              script: "#!/bin/sh\nsleep 30"
-            })
-          });
-          expect(registerResponse.ok).toBe(true);
-
-          await postJson(`${brokerBaseUrl}/slack/post-state`, {
-            channel_id: "C123",
-            thread_ts: "778.220",
-            kind: "wait",
-            reason: "waiting for async job"
-          });
+              kind: "wait",
+              reason: "waiting for async job"
+            });
+            context.complete("");
+            firstTurnCompleted.resolve();
+          } catch (error) {
+            firstTurnCompleted.reject(error);
+            throw error;
+          }
         }
       }
     });
@@ -1129,12 +1140,13 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "<@UBOT> 盯一下这个"
     });
 
-    await waitForSessionIdle(tempRoot, "C123:778.220");
+    await firstTurnCompleted.promise;
+    await waitForSessionIdle(tempRoot, "C123:778.220", 60_000);
     const postedMessageCountAfterIdle = mockSlack.postedMessages.length;
     await delay(1_000);
     expect(turnCount).toBe(1);
     expect(mockSlack.postedMessages).toHaveLength(postedMessageCountAfterIdle);
-  }, 60_000);
+  }, 90_000);
 
   it("does not wake a silent block turn that already recorded its blocker", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
@@ -1149,16 +1161,25 @@ describe.sequential("slack-codex-broker e2e", () => {
       appId: "AAPP"
     });
     let turnCount = 0;
+    const firstTurnCompleted = createDeferred<void>();
     const mockCodex = new MockCodexAppServer({
-      onTurnStart: async () => {
+      onTurnStart: async (context) => {
         turnCount += 1;
         if (turnCount === 1) {
-          await postJson(`${brokerBaseUrl}/slack/post-state`, {
-            channel_id: "C123",
-            thread_ts: "779.220",
-            kind: "block",
-            reason: "waiting for user approval"
-          });
+          try {
+            await waitForSessionActive(tempRoot, "C123:779.220");
+            await postJson(`${brokerBaseUrl}/slack/post-state`, {
+              channel_id: "C123",
+              thread_ts: "779.220",
+              kind: "block",
+              reason: "waiting for user approval"
+            });
+            context.complete("");
+            firstTurnCompleted.resolve();
+          } catch (error) {
+            firstTurnCompleted.reject(error);
+            throw error;
+          }
         }
       }
     });
@@ -1186,12 +1207,13 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "<@UBOT> 这步先停住"
     });
 
-    await waitForSessionIdle(tempRoot, "C123:779.220");
+    await firstTurnCompleted.promise;
+    await waitForSessionIdle(tempRoot, "C123:779.220", 60_000);
     const postedMessageCountAfterIdle = mockSlack.postedMessages.length;
     await delay(1_000);
     expect(turnCount).toBe(1);
     expect(mockSlack.postedMessages).toHaveLength(postedMessageCountAfterIdle);
-  }, 60_000);
+  }, 90_000);
 
   it("does not wake a silent final turn or replay stale watcher events after completion", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
@@ -1208,34 +1230,43 @@ describe.sequential("slack-codex-broker e2e", () => {
     let turnCount = 0;
     let registeredJobId = "";
     let registeredJobToken = "";
+    const firstTurnCompleted = createDeferred<void>();
     const mockCodex = new MockCodexAppServer({
-      onTurnStart: async () => {
+      onTurnStart: async (context) => {
         turnCount += 1;
         if (turnCount === 1) {
-          const registerResponse = await fetch(`${brokerBaseUrl}/jobs/register`, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json"
-            },
-            body: JSON.stringify({
+          try {
+            await waitForSessionActive(tempRoot, "C123:780.220");
+            const registerResponse = await fetch(`${brokerBaseUrl}/jobs/register`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json"
+              },
+              body: JSON.stringify({
+                channel_id: "C123",
+                thread_ts: "780.220",
+                kind: "watch_ci",
+                script: "#!/bin/sh\nsleep 30"
+              })
+            });
+            expect(registerResponse.ok).toBe(true);
+            const registerJson = await registerResponse.json() as {
+              job: { id: string; token: string };
+            };
+            registeredJobId = registerJson.job.id;
+            registeredJobToken = registerJson.job.token;
+
+            await postJson(`${brokerBaseUrl}/slack/post-state`, {
               channel_id: "C123",
               thread_ts: "780.220",
-              kind: "watch_ci",
-              script: "#!/bin/sh\nsleep 30"
-            })
-          });
-          expect(registerResponse.ok).toBe(true);
-          const registerJson = await registerResponse.json() as {
-            job: { id: string; token: string };
-          };
-          registeredJobId = registerJson.job.id;
-          registeredJobToken = registerJson.job.token;
-
-          await postJson(`${brokerBaseUrl}/slack/post-state`, {
-            channel_id: "C123",
-            thread_ts: "780.220",
-            kind: "final"
-          });
+              kind: "final"
+            });
+            context.complete("");
+            firstTurnCompleted.resolve();
+          } catch (error) {
+            firstTurnCompleted.reject(error);
+            throw error;
+          }
         }
       }
     });
@@ -1263,7 +1294,8 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "<@UBOT> 合并之后继续盯一下"
     });
 
-    await waitForSessionIdle(tempRoot, "C123:780.220");
+    await firstTurnCompleted.promise;
+    await waitForSessionIdle(tempRoot, "C123:780.220", 60_000);
     expect(turnCount).toBe(1);
     expect(registeredJobId).not.toBe("");
     expect(registeredJobToken).not.toBe("");
@@ -1285,7 +1317,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     await delay(1_000);
     expect(turnCount).toBe(1);
     expect(mockSlack.postedMessages).toHaveLength(postedMessageCountAfterIdle);
-  }, 60_000);
+  }, 90_000);
 
   it("does not recover the broker's own Slack messages as inbound work", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
@@ -1584,10 +1616,12 @@ async function waitForSessionIdle(
   timeoutMs = DEFAULT_E2E_TIMEOUT_MS
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let lastSession: SlackSessionRecord | undefined;
 
   while (Date.now() < deadline) {
     try {
       const session = await readSessionRecord(tempRoot, sessionKey);
+      lastSession = session;
       if (!session.activeTurnId) {
         return;
       }
@@ -1598,7 +1632,11 @@ async function waitForSessionIdle(
     await delay(100);
   }
 
-  throw new Error(`Timed out waiting for session idle: ${sessionKey}`);
+  throw new Error(`Timed out waiting for session idle: ${sessionKey}; lastSession=${JSON.stringify({
+    activeTurnId: lastSession?.activeTurnId ?? null,
+    lastTurnSignalKind: lastSession?.lastTurnSignalKind ?? null,
+    lastTurnSignalTurnId: lastSession?.lastTurnSignalTurnId ?? null
+  })}`);
 }
 
 async function waitForSessionActive(
@@ -1713,4 +1751,23 @@ async function postJson(url: string, payload: Record<string, unknown>): Promise<
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} for ${url}: ${await response.text()}`);
   }
+}
+
+function createDeferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T | PromiseLike<T>) => void;
+  readonly reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+
+  return {
+    promise,
+    resolve,
+    reject
+  };
 }

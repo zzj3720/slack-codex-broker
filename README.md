@@ -259,7 +259,7 @@ If `BROKER_ADMIN_TOKEN` is set, `/admin/api/*` requires that token via `x-admin-
 
 The container image:
 
-- uses Node 22
+- uses Node 22.5+ for the built-in SQLite runtime state store
 - installs `git`
 - installs `gh`
 - installs `rg` via `ripgrep`
@@ -285,13 +285,13 @@ Durable broker-owned identity/config data:
 
 Disposable runtime state:
 
-- `state/`
+- `state/broker.sqlite`
 - `sessions/`
 - `jobs/`
 - `logs/`
 - `repos/`
 
-The macOS bare-run deploy path only reuses the durable broker-owned subset that defines behavior and identity. It intentionally leaves the disposable runtime state behind and starts the VM with a clean `sessions/`, `jobs/`, `logs/`, and `repos/`.
+The macOS bare-run deploy path only reuses the durable broker-owned subset that defines behavior and identity. It intentionally leaves the disposable runtime state behind and starts the VM with a clean `state/`, `sessions/`, `jobs/`, `logs/`, and `repos/`.
 
 ## Logging
 

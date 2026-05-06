@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 
 import type {
@@ -9,90 +8,67 @@ import type {
   PersistedInboundSource,
   SlackSessionRecord
 } from "../types.js";
-import { ensureDir, fileExists } from "../utils/fs.js";
+import { ensureDir } from "../utils/fs.js";
+
+export const STATE_DATABASE_FILENAME = "broker.sqlite";
+
+type SqlValue = string | number | bigint | null;
+type SqlRow = Record<string, unknown>;
 
 export class StateStore {
   readonly #stateDir: string;
   readonly #sessionsRoot: string;
-  readonly #processedEventsFilePath: string;
-  readonly #sessionsDirPath: string;
-  readonly #inboundDirPath: string;
-  readonly #jobsDirPath: string;
-
-  #sessions = new Map<string, SlackSessionRecord>();
-  #processedEventIds: string[] = [];
-  #processedEventIdSet = new Set<string>();
-  #inboundMessagesBySession = new Map<string, Map<string, PersistedInboundMessage>>();
-  #backgroundJobs = new Map<string, PersistedBackgroundJob>();
-  #writeChains = new Map<string, Promise<void>>();
+  #database: DatabaseSync | undefined;
 
   constructor(stateDir: string, sessionsRoot: string) {
     this.#stateDir = stateDir;
     this.#sessionsRoot = sessionsRoot;
-    this.#processedEventsFilePath = path.join(stateDir, "processed-event-ids.json");
-    this.#sessionsDirPath = path.join(stateDir, "sessions");
-    this.#inboundDirPath = path.join(stateDir, "inbound-messages");
-    this.#jobsDirPath = path.join(stateDir, "background-jobs");
   }
 
   async load(): Promise<void> {
     await ensureDir(this.#stateDir);
-    await ensureDir(this.#sessionsDirPath);
-    await ensureDir(this.#inboundDirPath);
-    await ensureDir(this.#jobsDirPath);
+    this.#openDatabase();
+    this.#migrate();
+  }
 
-    this.#resetInMemoryState();
-
-    await this.#loadSplitState();
+  close(): void {
+    this.#database?.close();
+    this.#database = undefined;
   }
 
   listSessions(): SlackSessionRecord[] {
-    return [...this.#sessions.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return this.#databaseRequired()
+      .prepare("SELECT * FROM sessions ORDER BY created_at ASC")
+      .all()
+      .map((row) => this.#rowToSession(row as SqlRow));
   }
 
   getSession(key: string): SlackSessionRecord | undefined {
-    return this.#sessions.get(key);
+    const row = this.#databaseRequired()
+      .prepare("SELECT * FROM sessions WHERE key = ?")
+      .get(key) as SqlRow | undefined;
+    return row ? this.#rowToSession(row) : undefined;
   }
 
   async upsertSession(record: SlackSessionRecord): Promise<void> {
     const normalized = this.#normalizeSession(record);
-    this.#sessions.set(normalized.key, normalized);
-    await this.#writeJsonAtomic(
-      path.join(this.#sessionsDirPath, `${encodeKey(normalized.key)}.json`),
-      normalized
-    );
+    this.#transaction(() => {
+      this.#upsertSession(normalized);
+    });
   }
 
   async deleteSession(key: string): Promise<boolean> {
-    const filePath = path.join(this.#sessionsDirPath, `${encodeKey(key)}.json`);
-    let deleted = false;
-
-    await this.#runSerialized(filePath, async () => {
-      if (!this.#sessions.has(key)) {
-        return;
+    return this.#transaction(() => {
+      const existing = this.#databaseRequired()
+        .prepare("SELECT key FROM sessions WHERE key = ?")
+        .get(key);
+      if (!existing) {
+        return false;
       }
 
-      const jobIds = [...this.#backgroundJobs.values()]
-        .filter((job) => job.sessionKey === key)
-        .map((job) => job.id);
-
-      this.#sessions.delete(key);
-      this.#inboundMessagesBySession.delete(key);
-      for (const jobId of jobIds) {
-        this.#backgroundJobs.delete(jobId);
-      }
-
-      await Promise.all([
-        fs.rm(filePath, { force: true }),
-        fs.rm(path.join(this.#inboundDirPath, `${encodeKey(key)}.json`), { force: true }),
-        ...jobIds.map((jobId) =>
-          fs.rm(path.join(this.#jobsDirPath, `${encodeKey(jobId)}.json`), { force: true })
-        )
-      ]);
-      deleted = true;
+      this.#databaseRequired().prepare("DELETE FROM sessions WHERE key = ?").run(key);
+      return true;
     });
-
-    return deleted;
   }
 
   async patchSession(
@@ -101,17 +77,14 @@ export class StateStore {
       | Partial<SlackSessionRecord>
       | ((current: SlackSessionRecord) => Partial<SlackSessionRecord>)
   ): Promise<SlackSessionRecord> {
-    const filePath = path.join(this.#sessionsDirPath, `${encodeKey(key)}.json`);
-    let updated!: SlackSessionRecord;
-
-    await this.#runSerialized(filePath, async () => {
-      const current = this.#sessions.get(key);
+    return this.#transaction(() => {
+      const current = this.getSession(key);
       if (!current) {
         throw new Error(`Unknown session: ${key}`);
       }
 
       const resolvedPatch = typeof patch === "function" ? patch(current) : patch;
-      updated = this.#normalizeSession({
+      const updated = this.#normalizeSession({
         ...current,
         ...resolvedPatch,
         key: current.key,
@@ -121,25 +94,29 @@ export class StateStore {
         createdAt: current.createdAt
       });
 
-      this.#sessions.set(key, updated);
-      await this.#writeJsonAtomicUnlocked(filePath, updated);
+      this.#upsertSession(updated);
+      return updated;
     });
-
-    return updated;
   }
 
   hasProcessedEvent(eventId: string): boolean {
-    return this.#processedEventIdSet.has(eventId);
+    return Boolean(this.#databaseRequired()
+      .prepare("SELECT 1 FROM processed_events WHERE event_id = ?")
+      .get(eventId));
   }
 
   async markProcessedEvent(eventId: string): Promise<void> {
-    if (this.hasProcessedEvent(eventId)) {
-      return;
-    }
-
-    this.#processedEventIds = [...this.#processedEventIds, eventId].slice(-2_000);
-    this.#processedEventIdSet = new Set(this.#processedEventIds);
-    await this.#writeJsonAtomic(this.#processedEventsFilePath, this.#processedEventIds);
+    this.#transaction(() => {
+      this.#databaseRequired()
+        .prepare("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)")
+        .run(eventId);
+      this.#databaseRequired().exec(`
+        DELETE FROM processed_events
+        WHERE sequence NOT IN (
+          SELECT sequence FROM processed_events ORDER BY sequence DESC LIMIT 2000
+        )
+      `);
+    });
   }
 
   listInboundMessages(options?: {
@@ -148,40 +125,46 @@ export class StateStore {
     readonly batchId?: string | undefined;
     readonly source?: PersistedInboundSource | readonly PersistedInboundSource[] | undefined;
   }): PersistedInboundMessage[] {
-    const statuses = Array.isArray(options?.status)
-      ? options.status
-      : options?.status
-        ? [options.status]
-        : undefined;
-    const sources = Array.isArray(options?.source)
-      ? options.source
-      : options?.source
-        ? [options.source]
-        : undefined;
-    const sessionKeys = options?.sessionKey ? [options.sessionKey] : [...this.#inboundMessagesBySession.keys()];
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    const statuses = arrayOption(options?.status);
+    const sources = arrayOption(options?.source);
 
-    return sessionKeys
-      .flatMap((sessionKey) => [...(this.#inboundMessagesBySession.get(sessionKey)?.values() ?? [])])
-      .filter((message) => {
-        if (statuses && !statuses.includes(message.status)) {
-          return false;
-        }
+    if (options?.sessionKey) {
+      where.push("session_key = ?");
+      params.push(options.sessionKey);
+    }
+    if (statuses) {
+      where.push(`status IN (${placeholders(statuses.length)})`);
+      params.push(...statuses);
+    }
+    if (options?.batchId) {
+      where.push("batch_id = ?");
+      params.push(options.batchId);
+    }
+    if (sources) {
+      where.push(`source IN (${placeholders(sources.length)})`);
+      params.push(...sources);
+    }
 
-        if (options?.batchId && message.batchId !== options.batchId) {
-          return false;
-        }
+    const sql = [
+      "SELECT * FROM inbound_messages",
+      where.length > 0 ? `WHERE ${where.join(" AND ")}` : "",
+      "ORDER BY CAST(message_ts AS REAL) ASC, message_ts ASC"
+    ].filter(Boolean).join(" ");
 
-        if (sources && !sources.includes(message.source)) {
-          return false;
-        }
-
-        return true;
-      })
+    return this.#databaseRequired()
+      .prepare(sql)
+      .all(...params)
+      .map((row) => this.#rowToInboundMessage(row as SqlRow))
       .sort(compareInboundMessages);
   }
 
   getInboundMessage(sessionKey: string, messageTs: string): PersistedInboundMessage | undefined {
-    return this.#inboundMessagesBySession.get(sessionKey)?.get(messageTs);
+    const row = this.#databaseRequired()
+      .prepare("SELECT * FROM inbound_messages WHERE session_key = ? AND message_ts = ?")
+      .get(sessionKey, messageTs) as SqlRow | undefined;
+    return row ? this.#rowToInboundMessage(row) : undefined;
   }
 
   getLatestInboundMessageTs(sessionKey: string, options?: {
@@ -194,9 +177,13 @@ export class StateStore {
   }
 
   async upsertInboundMessage(record: PersistedInboundMessage): Promise<void> {
-    const messages = this.#getOrCreateInboundSession(record.sessionKey);
-    messages.set(record.messageTs, record);
-    await this.#writeInboundSession(record.sessionKey);
+    const normalized = this.#normalizeInboundMessage(record);
+    if (!normalized) {
+      throw new Error(`Invalid inbound message: ${record.key}`);
+    }
+    this.#transaction(() => {
+      this.#upsertInboundMessage(normalized);
+    });
   }
 
   async updateInboundMessage(
@@ -207,21 +194,21 @@ export class StateStore {
       readonly batchId?: string | undefined;
     }
   ): Promise<PersistedInboundMessage | undefined> {
-    const messages = this.#inboundMessagesBySession.get(sessionKey);
-    const existing = messages?.get(messageTs);
-    if (!existing) {
-      return undefined;
-    }
+    return this.#transaction(() => {
+      const existing = this.getInboundMessage(sessionKey, messageTs);
+      if (!existing) {
+        return undefined;
+      }
 
-    const updated: PersistedInboundMessage = {
-      ...existing,
-      status: patch.status ?? existing.status,
-      batchId: patch.batchId,
-      updatedAt: new Date().toISOString()
-    };
-    messages!.set(messageTs, updated);
-    await this.#writeInboundSession(sessionKey);
-    return updated;
+      const updated: PersistedInboundMessage = {
+        ...existing,
+        status: patch.status ?? existing.status,
+        batchId: patch.batchId,
+        updatedAt: new Date().toISOString()
+      };
+      this.#upsertInboundMessage(updated);
+      return updated;
+    });
   }
 
   async updateInboundMessagesForBatch(
@@ -232,35 +219,27 @@ export class StateStore {
       readonly batchId?: string | undefined;
     }
   ): Promise<PersistedInboundMessage[]> {
-    const messages = this.#inboundMessagesBySession.get(sessionKey);
-    if (!messages) {
-      return [];
-    }
+    return this.#transaction(() => {
+      const updatedAt = new Date().toISOString();
+      const updated: PersistedInboundMessage[] = [];
 
-    const updatedAt = new Date().toISOString();
-    const updated: PersistedInboundMessage[] = [];
-
-    for (const messageTs of messageTsList) {
-      const existing = messages.get(messageTs);
-      if (!existing) {
-        continue;
+      for (const messageTs of messageTsList) {
+        const existing = this.getInboundMessage(sessionKey, messageTs);
+        if (!existing) {
+          continue;
+        }
+        const nextMessage: PersistedInboundMessage = {
+          ...existing,
+          status: patch.status ?? existing.status,
+          batchId: patch.batchId,
+          updatedAt
+        };
+        this.#upsertInboundMessage(nextMessage);
+        updated.push(nextMessage);
       }
 
-      const nextMessage: PersistedInboundMessage = {
-        ...existing,
-        status: patch.status ?? existing.status,
-        batchId: patch.batchId,
-        updatedAt
-      };
-      messages.set(messageTs, nextMessage);
-      updated.push(nextMessage);
-    }
-
-    if (updated.length > 0) {
-      await this.#writeInboundSession(sessionKey);
-    }
-
-    return updated;
+      return updated;
+    });
   }
 
   async resetInflightMessages(sessionKey: string, batchId?: string | undefined): Promise<PersistedInboundMessage[]> {
@@ -284,143 +263,423 @@ export class StateStore {
     readonly sessionKey?: string | undefined;
     readonly id?: string | undefined;
   }): PersistedBackgroundJob[] {
-    return [...this.#backgroundJobs.values()]
-      .filter((job) => {
-        if (options?.sessionKey && job.sessionKey !== options.sessionKey) {
-          return false;
-        }
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (options?.sessionKey) {
+      where.push("session_key = ?");
+      params.push(options.sessionKey);
+    }
+    if (options?.id) {
+      where.push("id = ?");
+      params.push(options.id);
+    }
 
-        if (options?.id && job.id !== options.id) {
-          return false;
-        }
+    const sql = [
+      "SELECT * FROM background_jobs",
+      where.length > 0 ? `WHERE ${where.join(" AND ")}` : "",
+      "ORDER BY created_at ASC"
+    ].filter(Boolean).join(" ");
 
-        return true;
-      })
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return this.#databaseRequired()
+      .prepare(sql)
+      .all(...params)
+      .map((row) => this.#rowToBackgroundJob(row as SqlRow));
   }
 
   getBackgroundJob(id: string): PersistedBackgroundJob | undefined {
-    return this.#backgroundJobs.get(id);
+    const row = this.#databaseRequired()
+      .prepare("SELECT * FROM background_jobs WHERE id = ?")
+      .get(id) as SqlRow | undefined;
+    return row ? this.#rowToBackgroundJob(row) : undefined;
   }
 
   async upsertBackgroundJob(record: PersistedBackgroundJob): Promise<void> {
-    this.#backgroundJobs.set(record.id, record);
-    await this.#writeJsonAtomic(
-      path.join(this.#jobsDirPath, `${encodeKey(record.id)}.json`),
-      record
-    );
-  }
-
-  async #loadSplitState(): Promise<void> {
-    this.#processedEventIds = await this.#readJsonFile(this.#processedEventsFilePath, []);
-    this.#processedEventIdSet = new Set(this.#processedEventIds);
-
-    for (const session of await this.#readEntityDirectory(this.#sessionsDirPath)) {
-      const normalized = this.#normalizeSession(session as Partial<SlackSessionRecord>);
-      this.#sessions.set(normalized.key, normalized);
+    const normalized = this.#normalizeBackgroundJob(record);
+    if (!normalized) {
+      throw new Error(`Invalid background job: ${record.id}`);
     }
-
-    for (const raw of await this.#readEntityDirectory(this.#inboundDirPath)) {
-      const normalizedMessages = (Array.isArray(raw) ? raw : [])
-        .map((message) => this.#normalizeInboundMessage(message as Partial<PersistedInboundMessage>))
-        .filter((message): message is PersistedInboundMessage => message !== null);
-      if (normalizedMessages.length === 0) {
-        continue;
-      }
-
-      const sessionKey = normalizedMessages[0]!.sessionKey;
-      this.#inboundMessagesBySession.set(
-        sessionKey,
-        new Map(normalizedMessages.map((message) => [message.messageTs, message]))
-      );
-    }
-
-    for (const job of await this.#readEntityDirectory(this.#jobsDirPath)) {
-      const normalized = this.#normalizeBackgroundJob(job as Partial<PersistedBackgroundJob>);
-      if (normalized) {
-        this.#backgroundJobs.set(normalized.id, normalized);
-      }
-    }
-  }
-
-  async #writeInboundSession(sessionKey: string): Promise<void> {
-    const messages = [...(this.#inboundMessagesBySession.get(sessionKey)?.values() ?? [])]
-      .sort(compareInboundMessages);
-    await this.#writeJsonAtomic(
-      path.join(this.#inboundDirPath, `${encodeKey(sessionKey)}.json`),
-      messages
-    );
-  }
-
-  async #writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-    await this.#runSerialized(filePath, async () => {
-      await this.#writeJsonAtomicUnlocked(filePath, value);
+    this.#transaction(() => {
+      this.#upsertBackgroundJob(normalized);
     });
   }
 
-  async #writeJsonAtomicUnlocked(filePath: string, value: unknown): Promise<void> {
-    await ensureDir(path.dirname(filePath));
-    const tempFilePath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-    await fs.writeFile(tempFilePath, JSON.stringify(value, null, 2));
-    await fs.rename(tempFilePath, filePath);
-  }
-
-  async #runSerialized<T>(key: string, action: () => Promise<T>): Promise<T> {
-    const previous = this.#writeChains.get(key) ?? Promise.resolve();
-    let result!: T;
-    const next = previous
-      .catch(() => {})
-      .then(async () => {
-        result = await action();
-      });
-
-    this.#writeChains.set(key, next);
-    try {
-      await next;
-    } finally {
-      if (this.#writeChains.get(key) === next) {
-        this.#writeChains.delete(key);
-      }
+  #openDatabase(): void {
+    if (this.#database) {
+      return;
     }
-
-    return result;
+    this.#database = new DatabaseSync(path.join(this.#stateDir, STATE_DATABASE_FILENAME));
+    this.#database.exec(`
+      PRAGMA foreign_keys = ON;
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+    `);
   }
 
-  async #readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
-    if (!(await fileExists(filePath))) {
-      return fallback;
-    }
+  #migrate(): void {
+    this.#transaction(() => {
+      this.#databaseRequired().exec(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL
+        );
 
-    return JSON.parse(await fs.readFile(filePath, "utf8")) as T;
+        CREATE TABLE IF NOT EXISTS sessions (
+          key TEXT PRIMARY KEY,
+          channel_id TEXT NOT NULL,
+          root_thread_ts TEXT NOT NULL,
+          workspace_path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          codex_thread_id TEXT,
+          active_turn_id TEXT,
+          active_turn_started_at TEXT,
+          last_observed_message_ts TEXT,
+          last_delivered_message_ts TEXT,
+          last_slack_reply_at TEXT,
+          last_progress_reminder_at TEXT,
+          last_turn_signal_turn_id TEXT,
+          last_turn_signal_kind TEXT,
+          last_turn_signal_reason TEXT,
+          last_turn_signal_at TEXT,
+          co_author_candidate_user_ids TEXT,
+          co_author_candidate_revision INTEGER,
+          co_author_confirmed_user_ids TEXT,
+          co_author_confirmed_revision INTEGER,
+          co_author_ignore_missing_revision INTEGER,
+          co_author_prompt_revision INTEGER,
+          co_author_prompted_at TEXT,
+          UNIQUE(channel_id, root_thread_ts)
+        );
+
+        CREATE TABLE IF NOT EXISTS inbound_messages (
+          key TEXT NOT NULL UNIQUE,
+          session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+          channel_id TEXT NOT NULL,
+          channel_type TEXT,
+          root_thread_ts TEXT NOT NULL,
+          message_ts TEXT NOT NULL,
+          source TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          text TEXT NOT NULL,
+          sender_kind TEXT,
+          bot_id TEXT,
+          app_id TEXT,
+          sender_username TEXT,
+          mentioned_user_ids TEXT,
+          context_text TEXT,
+          images TEXT,
+          slack_message TEXT,
+          background_job TEXT,
+          unexpected_turn_stop TEXT,
+          status TEXT NOT NULL,
+          batch_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(session_key, message_ts)
+        );
+
+        CREATE TABLE IF NOT EXISTS background_jobs (
+          id TEXT PRIMARY KEY,
+          token TEXT NOT NULL,
+          session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+          channel_id TEXT NOT NULL,
+          root_thread_ts TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          shell TEXT NOT NULL,
+          cwd TEXT NOT NULL,
+          script_path TEXT NOT NULL,
+          restart_on_boot INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          heartbeat_at TEXT,
+          completed_at TEXT,
+          cancelled_at TEXT,
+          exit_code INTEGER,
+          error TEXT,
+          last_event_at TEXT,
+          last_event_kind TEXT,
+          last_event_summary TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS processed_events (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_id TEXT NOT NULL UNIQUE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(updated_at);
+        CREATE INDEX IF NOT EXISTS idx_inbound_session_status ON inbound_messages(session_key, status, batch_id);
+        CREATE INDEX IF NOT EXISTS idx_inbound_source ON inbound_messages(session_key, source, message_ts);
+        CREATE INDEX IF NOT EXISTS idx_jobs_session_status ON background_jobs(session_key, status);
+      `);
+      this.#databaseRequired()
+        .prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)")
+        .run(1, new Date().toISOString());
+    });
   }
 
-  async #readEntityDirectory(directoryPath: string): Promise<unknown[]> {
-    const entries = await fs.readdir(directoryPath, { withFileTypes: true });
-    const files = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .sort((left, right) => left.name.localeCompare(right.name));
-
-    return await Promise.all(
-      files.map(async (entry) => JSON.parse(await fs.readFile(path.join(directoryPath, entry.name), "utf8")))
+  #upsertSession(record: SlackSessionRecord): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO sessions (
+        key, channel_id, root_thread_ts, workspace_path, created_at, updated_at,
+        codex_thread_id, active_turn_id, active_turn_started_at,
+        last_observed_message_ts, last_delivered_message_ts, last_slack_reply_at,
+        last_progress_reminder_at, last_turn_signal_turn_id, last_turn_signal_kind,
+        last_turn_signal_reason, last_turn_signal_at,
+        co_author_candidate_user_ids, co_author_candidate_revision,
+        co_author_confirmed_user_ids, co_author_confirmed_revision,
+        co_author_ignore_missing_revision, co_author_prompt_revision, co_author_prompted_at
+      ) VALUES (${placeholders(24)})
+      ON CONFLICT(key) DO UPDATE SET
+        channel_id = excluded.channel_id,
+        root_thread_ts = excluded.root_thread_ts,
+        workspace_path = excluded.workspace_path,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        codex_thread_id = excluded.codex_thread_id,
+        active_turn_id = excluded.active_turn_id,
+        active_turn_started_at = excluded.active_turn_started_at,
+        last_observed_message_ts = excluded.last_observed_message_ts,
+        last_delivered_message_ts = excluded.last_delivered_message_ts,
+        last_slack_reply_at = excluded.last_slack_reply_at,
+        last_progress_reminder_at = excluded.last_progress_reminder_at,
+        last_turn_signal_turn_id = excluded.last_turn_signal_turn_id,
+        last_turn_signal_kind = excluded.last_turn_signal_kind,
+        last_turn_signal_reason = excluded.last_turn_signal_reason,
+        last_turn_signal_at = excluded.last_turn_signal_at,
+        co_author_candidate_user_ids = excluded.co_author_candidate_user_ids,
+        co_author_candidate_revision = excluded.co_author_candidate_revision,
+        co_author_confirmed_user_ids = excluded.co_author_confirmed_user_ids,
+        co_author_confirmed_revision = excluded.co_author_confirmed_revision,
+        co_author_ignore_missing_revision = excluded.co_author_ignore_missing_revision,
+        co_author_prompt_revision = excluded.co_author_prompt_revision,
+        co_author_prompted_at = excluded.co_author_prompted_at
+    `).run(
+      record.key,
+      record.channelId,
+      record.rootThreadTs,
+      record.workspacePath,
+      record.createdAt,
+      record.updatedAt,
+      record.codexThreadId ?? null,
+      record.activeTurnId ?? null,
+      record.activeTurnStartedAt ?? null,
+      record.lastObservedMessageTs ?? null,
+      record.lastDeliveredMessageTs ?? null,
+      record.lastSlackReplyAt ?? null,
+      record.lastProgressReminderAt ?? null,
+      record.lastTurnSignalTurnId ?? null,
+      record.lastTurnSignalKind ?? null,
+      record.lastTurnSignalReason ?? null,
+      record.lastTurnSignalAt ?? null,
+      jsonOrNull(record.coAuthorCandidateUserIds),
+      record.coAuthorCandidateRevision ?? null,
+      jsonOrNull(record.coAuthorConfirmedUserIds),
+      record.coAuthorConfirmedRevision ?? null,
+      record.coAuthorIgnoreMissingRevision ?? null,
+      record.coAuthorPromptRevision ?? null,
+      record.coAuthorPromptedAt ?? null
     );
   }
 
-  #getOrCreateInboundSession(sessionKey: string): Map<string, PersistedInboundMessage> {
-    let messages = this.#inboundMessagesBySession.get(sessionKey);
-    if (!messages) {
-      messages = new Map();
-      this.#inboundMessagesBySession.set(sessionKey, messages);
-    }
-
-    return messages;
+  #upsertInboundMessage(record: PersistedInboundMessage): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO inbound_messages (
+        key, session_key, channel_id, channel_type, root_thread_ts, message_ts,
+        source, user_id, text, sender_kind, bot_id, app_id, sender_username,
+        mentioned_user_ids, context_text, images, slack_message, background_job,
+        unexpected_turn_stop, status, batch_id, created_at, updated_at
+      ) VALUES (${placeholders(23)})
+      ON CONFLICT(session_key, message_ts) DO UPDATE SET
+        key = excluded.key,
+        session_key = excluded.session_key,
+        channel_id = excluded.channel_id,
+        channel_type = excluded.channel_type,
+        root_thread_ts = excluded.root_thread_ts,
+        message_ts = excluded.message_ts,
+        source = excluded.source,
+        user_id = excluded.user_id,
+        text = excluded.text,
+        sender_kind = excluded.sender_kind,
+        bot_id = excluded.bot_id,
+        app_id = excluded.app_id,
+        sender_username = excluded.sender_username,
+        mentioned_user_ids = excluded.mentioned_user_ids,
+        context_text = excluded.context_text,
+        images = excluded.images,
+        slack_message = excluded.slack_message,
+        background_job = excluded.background_job,
+        unexpected_turn_stop = excluded.unexpected_turn_stop,
+        status = excluded.status,
+        batch_id = excluded.batch_id,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at
+    `).run(
+      record.key,
+      record.sessionKey,
+      record.channelId,
+      record.channelType ?? null,
+      record.rootThreadTs,
+      record.messageTs,
+      record.source,
+      record.userId,
+      record.text,
+      record.senderKind ?? null,
+      record.botId ?? null,
+      record.appId ?? null,
+      record.senderUsername ?? null,
+      jsonOrNull(record.mentionedUserIds ?? []),
+      record.contextText ?? null,
+      jsonOrNull(record.images ?? []),
+      jsonOrNull(record.slackMessage),
+      jsonOrNull(record.backgroundJob),
+      jsonOrNull(record.unexpectedTurnStop),
+      record.status,
+      record.batchId ?? null,
+      record.createdAt,
+      record.updatedAt
+    );
   }
 
-  #resetInMemoryState(): void {
-    this.#sessions = new Map();
-    this.#processedEventIds = [];
-    this.#processedEventIdSet = new Set();
-    this.#inboundMessagesBySession = new Map();
-    this.#backgroundJobs = new Map();
+  #upsertBackgroundJob(record: PersistedBackgroundJob): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO background_jobs (
+        id, token, session_key, channel_id, root_thread_ts, kind, shell, cwd,
+        script_path, restart_on_boot, status, created_at, updated_at, started_at,
+        heartbeat_at, completed_at, cancelled_at, exit_code, error,
+        last_event_at, last_event_kind, last_event_summary
+      ) VALUES (${placeholders(22)})
+      ON CONFLICT(id) DO UPDATE SET
+        token = excluded.token,
+        session_key = excluded.session_key,
+        channel_id = excluded.channel_id,
+        root_thread_ts = excluded.root_thread_ts,
+        kind = excluded.kind,
+        shell = excluded.shell,
+        cwd = excluded.cwd,
+        script_path = excluded.script_path,
+        restart_on_boot = excluded.restart_on_boot,
+        status = excluded.status,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        started_at = excluded.started_at,
+        heartbeat_at = excluded.heartbeat_at,
+        completed_at = excluded.completed_at,
+        cancelled_at = excluded.cancelled_at,
+        exit_code = excluded.exit_code,
+        error = excluded.error,
+        last_event_at = excluded.last_event_at,
+        last_event_kind = excluded.last_event_kind,
+        last_event_summary = excluded.last_event_summary
+    `).run(
+      record.id,
+      record.token,
+      record.sessionKey,
+      record.channelId,
+      record.rootThreadTs,
+      record.kind,
+      record.shell,
+      record.cwd,
+      record.scriptPath,
+      record.restartOnBoot ? 1 : 0,
+      record.status,
+      record.createdAt,
+      record.updatedAt,
+      record.startedAt ?? null,
+      record.heartbeatAt ?? null,
+      record.completedAt ?? null,
+      record.cancelledAt ?? null,
+      record.exitCode ?? null,
+      record.error ?? null,
+      record.lastEventAt ?? null,
+      record.lastEventKind ?? null,
+      record.lastEventSummary ?? null
+    );
+  }
+
+  #rowToSession(row: SqlRow): SlackSessionRecord {
+    return this.#normalizeSession({
+      key: stringColumn(row, "key"),
+      channelId: stringColumn(row, "channel_id"),
+      rootThreadTs: stringColumn(row, "root_thread_ts"),
+      workspacePath: stringColumn(row, "workspace_path"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at"),
+      codexThreadId: optionalStringColumn(row, "codex_thread_id"),
+      activeTurnId: optionalStringColumn(row, "active_turn_id"),
+      activeTurnStartedAt: optionalStringColumn(row, "active_turn_started_at"),
+      lastObservedMessageTs: optionalStringColumn(row, "last_observed_message_ts"),
+      lastDeliveredMessageTs: optionalStringColumn(row, "last_delivered_message_ts"),
+      lastSlackReplyAt: optionalStringColumn(row, "last_slack_reply_at"),
+      lastProgressReminderAt: optionalStringColumn(row, "last_progress_reminder_at"),
+      lastTurnSignalTurnId: optionalStringColumn(row, "last_turn_signal_turn_id"),
+      lastTurnSignalKind: optionalStringColumn(row, "last_turn_signal_kind") as SlackSessionRecord["lastTurnSignalKind"],
+      lastTurnSignalReason: optionalStringColumn(row, "last_turn_signal_reason"),
+      lastTurnSignalAt: optionalStringColumn(row, "last_turn_signal_at"),
+      coAuthorCandidateUserIds: readJsonColumn(row, "co_author_candidate_user_ids", undefined),
+      coAuthorCandidateRevision: optionalNumberColumn(row, "co_author_candidate_revision"),
+      coAuthorConfirmedUserIds: readJsonColumn(row, "co_author_confirmed_user_ids", undefined),
+      coAuthorConfirmedRevision: optionalNumberColumn(row, "co_author_confirmed_revision"),
+      coAuthorIgnoreMissingRevision: optionalNumberColumn(row, "co_author_ignore_missing_revision"),
+      coAuthorPromptRevision: optionalNumberColumn(row, "co_author_prompt_revision"),
+      coAuthorPromptedAt: optionalStringColumn(row, "co_author_prompted_at")
+    });
+  }
+
+  #rowToInboundMessage(row: SqlRow): PersistedInboundMessage {
+    return this.#normalizeInboundMessage({
+      key: stringColumn(row, "key"),
+      sessionKey: stringColumn(row, "session_key"),
+      channelId: stringColumn(row, "channel_id"),
+      channelType: optionalStringColumn(row, "channel_type"),
+      rootThreadTs: stringColumn(row, "root_thread_ts"),
+      messageTs: stringColumn(row, "message_ts"),
+      source: stringColumn(row, "source") as PersistedInboundSource,
+      userId: stringColumn(row, "user_id"),
+      text: stringColumn(row, "text"),
+      senderKind: optionalStringColumn(row, "sender_kind") as PersistedInboundMessage["senderKind"],
+      botId: optionalStringColumn(row, "bot_id"),
+      appId: optionalStringColumn(row, "app_id"),
+      senderUsername: optionalStringColumn(row, "sender_username"),
+      mentionedUserIds: readJsonColumn(row, "mentioned_user_ids", []),
+      contextText: optionalStringColumn(row, "context_text"),
+      images: readJsonColumn(row, "images", []),
+      slackMessage: readJsonColumn(row, "slack_message", undefined),
+      backgroundJob: readJsonColumn(row, "background_job", undefined),
+      unexpectedTurnStop: readJsonColumn(row, "unexpected_turn_stop", undefined),
+      status: stringColumn(row, "status") as PersistedInboundMessageStatus,
+      batchId: optionalStringColumn(row, "batch_id"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at")
+    })!;
+  }
+
+  #rowToBackgroundJob(row: SqlRow): PersistedBackgroundJob {
+    return this.#normalizeBackgroundJob({
+      id: stringColumn(row, "id"),
+      token: stringColumn(row, "token"),
+      sessionKey: stringColumn(row, "session_key"),
+      channelId: stringColumn(row, "channel_id"),
+      rootThreadTs: stringColumn(row, "root_thread_ts"),
+      kind: stringColumn(row, "kind"),
+      shell: stringColumn(row, "shell"),
+      cwd: stringColumn(row, "cwd"),
+      scriptPath: stringColumn(row, "script_path"),
+      restartOnBoot: booleanColumn(row, "restart_on_boot", true),
+      status: stringColumn(row, "status") as PersistedBackgroundJob["status"],
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at"),
+      startedAt: optionalStringColumn(row, "started_at"),
+      heartbeatAt: optionalStringColumn(row, "heartbeat_at"),
+      completedAt: optionalStringColumn(row, "completed_at"),
+      cancelledAt: optionalStringColumn(row, "cancelled_at"),
+      exitCode: optionalNumberColumn(row, "exit_code"),
+      error: optionalStringColumn(row, "error"),
+      lastEventAt: optionalStringColumn(row, "last_event_at"),
+      lastEventKind: optionalStringColumn(row, "last_event_kind"),
+      lastEventSummary: optionalStringColumn(row, "last_event_summary")
+    })!;
   }
 
   #normalizeSession(session: Partial<SlackSessionRecord>): SlackSessionRecord {
@@ -534,6 +793,80 @@ export class StateStore {
       lastEventSummary: raw.lastEventSummary
     };
   }
+
+  #databaseRequired(): DatabaseSync {
+    if (!this.#database) {
+      throw new Error("StateStore has not been loaded");
+    }
+    return this.#database;
+  }
+
+  #transaction<T>(operation: () => T): T {
+    const db = this.#databaseRequired();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = operation();
+      db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+}
+
+function placeholders(count: number): string {
+  return Array.from({ length: count }, () => "?").join(", ");
+}
+
+function arrayOption<T>(value: T | readonly T[] | undefined): readonly T[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return Array.isArray(value) ? value as readonly T[] : [value as T];
+}
+
+function jsonOrNull(value: unknown): string | null {
+  return value === undefined ? null : JSON.stringify(value);
+}
+
+function readJsonColumn<T>(row: SqlRow, column: string, fallback: T): T {
+  const value = row[column];
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  return JSON.parse(value) as T;
+}
+
+function stringColumn(row: SqlRow, column: string): string {
+  return String(row[column]);
+}
+
+function optionalStringColumn(row: SqlRow, column: string): string | undefined {
+  const value = row[column];
+  return value === null || value === undefined ? undefined : String(value);
+}
+
+function optionalNumberColumn(row: SqlRow, column: string): number | undefined {
+  const value = row[column];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  return undefined;
+}
+
+function booleanColumn(row: SqlRow, column: string, fallback: boolean): boolean {
+  const value = row[column];
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "bigint") {
+    return value !== 0n;
+  }
+  return fallback;
 }
 
 function compareInboundMessages(left: PersistedInboundMessage, right: PersistedInboundMessage): number {
@@ -542,10 +875,6 @@ function compareInboundMessages(left: PersistedInboundMessage, right: PersistedI
 
 function normalizeSessionDirectoryName(channelId: string, rootThreadTs: string): string {
   return `${channelId}-${rootThreadTs}`.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-function encodeKey(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64url");
 }
 
 function normalizeStringArray(value: unknown): readonly string[] | undefined {

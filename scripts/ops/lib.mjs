@@ -5,10 +5,12 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(scriptDir, "..", "..");
+const STATE_DATABASE_FILENAME = "broker.sqlite";
 
 function formatCommand(command, args) {
   return [command, ...args].join(" ");
@@ -75,36 +77,28 @@ export function getPublishedPort(inspect, containerPort = "3000/tcp") {
 }
 
 export async function readSessionStatsFromHost(dataRootSource) {
-  const sessionsDir = path.join(dataRootSource, "state", "sessions");
-  try {
-    const entries = await fsp.readdir(sessionsDir);
-    let activeCount = 0;
-    let sessionCount = 0;
-    for (const entry of entries) {
-      if (!entry.endsWith(".json")) {
-        continue;
-      }
-
-      sessionCount += 1;
-      const record = JSON.parse(await fsp.readFile(path.join(sessionsDir, entry), "utf8"));
-      if (record.activeTurnId) {
-        activeCount += 1;
-      }
-    }
-
+  const dbPath = path.join(dataRootSource, "state", STATE_DATABASE_FILENAME);
+  if (!fs.existsSync(dbPath)) {
     return {
-      activeCount,
-      sessionCount
+      activeCount: 0,
+      sessionCount: 0
     };
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return {
-        activeCount: 0,
-        sessionCount: 0
-      };
-    }
+  }
 
-    throw error;
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare(`
+      SELECT
+        COUNT(*) AS sessionCount,
+        SUM(CASE WHEN active_turn_id IS NOT NULL THEN 1 ELSE 0 END) AS activeCount
+      FROM sessions
+    `).get();
+    return {
+      activeCount: Number(row?.activeCount ?? 0),
+      sessionCount: Number(row?.sessionCount ?? 0)
+    };
+  } finally {
+    db.close();
   }
 }
 
@@ -258,9 +252,7 @@ export async function checkContainer(containerName, options = {}) {
         "  '/app/.data/codex-home/AGENT.md',",
         "  '/app/.data/codex-home/config.toml',",
         "  '/app/.data/runtime-home/.codex/AGENT.md',",
-        "  '/app/.data/state/sessions',",
-        "  '/app/.data/state/inbound-messages',",
-        "  '/app/.data/state/background-jobs',",
+        "  '/app/.data/state/broker.sqlite',",
         "  '/app/.data/repos',",
         "  '/app/.data/sessions'",
         "];",
@@ -316,47 +308,25 @@ export async function writeRolloutMetadata(directory, payload) {
   await fsp.writeFile(path.join(directory, "metadata.json"), `${JSON.stringify(payload, null, 2)}\n`);
 }
 
-async function readJsonIfExists(filePath) {
-  try {
-    return JSON.parse(await fsp.readFile(filePath, "utf8"));
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return undefined;
-    }
-
-    throw error;
+function readDetailedStateFromSqlite(dataRootSource) {
+  const dbPath = path.join(dataRootSource, "state", STATE_DATABASE_FILENAME);
+  if (!fs.existsSync(dbPath)) {
+    return {
+      sessions: [],
+      inboundMessages: [],
+      backgroundJobs: []
+    };
   }
-}
 
-async function readJsonRecordsFromDirectory(directory) {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const entries = await fsp.readdir(directory);
-    const records = [];
-    for (const entry of entries.sort()) {
-      if (!entry.endsWith(".json")) {
-        continue;
-      }
-
-      const payload = await readJsonIfExists(path.join(directory, entry));
-      if (payload === undefined) {
-        continue;
-      }
-
-      if (Array.isArray(payload)) {
-        records.push(...payload);
-        continue;
-      }
-
-      records.push(payload);
-    }
-
-    return records;
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return [];
-    }
-
-    throw error;
+    return {
+      sessions: db.prepare("SELECT * FROM sessions ORDER BY created_at ASC").all().map(sessionFromRow),
+      inboundMessages: db.prepare("SELECT * FROM inbound_messages ORDER BY CAST(message_ts AS REAL), message_ts").all().map(inboundMessageFromRow),
+      backgroundJobs: db.prepare("SELECT * FROM background_jobs ORDER BY created_at ASC").all().map(backgroundJobFromRow)
+    };
+  } finally {
+    db.close();
   }
 }
 
@@ -430,12 +400,12 @@ async function readRecentBrokerLogRecords(logsRoot, limit) {
 export async function readDetailedStateFromHost(dataRootSource, options = {}) {
   const openInboundLimit = options.openInboundLimit ?? 20;
   const logLineLimit = options.logLineLimit ?? 40;
-  const stateRoot = path.join(dataRootSource, "state");
   const logsRoot = path.join(dataRootSource, "logs");
-
-  const sessions = await readJsonRecordsFromDirectory(path.join(stateRoot, "sessions"));
-  const inboundMessages = await readJsonRecordsFromDirectory(path.join(stateRoot, "inbound-messages"));
-  const backgroundJobs = await readJsonRecordsFromDirectory(path.join(stateRoot, "background-jobs"));
+  const {
+    sessions,
+    inboundMessages,
+    backgroundJobs
+  } = readDetailedStateFromSqlite(dataRootSource);
 
   const activeSessions = sessions
     .filter((session) => session?.activeTurnId)
@@ -458,4 +428,92 @@ export async function readDetailedStateFromHost(dataRootSource, options = {}) {
     ),
     recentBrokerLogs: brokerLogs
   };
+}
+
+function sessionFromRow(row) {
+  return {
+    key: row.key,
+    channelId: row.channel_id,
+    rootThreadTs: row.root_thread_ts,
+    workspacePath: row.workspace_path,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    codexThreadId: row.codex_thread_id ?? undefined,
+    activeTurnId: row.active_turn_id ?? undefined,
+    activeTurnStartedAt: row.active_turn_started_at ?? undefined,
+    lastObservedMessageTs: row.last_observed_message_ts ?? undefined,
+    lastDeliveredMessageTs: row.last_delivered_message_ts ?? undefined,
+    lastSlackReplyAt: row.last_slack_reply_at ?? undefined,
+    lastProgressReminderAt: row.last_progress_reminder_at ?? undefined,
+    lastTurnSignalTurnId: row.last_turn_signal_turn_id ?? undefined,
+    lastTurnSignalKind: row.last_turn_signal_kind ?? undefined,
+    lastTurnSignalReason: row.last_turn_signal_reason ?? undefined,
+    lastTurnSignalAt: row.last_turn_signal_at ?? undefined,
+    coAuthorCandidateUserIds: readJson(row.co_author_candidate_user_ids, undefined),
+    coAuthorCandidateRevision: row.co_author_candidate_revision ?? undefined,
+    coAuthorConfirmedUserIds: readJson(row.co_author_confirmed_user_ids, undefined),
+    coAuthorConfirmedRevision: row.co_author_confirmed_revision ?? undefined,
+    coAuthorIgnoreMissingRevision: row.co_author_ignore_missing_revision ?? undefined,
+    coAuthorPromptRevision: row.co_author_prompt_revision ?? undefined,
+    coAuthorPromptedAt: row.co_author_prompted_at ?? undefined
+  };
+}
+
+function inboundMessageFromRow(row) {
+  return {
+    key: row.key,
+    sessionKey: row.session_key,
+    channelId: row.channel_id,
+    channelType: row.channel_type ?? undefined,
+    rootThreadTs: row.root_thread_ts,
+    messageTs: row.message_ts,
+    source: row.source,
+    userId: row.user_id,
+    text: row.text,
+    senderKind: row.sender_kind ?? undefined,
+    botId: row.bot_id ?? undefined,
+    appId: row.app_id ?? undefined,
+    senderUsername: row.sender_username ?? undefined,
+    mentionedUserIds: readJson(row.mentioned_user_ids, []),
+    contextText: row.context_text ?? undefined,
+    images: readJson(row.images, []),
+    slackMessage: readJson(row.slack_message, undefined),
+    backgroundJob: readJson(row.background_job, undefined),
+    unexpectedTurnStop: readJson(row.unexpected_turn_stop, undefined),
+    status: row.status,
+    batchId: row.batch_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function backgroundJobFromRow(row) {
+  return {
+    id: row.id,
+    token: row.token,
+    sessionKey: row.session_key,
+    channelId: row.channel_id,
+    rootThreadTs: row.root_thread_ts,
+    kind: row.kind,
+    shell: row.shell,
+    cwd: row.cwd,
+    scriptPath: row.script_path,
+    restartOnBoot: row.restart_on_boot !== 0,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at ?? undefined,
+    heartbeatAt: row.heartbeat_at ?? undefined,
+    completedAt: row.completed_at ?? undefined,
+    cancelledAt: row.cancelled_at ?? undefined,
+    exitCode: row.exit_code ?? undefined,
+    error: row.error ?? undefined,
+    lastEventAt: row.last_event_at ?? undefined,
+    lastEventKind: row.last_event_kind ?? undefined,
+    lastEventSummary: row.last_event_summary ?? undefined
+  };
+}
+
+function readJson(value, fallback) {
+  return typeof value === "string" ? JSON.parse(value) : fallback;
 }

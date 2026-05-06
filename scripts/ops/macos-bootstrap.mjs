@@ -355,9 +355,7 @@ async function buildPortableGhConfigHome(sourceGhConfigHome, targetRuntimeHome) 
 }
 
 async function initializeRuntimeData(dataRoot) {
-  await ensureDir(path.join(dataRoot, "state", "sessions"));
-  await ensureDir(path.join(dataRoot, "state", "inbound-messages"));
-  await ensureDir(path.join(dataRoot, "state", "background-jobs"));
+  await ensureDir(path.join(dataRoot, "state"));
   await ensureDir(path.join(dataRoot, "jobs"));
   await ensureDir(path.join(dataRoot, "sessions"));
   await ensureDir(path.join(dataRoot, "logs", "raw"));
@@ -366,7 +364,6 @@ async function initializeRuntimeData(dataRoot) {
   await ensureDir(path.join(dataRoot, "repos"));
   await ensureDir(path.join(dataRoot, "runtime-home"));
   await ensureDir(path.join(dataRoot, "auth-profiles", "docker", "profiles"));
-  await fs.writeFile(path.join(dataRoot, "state", "processed-event-ids.json"), "[]\n", "utf8");
 }
 
 function renderEnvFile(env) {

@@ -218,13 +218,9 @@ export class MockCodexAppServer {
         });
 
         const context = this.#createTurnContext(socket, thread, turn);
-        try {
-          await this.onTurnStart?.(context);
-        } finally {
-          if (turn.status === "inProgress") {
-            context.complete("");
-          }
-        }
+        setTimeout(() => {
+          void this.#runTurnStart(context, turn);
+        }, 10);
         return;
       }
       case "turn/steer": {
@@ -256,7 +252,9 @@ export class MockCodexAppServer {
         this.#respond(socket, message.id, { ok: true });
 
         const context = this.#createTurnContext(socket, thread, turn);
-        await this.onTurnSteer?.(context);
+        setTimeout(() => {
+          void this.onTurnSteer?.(context);
+        }, 10);
         return;
       }
       case "turn/interrupt": {
@@ -332,6 +330,16 @@ export class MockCodexAppServer {
         this.#interruptTurn(socket, thread, turn, message);
       }
     };
+  }
+
+  async #runTurnStart(context: MockTurnContext, turn: MockTurnRecord): Promise<void> {
+    try {
+      await this.onTurnStart?.(context);
+    } finally {
+      if (turn.status === "inProgress") {
+        context.complete("");
+      }
+    }
   }
 
   #interruptTurn(socket: WebSocket, thread: MockThreadRecord, turn: MockTurnRecord, message: string): void {

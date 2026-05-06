@@ -1,13 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { logger } from "../../logger.js";
 import { execCommand } from "../../utils/exec.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
 
 const RELEASE_METADATA_FILENAME = ".broker-release.json";
-const WORKER_STATE_SCHEMA_VERSION = 1;
+const RELEASE_STATE_SCHEMA_VERSION = 1;
 
-export interface WorkerReleaseMetadata {
+export interface ReleaseMetadata {
   readonly revision: string | null;
   readonly shortRevision: string | null;
   readonly branch: string | null;
@@ -18,11 +19,11 @@ export interface WorkerReleaseMetadata {
   readonly stateSchemaVersion: number;
 }
 
-export interface WorkerReleaseInfo {
+export interface ReleaseInfo {
   readonly linkPath: string;
   readonly targetPath: string | null;
   readonly exists: boolean;
-  readonly metadata: WorkerReleaseMetadata | null;
+  readonly metadata: ReleaseMetadata | null;
 }
 
 export interface WorkerHealthStatus {
@@ -33,26 +34,33 @@ export interface WorkerHealthStatus {
   readonly readyError: string | null;
 }
 
-export interface WorkerDeploymentStatus {
+export interface AdminHealthStatus {
+  readonly launchdLoaded: boolean;
+  readonly healthOk: boolean;
+  readonly healthBody: string;
+}
+
+export interface ReleaseDeploymentStatus {
   readonly serviceRoot: string;
   readonly repoRoot: string;
   readonly repoUrl: string | null;
-  readonly currentRelease: WorkerReleaseInfo;
-  readonly previousRelease: WorkerReleaseInfo;
-  readonly failedRelease: WorkerReleaseInfo;
-  readonly recentReleases: readonly WorkerReleaseInfo[];
+  readonly currentRelease: ReleaseInfo;
+  readonly previousRelease: ReleaseInfo;
+  readonly failedRelease: ReleaseInfo;
+  readonly recentReleases: readonly ReleaseInfo[];
+  readonly admin: AdminHealthStatus | null;
   readonly worker: WorkerHealthStatus;
 }
 
-export interface DeployWorkerOptions {
+export interface DeployReleaseOptions {
   readonly ref: string;
 }
 
-export interface RollbackWorkerOptions {
+export interface RollbackReleaseOptions {
   readonly ref?: string | undefined;
 }
 
-export class WorkerDeploymentService {
+export class ReleaseDeploymentService {
   readonly #uid = typeof process.getuid === "function" ? process.getuid() : 0;
   #operationQueue: Promise<void> = Promise.resolve();
 
@@ -64,6 +72,9 @@ export class WorkerDeploymentService {
       readonly currentReleasePath: string;
       readonly previousReleasePath: string;
       readonly failedReleasePath: string;
+      readonly adminPlistPath?: string | undefined;
+      readonly adminLaunchdLabel?: string | undefined;
+      readonly adminBaseUrl?: string | undefined;
       readonly workerPlistPath: string;
       readonly workerLaunchdLabel: string;
       readonly workerBaseUrl: string;
@@ -72,16 +83,18 @@ export class WorkerDeploymentService {
       readonly corepackPath?: string | undefined;
       readonly healthCheckTimeoutMs?: number | undefined;
       readonly healthCheckIntervalMs?: number | undefined;
+      readonly scheduleAdminRestart?: ((restart: () => Promise<void>) => void) | undefined;
       readonly exec?: typeof execCommand | undefined;
     }
   ) {}
 
-  async getStatus(): Promise<WorkerDeploymentStatus> {
-    const [currentRelease, previousRelease, failedRelease, recentReleases, worker] = await Promise.all([
+  async getStatus(): Promise<ReleaseDeploymentStatus> {
+    const [currentRelease, previousRelease, failedRelease, recentReleases, admin, worker] = await Promise.all([
       this.#readLinkedRelease(this.options.currentReleasePath),
       this.#readLinkedRelease(this.options.previousReleasePath),
       this.#readLinkedRelease(this.options.failedReleasePath),
       this.#readRecentReleases(),
+      this.#readAdminHealth(),
       this.#readWorkerHealth()
     ]);
 
@@ -93,11 +106,12 @@ export class WorkerDeploymentService {
       previousRelease,
       failedRelease,
       recentReleases,
+      admin,
       worker
     };
   }
 
-  async deploy(options: DeployWorkerOptions): Promise<WorkerDeploymentStatus> {
+  async deploy(options: DeployReleaseOptions): Promise<ReleaseDeploymentStatus> {
     return await this.#runExclusive(async () => {
       await this.#ensureRepoReady();
       const revision = await this.#resolveRevision(options.ref);
@@ -110,7 +124,7 @@ export class WorkerDeploymentService {
     });
   }
 
-  async rollback(options: RollbackWorkerOptions = {}): Promise<WorkerDeploymentStatus> {
+  async rollback(options: RollbackReleaseOptions = {}): Promise<ReleaseDeploymentStatus> {
     return await this.#runExclusive(async () => {
       const releaseRoot = options.ref
         ? await this.#resolveRollbackRelease(options.ref)
@@ -209,7 +223,7 @@ export class WorkerDeploymentService {
     return releaseRoot;
   }
 
-  async #buildReleaseMetadata(revision: string, requestedRef: string): Promise<WorkerReleaseMetadata> {
+  async #buildReleaseMetadata(revision: string, requestedRef: string): Promise<ReleaseMetadata> {
     let branch: string | null = null;
     try {
       const result = await this.#exec("git", ["-C", this.options.repoRoot, "branch", "--contains", revision, "--format=%(refname:short)"]);
@@ -229,7 +243,7 @@ export class WorkerDeploymentService {
       builtBy: process.env.USER || process.env.LOGNAME || "unknown",
       builtFromHost: process.env.HOSTNAME || "unknown",
       requestedRef,
-      stateSchemaVersion: WORKER_STATE_SCHEMA_VERSION
+      stateSchemaVersion: RELEASE_STATE_SCHEMA_VERSION
     };
   }
 
@@ -240,7 +254,7 @@ export class WorkerDeploymentService {
     await this.#exec(corepack, ["pnpm", "install", "--prod", "--frozen-lockfile"], { cwd: releaseRoot });
   }
 
-  async #writeReleaseMetadata(releaseRoot: string, metadata: WorkerReleaseMetadata): Promise<void> {
+  async #writeReleaseMetadata(releaseRoot: string, metadata: ReleaseMetadata): Promise<void> {
     await fs.writeFile(
       path.join(releaseRoot, RELEASE_METADATA_FILENAME),
       `${JSON.stringify(metadata, null, 2)}\n`,
@@ -263,6 +277,7 @@ export class WorkerDeploymentService {
       await this.#restartLaunchdWorker("worker release activation");
       await this.#assertWorkerHealthy();
       await fs.rm(this.options.failedReleasePath, { force: true, recursive: true });
+      this.#scheduleAdminRestart("admin release activation");
     } catch (error) {
       await this.#pointLink(this.options.failedReleasePath, releaseRoot);
       if (previousCurrentPath) {
@@ -286,14 +301,42 @@ export class WorkerDeploymentService {
   }
 
   async #restartLaunchdWorker(reason: string): Promise<void> {
-    if (!(await fileExists(this.options.workerPlistPath))) {
-      throw new Error(`Missing worker launchd plist: ${this.options.workerPlistPath}`);
+    await this.#restartLaunchdService({
+      reason,
+      plistPath: this.options.workerPlistPath,
+      launchdLabel: this.options.workerLaunchdLabel,
+      serviceName: "worker"
+    });
+  }
+
+  async #restartLaunchdAdmin(reason: string): Promise<void> {
+    if (!this.options.adminPlistPath || !this.options.adminLaunchdLabel) {
+      return;
+    }
+
+    await this.#restartLaunchdService({
+      reason,
+      plistPath: this.options.adminPlistPath,
+      launchdLabel: this.options.adminLaunchdLabel,
+      serviceName: "admin"
+    });
+    await this.#assertAdminHealthy();
+  }
+
+  async #restartLaunchdService(options: {
+    readonly reason: string;
+    readonly plistPath: string;
+    readonly launchdLabel: string;
+    readonly serviceName: string;
+  }): Promise<void> {
+    if (!(await fileExists(options.plistPath))) {
+      throw new Error(`Missing ${options.serviceName} launchd plist: ${options.plistPath}`);
     }
 
     const domain = `gui/${this.#uid}`;
-    await this.#exec("launchctl", ["bootout", domain, this.options.workerPlistPath]).catch(() => undefined);
-    await this.#exec("launchctl", ["bootstrap", domain, this.options.workerPlistPath]);
-    await this.#exec("launchctl", ["kickstart", "-k", `${domain}/${this.options.workerLaunchdLabel}`]);
+    await this.#exec("launchctl", ["bootout", domain, options.plistPath]).catch(() => undefined);
+    await this.#exec("launchctl", ["bootstrap", domain, options.plistPath]);
+    await this.#exec("launchctl", ["kickstart", "-k", `${domain}/${options.launchdLabel}`]);
   }
 
   async #assertWorkerHealthy(): Promise<void> {
@@ -319,8 +362,8 @@ export class WorkerDeploymentService {
   }
 
   async #readWorkerHealth(): Promise<WorkerHealthStatus> {
-    const launchdLoaded = await this.#isLaunchdLoaded();
-    const healthResponse = await this.#fetchText(`${this.options.workerBaseUrl}/`);
+    const launchdLoaded = await this.#isLaunchdLoaded(this.options.workerLaunchdLabel);
+    const healthResponse = await this.#fetchText(`${this.options.workerBaseUrl}/readyz`);
     const healthOk = Boolean(healthResponse.ok && healthResponse.body.includes("\"ok\":true"));
     const ready = await this.#checkWsReady();
     return {
@@ -332,8 +375,70 @@ export class WorkerDeploymentService {
     };
   }
 
-  async #isLaunchdLoaded(): Promise<boolean> {
-    const domain = `gui/${this.#uid}/${this.options.workerLaunchdLabel}`;
+  async #readAdminHealth(): Promise<AdminHealthStatus | null> {
+    if (!this.options.adminLaunchdLabel || !this.options.adminBaseUrl) {
+      return null;
+    }
+
+    const launchdLoaded = await this.#isLaunchdLoaded(this.options.adminLaunchdLabel);
+    const healthResponse = await this.#fetchText(`${this.options.adminBaseUrl}/readyz`);
+    return {
+      launchdLoaded,
+      healthOk: Boolean(healthResponse.ok && healthResponse.body.includes("\"ok\":true")),
+      healthBody: healthResponse.body
+    };
+  }
+
+  async #assertAdminHealthy(): Promise<void> {
+    if (!this.options.adminLaunchdLabel || !this.options.adminBaseUrl) {
+      return;
+    }
+
+    const timeoutMs = this.options.healthCheckTimeoutMs ?? 20_000;
+    const intervalMs = this.options.healthCheckIntervalMs ?? 500;
+    const deadline = Date.now() + timeoutMs;
+    let lastStatus = await this.#readAdminHealth();
+
+    while (Date.now() < deadline) {
+      if (lastStatus?.launchdLoaded && lastStatus.healthOk) {
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      lastStatus = await this.#readAdminHealth();
+    }
+
+    throw new Error(
+      `Admin failed health checks: launchdLoaded=${lastStatus?.launchdLoaded ?? false} healthOk=${lastStatus?.healthOk ?? false}`
+    );
+  }
+
+  #scheduleAdminRestart(reason: string): void {
+    if (!this.options.adminPlistPath || !this.options.adminLaunchdLabel) {
+      return;
+    }
+
+    const restart = async () => {
+      await this.#restartLaunchdAdmin(reason);
+    };
+
+    if (this.options.scheduleAdminRestart) {
+      this.options.scheduleAdminRestart(restart);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      void restart().catch((error) => {
+        logger.error("Scheduled admin restart failed", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }, 250);
+    timer.unref?.();
+  }
+
+  async #isLaunchdLoaded(label: string): Promise<boolean> {
+    const domain = `gui/${this.#uid}/${label}`;
     try {
       await this.#exec("launchctl", ["print", domain]);
       return true;
@@ -417,7 +522,7 @@ export class WorkerDeploymentService {
     }
   }
 
-  async #readRecentReleases(): Promise<readonly WorkerReleaseInfo[]> {
+  async #readRecentReleases(): Promise<readonly ReleaseInfo[]> {
     if (!(await fileExists(this.options.releasesRoot))) {
       return [];
     }
@@ -446,7 +551,7 @@ export class WorkerDeploymentService {
       .map(({ mtimeMs: _mtimeMs, ...release }) => release);
   }
 
-  async #readLinkedRelease(linkPath: string): Promise<WorkerReleaseInfo> {
+  async #readLinkedRelease(linkPath: string): Promise<ReleaseInfo> {
     const targetPath = await this.#readLinkTarget(linkPath);
     return {
       linkPath,
@@ -456,14 +561,14 @@ export class WorkerDeploymentService {
     };
   }
 
-  async #readReleaseMetadata(releaseRoot: string): Promise<WorkerReleaseMetadata | null> {
+  async #readReleaseMetadata(releaseRoot: string): Promise<ReleaseMetadata | null> {
     const metadataPath = path.join(releaseRoot, RELEASE_METADATA_FILENAME);
     if (!(await fileExists(metadataPath))) {
       return null;
     }
 
     const raw = await fs.readFile(metadataPath, "utf8");
-    return JSON.parse(raw) as WorkerReleaseMetadata;
+    return JSON.parse(raw) as ReleaseMetadata;
   }
 
   async #readLinkTarget(linkPath: string): Promise<string | null> {

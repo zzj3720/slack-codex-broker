@@ -37,6 +37,12 @@ async function handleHttpRequest(
   const method = request.method ?? "GET";
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
 
+  if (method === "GET" && url.pathname === "/readyz") {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: true, service: options.config.serviceName }));
+    return;
+  }
+
   if (
     options.bridge &&
     (await handleSlackRequest(method, url, request, response, {

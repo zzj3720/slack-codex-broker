@@ -58,8 +58,8 @@ describe("admin routes", () => {
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
-      deployWorker: async () => ({ ok: true }),
-      rollbackWorker: async () => ({ ok: true })
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
     });
 
     const unauthorized = await fetch(`${baseUrl}/admin/api/status`);
@@ -88,8 +88,8 @@ describe("admin routes", () => {
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
-      deployWorker: async () => ({ ok: true }),
-      rollbackWorker: async () => ({ ok: true })
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
     });
 
     const page = await fetch(`${baseUrl}/admin`);
@@ -129,8 +129,8 @@ describe("admin routes", () => {
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
-      deployWorker: async () => ({ ok: true }),
-      rollbackWorker: async () => ({ ok: true })
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
     });
 
     const page = await fetch(`${baseUrl}/admin`);
@@ -162,8 +162,8 @@ describe("admin routes", () => {
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
-      deployWorker: async () => ({ ok: true }),
-      rollbackWorker: async () => ({ ok: true })
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
     });
 
     const response = await fetch(`${baseUrl}/admin/api/auth-profiles`, {
@@ -199,8 +199,8 @@ describe("admin routes", () => {
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
-      deployWorker: async () => ({ ok: true }),
-      rollbackWorker: async () => ({ ok: true })
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
     });
 
     const response = await fetch(`${baseUrl}/admin/api/github-authors`, {
@@ -233,8 +233,8 @@ describe("admin routes", () => {
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
-      deployWorker: async () => ({ ok: true }),
-      rollbackWorker: async () => ({ ok: true })
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
     });
 
     const page = await fetch(`${baseUrl}/admin`);
@@ -260,11 +260,11 @@ describe("admin routes", () => {
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
-      deployWorker: async (payload: Record<string, unknown>) => {
+      deployRelease: async (payload: Record<string, unknown>) => {
         calls.push(payload);
         return { ok: true };
       },
-      rollbackWorker: async () => ({ ok: true })
+      rollbackRelease: async () => ({ ok: true })
     });
 
     const response = await fetch(`${baseUrl}/admin/api/deploy`, {
@@ -298,8 +298,8 @@ describe("admin routes", () => {
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
-      deployWorker: async () => ({ ok: true }),
-      rollbackWorker: async (payload: Record<string, unknown>) => {
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async (payload: Record<string, unknown>) => {
         calls.push(payload);
         return { ok: true };
       }

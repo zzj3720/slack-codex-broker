@@ -4,9 +4,9 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { WorkerDeploymentService } from "../src/services/deploy/worker-deployment-service.js";
+import { ReleaseDeploymentService } from "../src/services/deploy/release-deployment-service.js";
 
-describe("WorkerDeploymentService", () => {
+describe("ReleaseDeploymentService", () => {
   const tempDirs: string[] = [];
 
   afterEach(async () => {
@@ -133,7 +133,7 @@ describe("WorkerDeploymentService", () => {
       throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
     });
 
-    const service = new WorkerDeploymentService({
+    const service = new ReleaseDeploymentService({
       serviceRoot,
       repoRoot,
       releasesRoot,
@@ -277,7 +277,7 @@ describe("WorkerDeploymentService", () => {
       throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
     });
 
-    const service = new WorkerDeploymentService({
+    const service = new ReleaseDeploymentService({
       serviceRoot,
       repoRoot,
       releasesRoot,
@@ -307,5 +307,147 @@ describe("WorkerDeploymentService", () => {
     });
     expect(fetchCalls).toBeGreaterThanOrEqual(3);
     await expect(fs.readlink(failedReleasePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("activates a release for worker immediately and schedules the admin launchd restart from the same current symlink", async () => {
+    const serviceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "release-deploy-admin-"));
+    tempDirs.push(serviceRoot);
+
+    const repoRoot = path.join(serviceRoot, "repo");
+    const releasesRoot = path.join(serviceRoot, "releases");
+    const currentReleasePath = path.join(serviceRoot, "current");
+    const previousReleasePath = path.join(serviceRoot, "previous");
+    const failedReleasePath = path.join(serviceRoot, "failed");
+    const adminPlistPath = path.join(serviceRoot, "admin.plist");
+    const workerPlistPath = path.join(serviceRoot, "worker.plist");
+    await fs.mkdir(path.join(repoRoot, ".git"), { recursive: true });
+    await fs.writeFile(adminPlistPath, "<plist/>", "utf8");
+    await fs.writeFile(workerPlistPath, "<plist/>", "utf8");
+
+    let workerLoaded = false;
+    let adminLoaded = false;
+    const scheduledAdminRestarts: Array<() => Promise<void>> = [];
+    const commands: string[] = [];
+
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ ok: true })
+    })));
+    vi.stubGlobal(
+      "WebSocket",
+      class FakeWebSocket {
+        readonly #listeners = new Map<string, Array<() => void>>();
+
+        constructor() {
+          queueMicrotask(() => {
+            for (const listener of this.#listeners.get("open") ?? []) {
+              listener();
+            }
+          });
+        }
+
+        addEventListener(type: string, listener: () => void) {
+          const existing = this.#listeners.get(type) ?? [];
+          existing.push(listener);
+          this.#listeners.set(type, existing);
+        }
+
+        close() {}
+      }
+    );
+
+    const exec = vi.fn(async (command: string, args: readonly string[]) => {
+      commands.push(`${command} ${args.join(" ")}`);
+
+      if (command === "git" && args[0] === "-C" && args[2] === "fetch") {
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[0] === "-C" && args[2] === "remote") {
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[0] === "-C" && args[2] === "rev-parse" && args[3] === "main^{commit}") {
+        return { stdout: "dddddddddddddddddddddddddddddddddddddddd\n", stderr: "" };
+      }
+      if (command === "git" && args[0] === "-C" && args[2] === "branch") {
+        return { stdout: "main\n", stderr: "" };
+      }
+      if (command === "git" && args[0] === "-C" && args[2] === "worktree" && args[3] === "add") {
+        const releaseRoot = String(args[5]);
+        const revision = String(args[6]);
+        await fs.mkdir(path.join(releaseRoot, ".git"), { recursive: true });
+        await fs.writeFile(path.join(releaseRoot, ".revision"), `${revision}\n`, "utf8");
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "corepack") {
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "launchctl" && args[0] === "bootout") {
+        if (args[2] === workerPlistPath) {
+          workerLoaded = false;
+        }
+        if (args[2] === adminPlistPath) {
+          adminLoaded = false;
+        }
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "launchctl" && args[0] === "bootstrap") {
+        if (args[2] === workerPlistPath) {
+          workerLoaded = true;
+        }
+        if (args[2] === adminPlistPath) {
+          adminLoaded = true;
+        }
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "launchctl" && args[0] === "kickstart") {
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "launchctl" && args[0] === "print") {
+        const domain = String(args[1]);
+        if (domain.endsWith("/test.worker") && workerLoaded) {
+          return { stdout: "loaded\n", stderr: "" };
+        }
+        if (domain.endsWith("/test.admin") && adminLoaded) {
+          return { stdout: "loaded\n", stderr: "" };
+        }
+        throw new Error("not loaded");
+      }
+
+      throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+    });
+
+    const service = new ReleaseDeploymentService({
+      serviceRoot,
+      repoRoot,
+      releasesRoot,
+      currentReleasePath,
+      previousReleasePath,
+      failedReleasePath,
+      adminPlistPath,
+      adminLaunchdLabel: "test.admin",
+      adminBaseUrl: "http://127.0.0.1:3000",
+      workerPlistPath,
+      workerLaunchdLabel: "test.worker",
+      workerBaseUrl: "http://127.0.0.1:3001",
+      codexAppServerPort: 4590,
+      scheduleAdminRestart: (restart) => {
+        scheduledAdminRestarts.push(restart);
+      },
+      exec
+    });
+
+    const status = await service.deploy({ ref: "main" });
+    expect(status.currentRelease.targetPath).toBe(path.join(releasesRoot, "dddddddddddddddddddddddddddddddddddddddd"));
+    expect(status.worker.launchdLoaded).toBe(true);
+    expect(scheduledAdminRestarts).toHaveLength(1);
+    expect(commands.some((command) => command.includes(`${currentReleasePath}`))).toBe(false);
+
+    await scheduledAdminRestarts[0]!();
+    expect(adminLoaded).toBe(true);
+    expect(commands).toEqual(expect.arrayContaining([
+      expect.stringContaining(`launchctl bootstrap gui/`),
+      expect.stringContaining(adminPlistPath),
+      expect.stringContaining("test.admin")
+    ]));
   });
 });

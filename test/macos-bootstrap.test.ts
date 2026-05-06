@@ -100,7 +100,10 @@ describe("macOS bootstrap", () => {
 
     const adminPlist = await fs.readFile(path.join(home, "Library", "LaunchAgents", "test.admin.plist"), "utf8");
     const workerPlist = await fs.readFile(path.join(home, "Library", "LaunchAgents", "test.worker.plist"), "utf8");
+    const adminEnv = await fs.readFile(path.join(serviceRoot, "config", "admin.env"), "utf8");
     const launcherPath = path.join(currentReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
+    const adminPlistPath = path.join(home, "Library", "LaunchAgents", "test.admin.plist");
+    const workerPlistPath = path.join(home, "Library", "LaunchAgents", "test.worker.plist");
 
     expectLaunchdRuntime(adminPlist, {
       launcherPath,
@@ -112,6 +115,8 @@ describe("macOS bootstrap", () => {
       repoRootPath: currentReleasePath,
       entryPoint: "dist/src/worker-index.js"
     });
+    expect(adminEnv).toContain(`ADMIN_PLIST_PATH="${adminPlistPath}"`);
+    expect(adminEnv).toContain(`WORKER_PLIST_PATH="${workerPlistPath}"`);
   });
 });
 

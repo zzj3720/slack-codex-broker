@@ -36,6 +36,48 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "GET" && url.pathname === "/admin/api/overview") {
+    respondJson(response, 200, await options.adminService.getOverview());
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/admin/api/sessions") {
+    respondJson(response, 200, await options.adminService.listSessionSummaries());
+    return true;
+  }
+
+  if (method === "GET" && url.pathname.startsWith("/admin/api/sessions/") && url.pathname.endsWith("/timeline")) {
+    const sessionKey = decodeURIComponent(url.pathname.slice(
+      "/admin/api/sessions/".length,
+      -"/timeline".length
+    ));
+    if (!sessionKey || sessionKey.includes("/")) {
+      return false;
+    }
+
+    respondJson(response, 200, await options.adminService.getSessionTimeline(sessionKey));
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/admin/api/preflight") {
+    respondJson(response, 200, await options.adminService.getOperationPreflight({
+      operation: readString(url.searchParams.get("operation")) ?? "unknown"
+    }));
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/admin/api/operations") {
+    respondJson(response, 200, await options.adminService.listAdminOperations());
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/admin/api/audit") {
+    respondJson(response, 200, await options.adminService.listAdminAuditEvents({
+      operationId: readString(url.searchParams.get("operation_id")) ?? undefined
+    }));
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/admin/api/status") {
     respondJson(response, 200, await options.adminService.getStatus());
     return true;

@@ -144,8 +144,12 @@ describe("StateStore", () => {
 
       expect(rows).toEqual([
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 1,
           name: "initial_sqlite_state"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "admin_operations"
         }
       ]);
     } finally {

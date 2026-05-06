@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 
 import type {
+  PersistedAdminAuditEvent,
+  PersistedAdminOperation,
   JsonLike,
   PersistedBackgroundJob,
   PersistedInboundMessage,
@@ -13,7 +15,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 1;
+export const CURRENT_STATE_SCHEMA_VERSION = 2;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -128,6 +130,42 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
         CREATE INDEX IF NOT EXISTS idx_inbound_source ON inbound_messages(session_key, source, message_ts);
         CREATE INDEX IF NOT EXISTS idx_jobs_session_status ON background_jobs(session_key, status);
         CREATE INDEX IF NOT EXISTS idx_slack_events_status ON slack_events(status, created_at);
+      `);
+    }
+  },
+  {
+    version: 2,
+    name: "admin_operations",
+    up(database) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS admin_operations (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          request TEXT NOT NULL,
+          result TEXT,
+          error TEXT,
+          actor TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS admin_audit_events (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT NOT NULL UNIQUE,
+          operation_id TEXT REFERENCES admin_operations(id) ON DELETE SET NULL,
+          action TEXT NOT NULL,
+          status TEXT NOT NULL,
+          detail TEXT,
+          actor TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_admin_operations_updated ON admin_operations(updated_at);
+        CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_events(sequence);
+        CREATE INDEX IF NOT EXISTS idx_admin_audit_operation ON admin_audit_events(operation_id, sequence);
       `);
     }
   }
@@ -461,6 +499,75 @@ export class StateStore {
     });
   }
 
+  listAdminOperations(limit = 50): PersistedAdminOperation[] {
+    return this.#databaseRequired()
+      .prepare(`
+        SELECT * FROM admin_operations
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT ?
+      `)
+      .all(limit)
+      .map((row) => this.#rowToAdminOperation(row as SqlRow));
+  }
+
+  getAdminOperation(id: string): PersistedAdminOperation | undefined {
+    const row = this.#databaseRequired()
+      .prepare("SELECT * FROM admin_operations WHERE id = ?")
+      .get(id) as SqlRow | undefined;
+    return row ? this.#rowToAdminOperation(row) : undefined;
+  }
+
+  async upsertAdminOperation(record: PersistedAdminOperation): Promise<void> {
+    const normalized = this.#normalizeAdminOperation(record);
+    this.#transaction(() => {
+      this.#upsertAdminOperation(normalized);
+    });
+  }
+
+  listAdminAuditEvents(options?: {
+    readonly operationId?: string | undefined;
+    readonly limit?: number | undefined;
+  }): PersistedAdminAuditEvent[] {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (options?.operationId) {
+      where.push("operation_id = ?");
+      params.push(options.operationId);
+    }
+    params.push(options?.limit ?? 50);
+
+    const sql = [
+      "SELECT * FROM admin_audit_events",
+      where.length > 0 ? `WHERE ${where.join(" AND ")}` : "",
+      "ORDER BY sequence DESC",
+      "LIMIT ?"
+    ].filter(Boolean).join(" ");
+
+    return this.#databaseRequired()
+      .prepare(sql)
+      .all(...params)
+      .map((row) => this.#rowToAdminAuditEvent(row as SqlRow));
+  }
+
+  async appendAdminAuditEvent(record: PersistedAdminAuditEvent): Promise<void> {
+    const normalized = this.#normalizeAdminAuditEvent(record);
+    this.#transaction(() => {
+      this.#databaseRequired().prepare(`
+        INSERT INTO admin_audit_events (
+          id, operation_id, action, status, detail, actor, created_at
+        ) VALUES (${placeholders(7)})
+      `).run(
+        normalized.id,
+        normalized.operationId ?? null,
+        normalized.action,
+        normalized.status,
+        jsonOrNull(normalized.detail),
+        normalized.actor ?? null,
+        normalized.createdAt
+      );
+    });
+  }
+
   #openDatabase(): void {
     if (this.#database) {
       return;
@@ -679,6 +786,38 @@ export class StateStore {
     );
   }
 
+  #upsertAdminOperation(record: PersistedAdminOperation): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO admin_operations (
+        id, kind, status, request, result, error, actor,
+        created_at, updated_at, started_at, completed_at
+      ) VALUES (${placeholders(11)})
+      ON CONFLICT(id) DO UPDATE SET
+        kind = excluded.kind,
+        status = excluded.status,
+        request = excluded.request,
+        result = excluded.result,
+        error = excluded.error,
+        actor = excluded.actor,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        started_at = excluded.started_at,
+        completed_at = excluded.completed_at
+    `).run(
+      record.id,
+      record.kind,
+      record.status,
+      JSON.stringify(record.request),
+      jsonOrNull(record.result),
+      record.error ?? null,
+      record.actor ?? null,
+      record.createdAt,
+      record.updatedAt,
+      record.startedAt ?? null,
+      record.completedAt ?? null
+    );
+  }
+
   #markProcessedEvent(eventId: string): void {
     this.#databaseRequired()
       .prepare("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)")
@@ -798,6 +937,34 @@ export class StateStore {
     })!;
   }
 
+  #rowToAdminOperation(row: SqlRow): PersistedAdminOperation {
+    return this.#normalizeAdminOperation({
+      id: stringColumn(row, "id"),
+      kind: stringColumn(row, "kind") as PersistedAdminOperation["kind"],
+      status: stringColumn(row, "status") as PersistedAdminOperation["status"],
+      request: readJsonColumn<JsonLike>(row, "request", null),
+      result: readJsonColumn<JsonLike | undefined>(row, "result", undefined),
+      error: optionalStringColumn(row, "error"),
+      actor: optionalStringColumn(row, "actor"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at"),
+      startedAt: optionalStringColumn(row, "started_at"),
+      completedAt: optionalStringColumn(row, "completed_at")
+    });
+  }
+
+  #rowToAdminAuditEvent(row: SqlRow): PersistedAdminAuditEvent {
+    return this.#normalizeAdminAuditEvent({
+      id: stringColumn(row, "id"),
+      operationId: optionalStringColumn(row, "operation_id"),
+      action: stringColumn(row, "action"),
+      status: stringColumn(row, "status") as PersistedAdminAuditEvent["status"],
+      detail: readJsonColumn<JsonLike | undefined>(row, "detail", undefined),
+      actor: optionalStringColumn(row, "actor"),
+      createdAt: stringColumn(row, "created_at")
+    });
+  }
+
   #normalizeSession(session: Partial<SlackSessionRecord>): SlackSessionRecord {
     const workspacePath = session.workspacePath
       ? String(session.workspacePath)
@@ -907,6 +1074,42 @@ export class StateStore {
       lastEventAt: raw.lastEventAt,
       lastEventKind: raw.lastEventKind,
       lastEventSummary: raw.lastEventSummary
+    };
+  }
+
+  #normalizeAdminOperation(raw: Partial<PersistedAdminOperation>): PersistedAdminOperation {
+    if (!raw.id || !raw.kind || !raw.status || !raw.createdAt) {
+      throw new Error(`Invalid admin operation: ${raw.id ?? "unknown"}`);
+    }
+
+    return {
+      id: String(raw.id),
+      kind: raw.kind,
+      status: raw.status,
+      request: raw.request ?? null,
+      result: raw.result,
+      error: raw.error,
+      actor: raw.actor,
+      createdAt: String(raw.createdAt),
+      updatedAt: String(raw.updatedAt ?? raw.createdAt),
+      startedAt: raw.startedAt,
+      completedAt: raw.completedAt
+    };
+  }
+
+  #normalizeAdminAuditEvent(raw: Partial<PersistedAdminAuditEvent>): PersistedAdminAuditEvent {
+    if (!raw.id || !raw.action || !raw.status || !raw.createdAt) {
+      throw new Error(`Invalid admin audit event: ${raw.id ?? "unknown"}`);
+    }
+
+    return {
+      id: String(raw.id),
+      operationId: raw.operationId,
+      action: String(raw.action),
+      status: raw.status,
+      detail: raw.detail,
+      actor: raw.actor,
+      createdAt: String(raw.createdAt)
     };
   }
 

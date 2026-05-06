@@ -66,6 +66,48 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "POST" && url.pathname === "/admin/api/auth-profiles/oauth/start") {
+    const body = await readAdminBody(request, response);
+    if (!body) {
+      return true;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.startAuthProfileOAuth({
+        name: readString(body.name) ?? undefined
+      })
+    );
+    return true;
+  }
+
+  if (method === "GET" && url.pathname.startsWith("/admin/api/auth-profiles/oauth/")) {
+    const attemptId = decodeURIComponent(url.pathname.slice("/admin/api/auth-profiles/oauth/".length));
+    if (!attemptId || attemptId.includes("/")) {
+      return false;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.getAuthProfileOAuthAttempt({
+        id: attemptId
+      })
+    );
+    return true;
+  }
+
+  if (method === "POST" && url.pathname.startsWith("/admin/api/auth-profiles/oauth/") && url.pathname.endsWith("/cancel")) {
+    const attemptId = decodeURIComponent(url.pathname.slice("/admin/api/auth-profiles/oauth/".length, -"/cancel".length));
+    if (!attemptId || attemptId.includes("/")) {
+      return false;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.cancelAuthProfileOAuthAttempt({
+        id: attemptId
+      })
+    );
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/admin/api/github-authors") {
     const body = await readAdminBody(request, response);
     if (!body) {
@@ -523,7 +565,10 @@ function renderAdminPage(options: {
         <section>
           <div class="section-head">
             <div class="section-title">Auth Profiles</div>
-            <button id="open-add-profile-dialog">ADD</button>
+            <div style="display:flex; gap:8px;">
+              <button id="open-oauth-profile-dialog" class="secondary">OAUTH</button>
+              <button id="open-add-profile-dialog">ADD</button>
+            </div>
           </div>
           <div id="auth-profiles-panel" style="padding:12px; display:grid; gap:8px;"></div>
           <div id="replace-status" style="padding:8px; font-size:10px;"></div>
@@ -568,6 +613,7 @@ function renderAdminPage(options: {
 
   <dialog id="add-profile-dialog"><div class="modal-content">
     <div class="section-title">Add auth profile</div>
+    <input id="profile-auth-name" type="text" placeholder="OPTIONAL PROFILE NAME" />
     <input id="profile-auth-file" type="file" accept="application/json,.json" />
     <textarea id="profile-auth-text" placeholder="PASTE AUTH.JSON HERE..."></textarea>
     <div style="display:flex; gap:8px; justify-content:flex-end;">
@@ -575,6 +621,21 @@ function renderAdminPage(options: {
       <button id="submit-add-profile-dialog">SAVE</button>
     </div>
     <div id="add-profile-status" style="font-size:10px;"></div>
+  </div></dialog>
+
+  <dialog id="oauth-profile-dialog"><div class="modal-content">
+    <div class="section-title">OAuth device-code auth profile</div>
+    <input id="oauth-profile-name" type="text" placeholder="OPTIONAL PROFILE NAME" />
+    <div style="color:var(--muted); font-size:11px;">
+      Starts an isolated temporary Codex app-server on this VM, shows a device code, then imports the generated auth.json as a profile. It does not touch the worker CODEX_HOME.
+    </div>
+    <div id="oauth-profile-result" style="display:grid; gap:8px; font-size:12px;"></div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button id="close-oauth-profile-dialog" class="secondary">CLOSE</button>
+      <button id="cancel-oauth-profile-dialog" class="danger" disabled>CANCEL LOGIN</button>
+      <button id="submit-oauth-profile-dialog">START LOGIN</button>
+    </div>
+    <div id="oauth-profile-status" style="font-size:10px;"></div>
   </div></dialog>
 
   <dialog id="github-author-dialog"><div class="modal-content">
@@ -598,6 +659,7 @@ function renderAdminPage(options: {
     const sessionFilter = document.getElementById("session-filter");
     const githubAuthorSearch = document.getElementById("github-author-search");
     const addProfileDialog = document.getElementById("add-profile-dialog");
+    const oauthProfileDialog = document.getElementById("oauth-profile-dialog");
     const githubAuthorDialog = document.getElementById("github-author-dialog");
     const deployRefInput = document.getElementById("deploy-ref-input");
     const uiStateStorageKey = "admin-ui-state:" + window.location.pathname;
@@ -605,6 +667,8 @@ function renderAdminPage(options: {
     let latestStatus = null;
     let uiState = loadUiState();
     let uiStatePersistTimer = null;
+    let oauthProfileAttemptId = null;
+    let oauthProfilePollTimer = null;
 
     function esc(value) {
       return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
@@ -1138,6 +1202,7 @@ function renderAdminPage(options: {
 
     async function submitAddProfile() {
       const status = document.getElementById("add-profile-status");
+      const nameInput = document.getElementById("profile-auth-name");
       const fileInput = document.getElementById("profile-auth-file");
       const textArea = document.getElementById("profile-auth-text");
       const submitButton = document.getElementById("submit-add-profile-dialog");
@@ -1152,6 +1217,7 @@ function renderAdminPage(options: {
           method: "POST",
           headers: authHeaders({ "content-type": "application/json" }),
           body: JSON.stringify({
+            name: nameInput.value.trim() || undefined,
             auth_json_content: content
           })
         });
@@ -1160,6 +1226,7 @@ function renderAdminPage(options: {
         replaceStatus.innerHTML = '<span style="color:var(--good)">PROFILE SAVED</span>';
         status.innerHTML = '<span style="color:var(--good)">PROFILE SAVED</span>';
         addProfileDialog.close();
+        nameInput.value = "";
         fileInput.value = "";
         textArea.value = "";
       } catch (error) {
@@ -1167,6 +1234,128 @@ function renderAdminPage(options: {
         status.innerHTML = '<span style="color:var(--danger)">' + esc(message) + "</span>";
       } finally {
         submitButton.disabled = false;
+      }
+    }
+
+    function clearOAuthProfilePoll() {
+      if (oauthProfilePollTimer == null) {
+        return;
+      }
+      window.clearInterval(oauthProfilePollTimer);
+      oauthProfilePollTimer = null;
+    }
+
+    function renderOAuthProfileAttempt(attempt) {
+      const result = document.getElementById("oauth-profile-result");
+      const status = document.getElementById("oauth-profile-status");
+      const cancelButton = document.getElementById("cancel-oauth-profile-dialog");
+      const submitButton = document.getElementById("submit-oauth-profile-dialog");
+      oauthProfileAttemptId = attempt?.id || oauthProfileAttemptId;
+      const state = attempt?.status || "idle";
+      cancelButton.disabled = !(state === "starting" || state === "waiting");
+      submitButton.disabled = state === "starting" || state === "waiting";
+
+      if (!attempt) {
+        result.innerHTML = "";
+        status.textContent = "";
+        return;
+      }
+
+      const code = attempt.userCode
+        ? '<div class="profile-row">' +
+            '<div class="summary-label">USER CODE</div>' +
+            '<div style="font-size:24px; color:var(--accent); letter-spacing:2px;">' + esc(attempt.userCode) + "</div>" +
+          "</div>"
+        : "";
+      const link = attempt.verificationUrl
+        ? '<div><a href="' + esc(attempt.verificationUrl) + '" target="_blank" rel="noopener" style="color:var(--accent);">' + esc(attempt.verificationUrl) + "</a></div>"
+        : "";
+      result.innerHTML =
+        '<div>' + renderBadge(state.toUpperCase(), statusTone(state)) + "</div>" +
+        link +
+        code +
+        (attempt.error ? '<div style="color:var(--danger)">' + esc(attempt.error) + "</div>" : "");
+
+      if (state === "waiting") {
+        status.innerHTML = "Open the link on your own machine, enter the code, and finish ChatGPT login.";
+      } else if (state === "succeeded") {
+        status.innerHTML = '<span style="color:var(--good)">PROFILE IMPORTED</span>';
+      } else if (state === "failed" || state === "cancelled") {
+        status.innerHTML = '<span style="color:var(--danger)">' + esc(state.toUpperCase()) + "</span>";
+      } else {
+        status.textContent = state.toUpperCase();
+      }
+    }
+
+    async function startOAuthProfileLogin() {
+      const nameInput = document.getElementById("oauth-profile-name");
+      const status = document.getElementById("oauth-profile-status");
+      const submitButton = document.getElementById("submit-oauth-profile-dialog");
+      status.textContent = "STARTING DEVICE-CODE LOGIN...";
+      submitButton.disabled = true;
+      clearOAuthProfilePoll();
+      try {
+        const response = await fetch("/admin/api/auth-profiles/oauth/start", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            name: nameInput.value.trim() || undefined
+          })
+        });
+        const payload = await parseResponse(response);
+        renderOAuthProfileAttempt(payload.attempt);
+        startOAuthProfilePoll(payload.attempt.id);
+      } catch (error) {
+        status.innerHTML = '<span style="color:var(--danger)">' + esc(error instanceof Error ? error.message : String(error)) + "</span>";
+      } finally {
+        if (!oauthProfileAttemptId) {
+          submitButton.disabled = false;
+        }
+      }
+    }
+
+    function startOAuthProfilePoll(attemptId) {
+      oauthProfileAttemptId = attemptId;
+      clearOAuthProfilePoll();
+      oauthProfilePollTimer = window.setInterval(async () => {
+        try {
+          const response = await fetch("/admin/api/auth-profiles/oauth/" + encodeURIComponent(attemptId), {
+            headers: authHeaders()
+          });
+          const payload = await parseResponse(response);
+          renderOAuthProfileAttempt(payload.attempt);
+          if (["succeeded", "failed", "cancelled"].includes(payload.attempt?.status)) {
+            clearOAuthProfilePoll();
+            if (payload.attempt.status === "succeeded") {
+              await refresh();
+              replaceStatus.innerHTML = '<span style="color:var(--good)">OAUTH PROFILE IMPORTED</span>';
+            }
+          }
+        } catch (error) {
+          clearOAuthProfilePoll();
+          document.getElementById("oauth-profile-status").innerHTML =
+            '<span style="color:var(--danger)">' + esc(error instanceof Error ? error.message : String(error)) + "</span>";
+        }
+      }, 2000);
+    }
+
+    async function cancelOAuthProfileLogin() {
+      if (!oauthProfileAttemptId) {
+        return;
+      }
+      const status = document.getElementById("oauth-profile-status");
+      status.textContent = "CANCELLING...";
+      try {
+        const response = await fetch("/admin/api/auth-profiles/oauth/" + encodeURIComponent(oauthProfileAttemptId) + "/cancel", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: "{}"
+        });
+        const payload = await parseResponse(response);
+        renderOAuthProfileAttempt(payload.attempt);
+        clearOAuthProfilePoll();
+      } catch (error) {
+        status.innerHTML = '<span style="color:var(--danger)">' + esc(error instanceof Error ? error.message : String(error)) + "</span>";
       }
     }
 
@@ -1303,6 +1492,16 @@ function renderAdminPage(options: {
       document.getElementById("add-profile-status").textContent = "";
       addProfileDialog.showModal();
     };
+    document.getElementById("open-oauth-profile-dialog").onclick = () => {
+      document.getElementById("oauth-profile-status").textContent = "";
+      document.getElementById("oauth-profile-result").innerHTML = "";
+      document.getElementById("oauth-profile-name").value = "";
+      document.getElementById("cancel-oauth-profile-dialog").disabled = true;
+      document.getElementById("submit-oauth-profile-dialog").disabled = false;
+      oauthProfileAttemptId = null;
+      clearOAuthProfilePoll();
+      oauthProfileDialog.showModal();
+    };
     document.getElementById("open-github-author-dialog").onclick = () => {
       document.getElementById("github-author-dialog-status").textContent = "";
       document.getElementById("github-author-slack-user-id").value = "";
@@ -1312,12 +1511,20 @@ function renderAdminPage(options: {
     document.getElementById("deploy-release-button").onclick = deployRelease;
     document.getElementById("rollback-release-button").onclick = rollbackRelease;
     document.getElementById("close-add-profile-dialog").onclick = () => addProfileDialog.close();
+    document.getElementById("close-oauth-profile-dialog").onclick = () => oauthProfileDialog.close();
     document.getElementById("close-github-author-dialog").onclick = () => githubAuthorDialog.close();
     document.getElementById("submit-add-profile-dialog").onclick = submitAddProfile;
+    document.getElementById("submit-oauth-profile-dialog").onclick = startOAuthProfileLogin;
+    document.getElementById("cancel-oauth-profile-dialog").onclick = cancelOAuthProfileLogin;
     document.getElementById("submit-github-author-dialog").onclick = submitGitHubAuthorMapping;
     addProfileDialog.onclick = (event) => {
       if (event.target === addProfileDialog) {
         addProfileDialog.close();
+      }
+    };
+    oauthProfileDialog.onclick = (event) => {
+      if (event.target === oauthProfileDialog) {
+        oauthProfileDialog.close();
       }
     };
     githubAuthorDialog.onclick = (event) => {

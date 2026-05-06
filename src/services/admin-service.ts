@@ -1,12 +1,17 @@
 import fs from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import type { AppConfig } from "../config.js";
 import type { PersistedBackgroundJob, PersistedInboundMessage, SlackSessionRecord } from "../types.js";
 import type { SessionManager } from "./session-manager.js";
-import type { AuthProfileService } from "./auth-profile-service.js";
+import type { AuthProfileService, AuthProfileSummary } from "./auth-profile-service.js";
 import type { GitHubAuthorMappingService } from "./github-author-mapping-service.js";
 import type { RuntimeControl } from "./runtime-control.js";
+import { logger } from "../logger.js";
+import { AppServerClient } from "./codex/app-server-client.js";
+import { AppServerProcess } from "./codex/app-server-process.js";
 import type {
   DeployWorkerOptions,
   RollbackWorkerOptions,
@@ -28,7 +33,39 @@ interface FileInfo {
   readonly mtime?: string | undefined;
 }
 
+type AuthProfileOAuthStatus =
+  | "starting"
+  | "waiting"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+interface AuthProfileOAuthAttempt {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly rootPath: string;
+  readonly codexHome: string;
+  readonly port: number;
+  readonly profileName?: string | undefined;
+  process?: AppServerProcess | undefined;
+  client?: AppServerClient | undefined;
+  loginId?: string | undefined;
+  verificationUrl?: string | undefined;
+  userCode?: string | undefined;
+  status: AuthProfileOAuthStatus;
+  updatedAt: string;
+  error?: string | undefined;
+  profile?: AuthProfileSummary | undefined;
+  notificationListener?: ((method: string, params: Record<string, any> | undefined) => void) | undefined;
+  timeout?: NodeJS.Timeout | undefined;
+}
+
+const AUTH_PROFILE_OAUTH_TIMEOUT_MS = 10 * 60 * 1000;
+const AUTH_PROFILE_OAUTH_ATTEMPT_RETENTION_MS = 30 * 60 * 1000;
+
 export class AdminService {
+  readonly #authProfileOAuthAttempts = new Map<string, AuthProfileOAuthAttempt>();
+
   constructor(
     private readonly options: {
       readonly config: AppConfig;
@@ -117,6 +154,7 @@ export class AdminService {
         configToml: await this.#fileInfo(path.join(this.options.config.codexHome, "config.toml"))
       },
       authProfiles,
+      authProfileOAuthAttempts: this.#listAuthProfileOAuthAttempts(),
       githubAuthorMappings: {
         count: this.options.githubAuthorMappings.listMappings().length,
         mappings: this.options.githubAuthorMappings.listMappings()
@@ -150,6 +188,114 @@ export class AdminService {
       ok: true,
       profile,
       status: await this.getStatus()
+    };
+  }
+
+  async startAuthProfileOAuth(options: {
+    readonly name?: string | undefined;
+  }): Promise<Record<string, unknown>> {
+    await this.#pruneAuthProfileOAuthAttempts();
+    const id = randomUUID();
+    const createdAt = new Date().toISOString();
+    const rootPath = path.join(path.dirname(this.options.config.stateDir), "auth-profile-oauth", id);
+    const codexHome = path.join(rootPath, "codex-home");
+    const port = await findFreeTcpPort();
+    const process = new AppServerProcess({
+      brokerHttpBaseUrl: this.options.config.brokerHttpBaseUrl,
+      codexHome,
+      hostCodexHomePath: this.options.config.codexHostHomePath,
+      hostGeminiHomePath: this.options.config.geminiHostHomePath,
+      port,
+      disabledMcpServers: this.options.config.codexDisabledMcpServers,
+      tempadLinkServiceUrl: this.options.config.tempadLinkServiceUrl,
+      geminiHttpProxy: this.options.config.geminiHttpProxy,
+      geminiHttpsProxy: this.options.config.geminiHttpsProxy,
+      geminiAllProxy: this.options.config.geminiAllProxy,
+      bootstrapAuth: false
+    });
+    const client = new AppServerClient({
+      url: process.url,
+      serviceName: `${this.options.config.serviceName}-admin-oauth`,
+      brokerHttpBaseUrl: this.options.config.brokerHttpBaseUrl,
+      reposRoot: this.options.config.reposRoot,
+      personalMemoryFilePath: path.join(codexHome, "AGENT.md")
+    });
+    const attempt: AuthProfileOAuthAttempt = {
+      id,
+      createdAt,
+      rootPath,
+      codexHome,
+      port,
+      profileName: options.name,
+      process,
+      client,
+      status: "starting",
+      updatedAt: createdAt
+    };
+    this.#authProfileOAuthAttempts.set(id, attempt);
+
+    try {
+      await process.start();
+      await client.connect();
+      const login = await client.loginWithChatGptDeviceCode();
+      attempt.loginId = login.loginId;
+      attempt.verificationUrl = login.verificationUrl;
+      attempt.userCode = login.userCode;
+      this.#setAuthProfileOAuthStatus(attempt, "waiting");
+      this.#watchAuthProfileOAuthAttempt(attempt);
+      return {
+        ok: true,
+        attempt: this.#serializeAuthProfileOAuthAttempt(attempt)
+      };
+    } catch (error) {
+      this.#setAuthProfileOAuthStatus(attempt, "failed", error);
+      await this.#cleanupAuthProfileOAuthRuntime(attempt, {
+        removeFiles: true
+      });
+      throw error;
+    }
+  }
+
+  async getAuthProfileOAuthAttempt(options: {
+    readonly id: string;
+  }): Promise<Record<string, unknown>> {
+    const attempt = this.#authProfileOAuthAttempts.get(options.id);
+    if (!attempt) {
+      throw new Error(`Auth OAuth attempt not found: ${options.id}`);
+    }
+
+    return {
+      ok: true,
+      attempt: this.#serializeAuthProfileOAuthAttempt(attempt)
+    };
+  }
+
+  async cancelAuthProfileOAuthAttempt(options: {
+    readonly id: string;
+  }): Promise<Record<string, unknown>> {
+    const attempt = this.#authProfileOAuthAttempts.get(options.id);
+    if (!attempt) {
+      throw new Error(`Auth OAuth attempt not found: ${options.id}`);
+    }
+
+    if (attempt.status === "starting" || attempt.status === "waiting") {
+      if (attempt.client && attempt.loginId) {
+        await attempt.client.cancelLogin(attempt.loginId).catch((error) => {
+          logger.warn("Failed to cancel admin auth profile OAuth login", {
+            attemptId: attempt.id,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+      }
+      this.#setAuthProfileOAuthStatus(attempt, "cancelled");
+      await this.#cleanupAuthProfileOAuthRuntime(attempt, {
+        removeFiles: true
+      });
+    }
+
+    return {
+      ok: true,
+      attempt: this.#serializeAuthProfileOAuthAttempt(attempt)
     };
   }
 
@@ -242,6 +388,171 @@ export class AdminService {
       slackUserId: options.slackUserId,
       status: await this.getStatus()
     };
+  }
+
+  #watchAuthProfileOAuthAttempt(attempt: AuthProfileOAuthAttempt): void {
+    const listener = (method: string, params: Record<string, any> | undefined) => {
+      if (method !== "account/login/completed") {
+        return;
+      }
+
+      const loginId = readUnknownString(params?.loginId) ?? readUnknownString(params?.login_id);
+      if (attempt.loginId && loginId && loginId !== attempt.loginId) {
+        return;
+      }
+
+      void this.#completeAuthProfileOAuthAttempt(attempt, params ?? {});
+    };
+    attempt.notificationListener = listener;
+    attempt.client?.on("notification", listener);
+    attempt.timeout = setTimeout(() => {
+      void this.#failAuthProfileOAuthAttempt(attempt, new Error("ChatGPT device-code login timed out"));
+    }, AUTH_PROFILE_OAUTH_TIMEOUT_MS);
+  }
+
+  async #completeAuthProfileOAuthAttempt(
+    attempt: AuthProfileOAuthAttempt,
+    params: Record<string, unknown>
+  ): Promise<void> {
+    if (attempt.status !== "waiting" && attempt.status !== "starting") {
+      return;
+    }
+
+    const success = params.success === true;
+    if (!success) {
+      await this.#failAuthProfileOAuthAttempt(
+        attempt,
+        new Error(readUnknownString(params.error) ?? "ChatGPT device-code login failed")
+      );
+      return;
+    }
+
+    try {
+      const authJsonPath = path.join(attempt.codexHome, "auth.json");
+      const authJsonContent = await fs.readFile(authJsonPath, "utf8");
+      const profile = await this.options.authProfiles.addProfile({
+        name: attempt.profileName,
+        authJsonContent
+      });
+      attempt.profile = profile;
+      this.#setAuthProfileOAuthStatus(attempt, "succeeded");
+      await this.#cleanupAuthProfileOAuthRuntime(attempt, {
+        removeFiles: true
+      });
+    } catch (error) {
+      await this.#failAuthProfileOAuthAttempt(attempt, error);
+    }
+  }
+
+  async #failAuthProfileOAuthAttempt(
+    attempt: AuthProfileOAuthAttempt,
+    error: unknown
+  ): Promise<void> {
+    if (attempt.status !== "starting" && attempt.status !== "waiting") {
+      return;
+    }
+
+    this.#setAuthProfileOAuthStatus(attempt, "failed", error);
+    await this.#cleanupAuthProfileOAuthRuntime(attempt, {
+      removeFiles: true
+    });
+  }
+
+  #setAuthProfileOAuthStatus(
+    attempt: AuthProfileOAuthAttempt,
+    status: AuthProfileOAuthStatus,
+    error?: unknown
+  ): void {
+    attempt.status = status;
+    attempt.updatedAt = new Date().toISOString();
+    if (error !== undefined) {
+      attempt.error = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async #cleanupAuthProfileOAuthRuntime(
+    attempt: AuthProfileOAuthAttempt,
+    options: {
+      readonly removeFiles: boolean;
+    }
+  ): Promise<void> {
+    if (attempt.timeout) {
+      clearTimeout(attempt.timeout);
+      attempt.timeout = undefined;
+    }
+
+    if (attempt.client && attempt.notificationListener) {
+      attempt.client.off("notification", attempt.notificationListener);
+      attempt.notificationListener = undefined;
+    }
+
+    const client = attempt.client;
+    const process = attempt.process;
+    attempt.client = undefined;
+    attempt.process = undefined;
+
+    await client?.close().catch((error) => {
+      logger.warn("Failed to close admin auth profile OAuth app-server client", {
+        attemptId: attempt.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+    await process?.stop().catch((error) => {
+      logger.warn("Failed to stop admin auth profile OAuth app-server process", {
+        attemptId: attempt.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+
+    if (options.removeFiles) {
+      await fs.rm(attempt.rootPath, {
+        recursive: true,
+        force: true
+      }).catch((error) => {
+        logger.warn("Failed to remove admin auth profile OAuth temp directory", {
+          attemptId: attempt.id,
+          rootPath: attempt.rootPath,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
+  }
+
+  #serializeAuthProfileOAuthAttempt(attempt: AuthProfileOAuthAttempt): Record<string, unknown> {
+    return {
+      id: attempt.id,
+      status: attempt.status,
+      profileName: attempt.profileName ?? null,
+      loginId: attempt.loginId ?? null,
+      verificationUrl: attempt.verificationUrl ?? null,
+      userCode: attempt.userCode ?? null,
+      error: attempt.error ?? null,
+      profile: attempt.profile ?? null,
+      createdAt: attempt.createdAt,
+      updatedAt: attempt.updatedAt,
+      port: attempt.port
+    };
+  }
+
+  #listAuthProfileOAuthAttempts(): readonly Record<string, unknown>[] {
+    return [...this.#authProfileOAuthAttempts.values()]
+      .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))
+      .map((attempt) => this.#serializeAuthProfileOAuthAttempt(attempt));
+  }
+
+  async #pruneAuthProfileOAuthAttempts(): Promise<void> {
+    const cutoff = Date.now() - AUTH_PROFILE_OAUTH_ATTEMPT_RETENTION_MS;
+    for (const attempt of this.#authProfileOAuthAttempts.values()) {
+      const updatedAtMs = Date.parse(attempt.updatedAt);
+      if (
+        Number.isFinite(updatedAtMs) &&
+        updatedAtMs < cutoff &&
+        attempt.status !== "starting" &&
+        attempt.status !== "waiting"
+      ) {
+        this.#authProfileOAuthAttempts.delete(attempt.id);
+      }
+    }
   }
 
   async #readAccountSummary(): Promise<SerializedAccountStatus> {
@@ -417,4 +728,37 @@ function isHumanInboundMessage(message: PersistedInboundMessage): boolean {
     message.source === "direct_message" ||
     message.source === "thread_reply"
   );
+}
+
+async function findFreeTcpPort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : null;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        if (!port) {
+          reject(new Error("Failed to allocate a temporary TCP port"));
+          return;
+        }
+
+        resolve(port);
+      });
+    });
+  });
+}
+
+function readUnknownString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }

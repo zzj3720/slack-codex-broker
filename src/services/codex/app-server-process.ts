@@ -26,6 +26,7 @@ export class AppServerProcess {
   readonly #geminiHttpProxy: string | undefined;
   readonly #geminiHttpsProxy: string | undefined;
   readonly #geminiAllProxy: string | undefined;
+  readonly #bootstrapAuth: boolean;
   #child: ChildProcessByStdio<null, Readable, Readable> | undefined;
   #homePrepared = false;
 
@@ -42,6 +43,7 @@ export class AppServerProcess {
     readonly geminiHttpProxy?: string | undefined;
     readonly geminiHttpsProxy?: string | undefined;
     readonly geminiAllProxy?: string | undefined;
+    readonly bootstrapAuth?: boolean | undefined;
   }) {
     this.#brokerHttpBaseUrl = options.brokerHttpBaseUrl;
     this.#codexHome = options.codexHome;
@@ -56,6 +58,7 @@ export class AppServerProcess {
     this.#geminiHttpProxy = options.geminiHttpProxy;
     this.#geminiHttpsProxy = options.geminiHttpsProxy;
     this.#geminiAllProxy = options.geminiAllProxy;
+    this.#bootstrapAuth = options.bootstrapAuth ?? true;
   }
 
   get url(): string {
@@ -68,7 +71,9 @@ export class AppServerProcess {
     }
 
     await this.#prepareCodexHome();
-    await this.#bootstrapAuth();
+    if (this.#bootstrapAuth) {
+      await this.#bootstrapAuthFromExisting();
+    }
     await this.#disableConfiguredMcpServers();
     await this.#ensureGitCommitHook();
     const tempadLinkServiceUrl = await this.#resolveTempadLinkServiceUrl();
@@ -182,7 +187,7 @@ export class AppServerProcess {
     this.#homePrepared = true;
   }
 
-  async #bootstrapAuth(): Promise<void> {
+  async #bootstrapAuthFromExisting(): Promise<void> {
     const authTarget = path.join(this.#codexHome, "auth.json");
 
     if (await fileExists(authTarget)) {

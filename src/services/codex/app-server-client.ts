@@ -63,6 +63,12 @@ export interface ChatGptAuthTokensProvider {
   readonly refresh: (context: ChatGptAuthTokensRefreshContext) => Promise<ChatGptAuthTokenSet>;
 }
 
+export interface ChatGptDeviceCodeLogin {
+  readonly loginId: string;
+  readonly verificationUrl: string;
+  readonly userCode: string;
+}
+
 interface BufferedTurnEvents {
   text: string;
   terminalState: "completed" | "aborted" | null;
@@ -263,6 +269,31 @@ export class AppServerClient extends EventEmitter {
       chatgptAccountId: tokens.chatgptAccountId,
       chatgptPlanType: tokens.chatgptPlanType
     });
+  }
+
+  async loginWithChatGptDeviceCode(): Promise<ChatGptDeviceCodeLogin> {
+    const login = await this.request("account/login/start", {
+      type: "chatgptDeviceCode"
+    }) as Record<string, unknown>;
+    const loginId = readResponseString(login, "loginId", "login_id");
+    const verificationUrl = readResponseString(login, "verificationUrl", "verification_url");
+    const userCode = readResponseString(login, "userCode", "user_code");
+    if (!loginId || !verificationUrl || !userCode) {
+      throw new Error("Codex app-server returned an invalid ChatGPT device-code login response");
+    }
+
+    return {
+      loginId,
+      verificationUrl,
+      userCode
+    };
+  }
+
+  async cancelLogin(loginId: string): Promise<string | null> {
+    const result = await this.request("account/login/cancel", {
+      loginId
+    }) as Record<string, unknown>;
+    return readResponseString(result, "status");
   }
 
   async readAccountSummary(refreshToken = false): Promise<AppServerAccountSummary> {
@@ -982,6 +1013,19 @@ function normalizeCreditsSnapshot(credits: RawCreditsSnapshot | null | undefined
     unlimited: Boolean(credits.unlimited),
     balance: credits.balance ?? null
   };
+}
+
+function readResponseString(
+  response: Record<string, unknown>,
+  ...keys: readonly string[]
+): string | null {
+  for (const key of keys) {
+    const value = response[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
 }
 
 function normalizeGeneratedImageArtifact(

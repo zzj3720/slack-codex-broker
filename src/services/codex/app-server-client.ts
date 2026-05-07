@@ -47,6 +47,7 @@ interface ActiveTurn {
   text: string;
   generatedImages: GeneratedImageArtifact[];
   usage?: CodexTurnTokenUsage | undefined;
+  lastTokenCountCumulativeTokens?: number | undefined;
   resolve: (result: CodexTurnResult) => void;
   reject: (error: Error) => void;
 }
@@ -56,6 +57,12 @@ interface BufferedTurnEvents {
   terminalState: "completed" | "aborted" | null;
   generatedImages: GeneratedImageArtifact[];
   usage?: CodexTurnTokenUsage | undefined;
+  lastTokenCountCumulativeTokens?: number | undefined;
+}
+
+interface CodexTokenCountUsageEvent {
+  readonly usage: CodexTurnTokenUsage;
+  readonly cumulativeTotalTokens?: number | undefined;
 }
 
 export interface StartedTurn {
@@ -137,6 +144,7 @@ export class AppServerClient extends EventEmitter {
   readonly #activeTurns = new Map<string, ActiveTurn>();
   readonly #bufferedTurnEvents = new Map<string, BufferedTurnEvents>();
   #pendingAnonymousTokenUsage: CodexTurnTokenUsage | undefined;
+  #pendingAnonymousTokenUsageCumulativeTokens: number | undefined;
   #connected = false;
   #disconnectHandled = false;
   #slackBotIdentity: SlackUserIdentity | null = null;
@@ -641,19 +649,19 @@ export class AppServerClient extends EventEmitter {
     }
 
     if (method === "codex/event/token_count") {
-      const usage = normalizeCodexTurnUsageFromTokenCountEvent(params);
-      if (!usage) {
+      const usageEvent = normalizeCodexTurnUsageFromTokenCountEvent(params);
+      if (!usageEvent) {
         return;
       }
 
       const turnId = readCodexEventTurnId(params);
       if (turnId) {
-        this.#applyTurnUsage(turnId, usage);
+        this.#applyTurnUsage(turnId, usageEvent.usage, usageEvent.cumulativeTotalTokens);
         return;
       }
 
       if (this.#activeTurns.size === 0) {
-        this.#pendingAnonymousTokenUsage = addCodexTurnUsage(this.#pendingAnonymousTokenUsage, usage);
+        this.#applyPendingAnonymousTokenUsage(usageEvent);
         return;
       }
       if (this.#activeTurns.size > 1) {
@@ -662,10 +670,10 @@ export class AppServerClient extends EventEmitter {
 
       const turn = this.#activeTurns.values().next().value;
       if (!turn) {
-        this.#pendingAnonymousTokenUsage = addCodexTurnUsage(this.#pendingAnonymousTokenUsage, usage);
+        this.#applyPendingAnonymousTokenUsage(usageEvent);
         return;
       }
-      this.#applyTurnUsage(turn.turnId, usage);
+      this.#applyTurnUsage(turn.turnId, usageEvent.usage, usageEvent.cumulativeTotalTokens);
       return;
     }
 
@@ -715,6 +723,7 @@ export class AppServerClient extends EventEmitter {
     this.#clearHeartbeat();
     this.#socket = undefined;
     this.#pendingAnonymousTokenUsage = undefined;
+    this.#pendingAnonymousTokenUsageCumulativeTokens = undefined;
 
     for (const [requestId, pending] of this.#pendingRequests) {
       this.#pendingRequests.delete(requestId);
@@ -806,10 +815,21 @@ export class AppServerClient extends EventEmitter {
     this.#bufferedTurnEvents.set(turnId, buffered);
   }
 
-  #applyTurnUsage(turnId: string, usage: CodexTurnTokenUsage): void {
+  #applyTurnUsage(
+    turnId: string,
+    usage: CodexTurnTokenUsage,
+    cumulativeTotalTokens?: number | undefined
+  ): void {
     const turn = this.#activeTurns.get(turnId);
     if (turn) {
+      if (!shouldApplyTokenCountUsage(turn.lastTokenCountCumulativeTokens, cumulativeTotalTokens)) {
+        return;
+      }
       turn.usage = addCodexTurnUsage(turn.usage, usage);
+      turn.lastTokenCountCumulativeTokens = updateTokenCountCumulativeTotal(
+        turn.lastTokenCountCumulativeTokens,
+        cumulativeTotalTokens
+      );
       return;
     }
 
@@ -818,8 +838,30 @@ export class AppServerClient extends EventEmitter {
       terminalState: null,
       generatedImages: []
     };
+    if (!shouldApplyTokenCountUsage(buffered.lastTokenCountCumulativeTokens, cumulativeTotalTokens)) {
+      return;
+    }
     buffered.usage = addCodexTurnUsage(buffered.usage, usage);
+    buffered.lastTokenCountCumulativeTokens = updateTokenCountCumulativeTotal(
+      buffered.lastTokenCountCumulativeTokens,
+      cumulativeTotalTokens
+    );
     this.#bufferedTurnEvents.set(turnId, buffered);
+  }
+
+  #applyPendingAnonymousTokenUsage(usageEvent: CodexTokenCountUsageEvent): void {
+    if (!shouldApplyTokenCountUsage(
+      this.#pendingAnonymousTokenUsageCumulativeTokens,
+      usageEvent.cumulativeTotalTokens
+    )) {
+      return;
+    }
+
+    this.#pendingAnonymousTokenUsage = addCodexTurnUsage(this.#pendingAnonymousTokenUsage, usageEvent.usage);
+    this.#pendingAnonymousTokenUsageCumulativeTokens = updateTokenCountCumulativeTotal(
+      this.#pendingAnonymousTokenUsageCumulativeTokens,
+      usageEvent.cumulativeTotalTokens
+    );
   }
 
   #applyPendingAnonymousTurnUsage(turnId: string): void {
@@ -828,8 +870,10 @@ export class AppServerClient extends EventEmitter {
     }
 
     const usage = this.#pendingAnonymousTokenUsage;
+    const cumulativeTotalTokens = this.#pendingAnonymousTokenUsageCumulativeTokens;
     this.#pendingAnonymousTokenUsage = undefined;
-    this.#applyTurnUsage(turnId, usage);
+    this.#pendingAnonymousTokenUsageCumulativeTokens = undefined;
+    this.#applyTurnUsage(turnId, usage, cumulativeTotalTokens);
   }
 
   #bufferGeneratedImage(turnId: string, image: GeneratedImageArtifact): void {
@@ -863,6 +907,10 @@ export class AppServerClient extends EventEmitter {
     if (buffered.usage) {
       turn.usage = buffered.usage;
     }
+    turn.lastTokenCountCumulativeTokens = updateTokenCountCumulativeTotal(
+      turn.lastTokenCountCumulativeTokens,
+      buffered.lastTokenCountCumulativeTokens
+    );
 
     if (buffered.terminalState === "completed") {
       this.#resolveActiveTurn(turn, false);
@@ -938,14 +986,14 @@ function normalizeCodexTurnUsageFromTurnEvent(params: Record<string, any>): Code
   );
 }
 
-function normalizeCodexTurnUsageFromTokenCountEvent(params: Record<string, any>): CodexTurnTokenUsage | undefined {
+function normalizeCodexTurnUsageFromTokenCountEvent(params: Record<string, any>): CodexTokenCountUsageEvent | undefined {
   const event =
     isRecord(params.msg) ? params.msg :
       isRecord(params.payload) ? params.payload :
         params;
   const info = isRecord(event.info) ? event.info : isRecord(params.info) ? params.info : undefined;
 
-  return (
+  const usage = (
     normalizeCodexTurnTokenUsage(info?.last_token_usage) ??
     normalizeCodexTurnTokenUsage(info?.lastTokenUsage) ??
     normalizeCodexTurnTokenUsage(event.last_token_usage) ??
@@ -955,6 +1003,22 @@ function normalizeCodexTurnUsageFromTokenCountEvent(params: Record<string, any>)
     normalizeCodexTurnTokenUsage(event.usage) ??
     normalizeCodexTurnTokenUsage(params.usage)
   );
+  if (!usage) {
+    return undefined;
+  }
+
+  const totalUsage = isRecord(info?.total_token_usage) ? info.total_token_usage :
+    isRecord(info?.totalTokenUsage) ? info.totalTokenUsage :
+      isRecord(event.total_token_usage) ? event.total_token_usage :
+        isRecord(event.totalTokenUsage) ? event.totalTokenUsage :
+          isRecord(params.total_token_usage) ? params.total_token_usage :
+            isRecord(params.totalTokenUsage) ? params.totalTokenUsage :
+              undefined;
+
+  return {
+    usage,
+    cumulativeTotalTokens: totalUsage ? readTokenNumber(totalUsage, ["total_tokens", "totalTokens"]) : undefined
+  };
 }
 
 function readCodexEventTurnId(params: Record<string, any>): string | undefined {
@@ -988,6 +1052,28 @@ function addCodexTurnUsage(
     effort: next.effort ?? current.effort,
     rawUsage: next.rawUsage ?? current.rawUsage
   };
+}
+
+function shouldApplyTokenCountUsage(
+  previousCumulativeTotalTokens: number | undefined,
+  nextCumulativeTotalTokens: number | undefined
+): boolean {
+  return nextCumulativeTotalTokens === undefined ||
+    previousCumulativeTotalTokens === undefined ||
+    nextCumulativeTotalTokens > previousCumulativeTotalTokens;
+}
+
+function updateTokenCountCumulativeTotal(
+  previousCumulativeTotalTokens: number | undefined,
+  nextCumulativeTotalTokens: number | undefined
+): number | undefined {
+  if (nextCumulativeTotalTokens === undefined) {
+    return previousCumulativeTotalTokens;
+  }
+  if (previousCumulativeTotalTokens === undefined) {
+    return nextCumulativeTotalTokens;
+  }
+  return Math.max(previousCumulativeTotalTokens, nextCumulativeTotalTokens);
 }
 
 function normalizeCodexTurnUsageFromThreadTurn(turn: {

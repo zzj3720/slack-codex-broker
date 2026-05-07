@@ -304,6 +304,9 @@ describe("AppServerClient disconnect handling", () => {
             msg: {
               type: "token_count",
               info: {
+                total_token_usage: {
+                  total_tokens: 12
+                },
                 last_token_usage: {
                   input_tokens: 10,
                   cached_input_tokens: 4,
@@ -321,6 +324,29 @@ describe("AppServerClient disconnect handling", () => {
             msg: {
               type: "token_count",
               info: {
+                total_token_usage: {
+                  total_tokens: 22
+                },
+                last_token_usage: {
+                  input_tokens: 7,
+                  cached_input_tokens: 3,
+                  output_tokens: 3,
+                  reasoning_output_tokens: 1,
+                  total_tokens: 10
+                }
+              }
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "codex/event/token_count",
+          params: {
+            msg: {
+              type: "token_count",
+              info: {
+                total_token_usage: {
+                  total_tokens: 22
+                },
                 last_token_usage: {
                   input_tokens: 7,
                   cached_input_tokens: 3,

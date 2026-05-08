@@ -295,7 +295,7 @@ function toRecord(value: JsonLike | undefined): Record<string, JsonLike> | undef
   return value as Record<string, JsonLike>;
 }
 
-function resolveMentionText(
+export function resolveMentionText(
   text: string,
   mentionedUsers?: readonly SlackUserIdentity[] | undefined
 ): string {

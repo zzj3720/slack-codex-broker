@@ -306,7 +306,17 @@ describe("AdminService", () => {
       messageTs: "111.223",
       source: "thread_reply",
       userId: "U123",
-      text: "follow up",
+      text: "<@U234> follow up",
+      mentionedUserIds: ["U234"],
+      mentionedUsers: [
+        {
+          userId: "U234",
+          mention: "<@U234>",
+          username: "mock-user-234",
+          displayName: "Mock Display 234",
+          realName: "Mock User 234"
+        }
+      ],
       status: "pending",
       createdAt: "2026-03-19T00:00:00.000Z",
       updatedAt: "2026-03-19T00:00:00.000Z"
@@ -325,7 +335,13 @@ describe("AdminService", () => {
             channelId: "C123",
             channelName: "deep-review",
             channelType: "channel",
-            channelLabel: "#deep-review"
+            channelLabel: "#deep-review",
+            firstUserMessage: {
+              textPreview: "@Mock Display 234 follow up"
+            },
+            lastUserMessage: {
+              textPreview: "@Mock Display 234 follow up"
+            }
           }
         ]
       }

@@ -267,7 +267,7 @@ describe.sequential("slack-codex-broker e2e", () => {
       channel: "C123",
       thread_ts: "111.220",
       ts: "111.222",
-      text: "<@UBOT> 看看这条 thread"
+      text: "<@UBOT> 看看 <@U234> 这条 thread"
     });
 
     await waitFor(() => mockCodex.turnsStarted.length >= 1, "first turn start");
@@ -280,6 +280,25 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(firstTurnText).toContain("ROOT_CONTEXT_ABC");
     expect(firstTurnText).toContain("RECENT_CONTEXT_DEF");
     expect(firstTurnText).toContain("structured_message_json");
+    expect(firstTurnText).toContain("\"text_with_resolved_mentions\": \"@Mock Bot 看看 @Mock Display 234 这条 thread\"");
+
+    const sessionListResponse = await fetch(`${broker.baseUrl}/admin/api/sessions`);
+    expect(sessionListResponse.ok).toBe(true);
+    const sessionList = await sessionListResponse.json() as {
+      readonly sessions?: Array<{
+        readonly key?: string;
+        readonly firstUserMessage?: { readonly textPreview?: string };
+        readonly lastUserMessage?: { readonly textPreview?: string };
+      }>;
+    };
+    expect(sessionList.sessions?.find((session) => session.key === "C123:111.220")).toMatchObject({
+      firstUserMessage: {
+        textPreview: "@Mock Bot 看看 @Mock Display 234 这条 thread"
+      },
+      lastUserMessage: {
+        textPreview: "@Mock Bot 看看 @Mock Display 234 这条 thread"
+      }
+    });
 
     await mockSlack.sendEvent("evt-linear-card", {
       type: "message",
@@ -338,6 +357,22 @@ describe.sequential("slack-codex-broker e2e", () => {
     });
     await seedSessions.load();
     await seedSessions.ensureSession("CBACK", "222.333");
+    const now = new Date().toISOString();
+    await seedSessions.upsertInboundMessage({
+      key: "CBACK:222.333:222.334",
+      sessionKey: "CBACK:222.333",
+      channelId: "CBACK",
+      rootThreadTs: "222.333",
+      messageTs: "222.334",
+      source: "thread_reply",
+      userId: "U123",
+      text: "<@U234> 旧消息",
+      senderKind: "user",
+      mentionedUserIds: ["U234"],
+      status: "pending",
+      createdAt: now,
+      updatedAt: now
+    });
     seedStore.close();
 
     const mockSlack = new MockSlackServer("UBOT", {
@@ -371,6 +406,10 @@ describe.sequential("slack-codex-broker e2e", () => {
       const session = await readSessionRecord(tempRoot, "CBACK:222.333");
       return session.channelName === "admin-trace" && session.channelType === "channel";
     }, "persisted session channel metadata backfill");
+    await waitFor(async () => {
+      const inbound = await readInboundMessages(tempRoot, "CBACK:222.333");
+      return inbound[0]?.mentionedUsers?.[0]?.displayName === "Mock Display 234";
+    }, "persisted inbound mention identity backfill");
   }, 60_000);
 
   it("replays missed thread messages after restart as a single recovered batch", async () => {

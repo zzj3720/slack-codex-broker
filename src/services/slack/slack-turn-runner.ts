@@ -274,7 +274,7 @@ export class SlackTurnRunner {
   }
 
   async #enrichMentionedUsers(message: SlackInputMessage): Promise<SlackInputMessage> {
-    if (message.mentionedUsers || !message.mentionedUserIds || message.mentionedUserIds.length === 0) {
+    if ((message.mentionedUsers?.length ?? 0) > 0 || !message.mentionedUserIds || message.mentionedUserIds.length === 0) {
       return message;
     }
 

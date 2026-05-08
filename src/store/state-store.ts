@@ -12,12 +12,13 @@ import type {
   PersistedInboundMessageStatus,
   PersistedInboundSource,
   PersistedSlackEvent,
+  SlackUserIdentity,
   SlackSessionRecord
 } from "../types.js";
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 7;
+export const CURRENT_STATE_SCHEMA_VERSION = 8;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -79,6 +80,7 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
           app_id TEXT,
           sender_username TEXT,
           mentioned_user_ids TEXT,
+          mentioned_users TEXT,
           context_text TEXT,
           images TEXT,
           slack_message TEXT,
@@ -258,8 +260,26 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
     up(database) {
       repairSessionChannelMetadataSchema(database);
     }
+  },
+  {
+    version: 8,
+    name: "inbound_mentioned_users",
+    up(database) {
+      repairInboundMentionedUsersSchema(database);
+    }
   }
 ];
+
+function repairInboundMentionedUsersSchema(database: DatabaseSync): void {
+  if (!tableExists(database, "inbound_messages")) {
+    return;
+  }
+
+  const columns = tableColumns(database, "inbound_messages");
+  if (!columns.has("mentioned_users")) {
+    database.exec("ALTER TABLE inbound_messages ADD COLUMN mentioned_users TEXT");
+  }
+}
 
 function repairSessionChannelMetadataSchema(database: DatabaseSync): void {
   if (!tableExists(database, "sessions")) {
@@ -883,9 +903,9 @@ export class StateStore {
       INSERT INTO inbound_messages (
         key, session_key, channel_id, channel_type, root_thread_ts, message_ts,
         source, user_id, text, sender_kind, bot_id, app_id, sender_username,
-        mentioned_user_ids, context_text, images, slack_message, background_job,
+        mentioned_user_ids, mentioned_users, context_text, images, slack_message, background_job,
         unexpected_turn_stop, status, batch_id, created_at, updated_at
-      ) VALUES (${placeholders(23)})
+      ) VALUES (${placeholders(24)})
       ON CONFLICT(session_key, message_ts) DO UPDATE SET
         key = excluded.key,
         session_key = excluded.session_key,
@@ -901,6 +921,7 @@ export class StateStore {
         app_id = excluded.app_id,
         sender_username = excluded.sender_username,
         mentioned_user_ids = excluded.mentioned_user_ids,
+        mentioned_users = excluded.mentioned_users,
         context_text = excluded.context_text,
         images = excluded.images,
         slack_message = excluded.slack_message,
@@ -925,6 +946,7 @@ export class StateStore {
       record.appId ?? null,
       record.senderUsername ?? null,
       jsonOrNull(record.mentionedUserIds ?? []),
+      jsonOrNull(record.mentionedUsers ?? []),
       record.contextText ?? null,
       jsonOrNull(record.images ?? []),
       jsonOrNull(record.slackMessage),
@@ -1205,6 +1227,7 @@ export class StateStore {
       appId: optionalStringColumn(row, "app_id"),
       senderUsername: optionalStringColumn(row, "sender_username"),
       mentionedUserIds: readJsonColumn(row, "mentioned_user_ids", []),
+      mentionedUsers: readJsonColumn<readonly SlackUserIdentity[]>(row, "mentioned_users", []),
       contextText: optionalStringColumn(row, "context_text"),
       images: readJsonColumn(row, "images", []),
       slackMessage: readJsonColumn(row, "slack_message", undefined),
@@ -1379,6 +1402,7 @@ export class StateStore {
       appId: raw.appId,
       senderUsername: raw.senderUsername,
       mentionedUserIds: raw.mentionedUserIds ?? [],
+      mentionedUsers: raw.mentionedUsers ?? [],
       contextText: typeof raw.contextText === "string" ? raw.contextText : undefined,
       images: raw.images ?? [],
       slackMessage: raw.slackMessage,

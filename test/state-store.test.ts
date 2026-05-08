@@ -275,13 +275,69 @@ describe("StateStore", () => {
           name: "session_agent_schema_repair"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 7,
           name: "session_channel_metadata"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "inbound_mentioned_users"
         }
       ]);
     } finally {
       database.close();
     }
+  });
+
+  it("persists inbound Slack mention identities", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-mentions-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+    await store.upsertSession({
+      key: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      workspacePath: "/tmp/sessions/C123-111.222/workspace",
+      createdAt: "2026-03-15T00:00:00.000Z",
+      updatedAt: "2026-03-15T00:00:00.000Z"
+    });
+    await store.upsertInboundMessage({
+      key: "inbound-1",
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      messageTs: "111.223",
+      source: "thread_reply",
+      userId: "U123",
+      text: "<@U234> follow up",
+      mentionedUserIds: ["U234"],
+      mentionedUsers: [
+        {
+          userId: "U234",
+          mention: "<@U234>",
+          username: "mock-user-234",
+          displayName: "Mock Display 234",
+          realName: "Mock User 234"
+        }
+      ],
+      status: "pending",
+      createdAt: "2026-03-15T00:00:01.000Z",
+      updatedAt: "2026-03-15T00:00:01.000Z"
+    });
+
+    expect(store.listInboundMessages({ sessionKey: "C123:111.222" })).toEqual([
+      expect.objectContaining({
+        text: "<@U234> follow up",
+        mentionedUserIds: ["U234"],
+        mentionedUsers: [
+          expect.objectContaining({
+            userId: "U234",
+            displayName: "Mock Display 234"
+          })
+        ]
+      })
+    ]);
+    store.close();
   });
 
   it("migrates old session Codex thread ids into agent session ids", async () => {

@@ -87,6 +87,7 @@ export interface PersistedInboundMessage {
   readonly appId?: string | undefined;
   readonly senderUsername?: string | undefined;
   readonly mentionedUserIds?: readonly string[] | undefined;
+  readonly mentionedUsers?: readonly SlackUserIdentity[] | undefined;
   readonly contextText?: string | undefined;
   readonly images?: readonly SlackImageAttachment[] | undefined;
   readonly slackMessage?: JsonLike | undefined;

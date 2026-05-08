@@ -3,6 +3,7 @@ import { logger } from "../../logger.js";
 import type {
   BackgroundJobEventPayload,
   JsonLike,
+  PersistedInboundMessage,
   ResolvedSlackThreadMessage,
   SlackSessionRecord,
   SlackUserIdentity
@@ -82,6 +83,7 @@ export class SlackAgentBridge {
     this.#agentRuntime.setSlackBotIdentity(this.#botIdentity);
 
     await this.#backfillSessionChannelMetadata("startup");
+    await this.#backfillInboundMentionedUsers("startup");
     await this.#conversations.start();
     await this.#drainPersistedSlackEvents("startup");
 
@@ -487,6 +489,68 @@ export class SlackAgentBridge {
         channelCount: sessionsByChannel.size
       });
     }
+  }
+
+  async #backfillInboundMentionedUsers(reason: string): Promise<void> {
+    const candidates = this.#sessions.listInboundMessages({
+      source: ["app_mention", "direct_message", "thread_reply"]
+    }).filter((message) => {
+      const mentionedUserIds = message.mentionedUserIds ?? [];
+      const mentionedUsers = message.mentionedUsers ?? [];
+      return mentionedUserIds.length > 0 && mentionedUsers.length < mentionedUserIds.length;
+    });
+
+    if (!candidates.length) {
+      return;
+    }
+
+    let updatedCount = 0;
+    for (const message of candidates) {
+      const mentionedUsers = await this.#resolveMentionedUsers(message);
+      if (!mentionedUsers.length) {
+        continue;
+      }
+
+      await this.#sessions.upsertInboundMessage({
+        ...message,
+        mentionedUsers,
+        updatedAt: new Date().toISOString()
+      });
+      updatedCount += 1;
+    }
+
+    if (updatedCount) {
+      logger.info("Backfilled Slack inbound mention identities", {
+        reason,
+        updatedCount
+      });
+    }
+  }
+
+  async #resolveMentionedUsers(message: PersistedInboundMessage): Promise<readonly SlackUserIdentity[]> {
+    const mentionedUserIds = message.mentionedUserIds ?? [];
+    if (!mentionedUserIds.length) {
+      return [];
+    }
+
+    const knownUsers = new Map(
+      (message.mentionedUsers ?? []).map((user) => [user.userId, user])
+    );
+
+    for (const userId of mentionedUserIds) {
+      if (knownUsers.has(userId)) {
+        continue;
+      }
+
+      const identity = await this.#slackApi.getUserIdentity(userId);
+      if (identity) {
+        knownUsers.set(userId, identity);
+      }
+    }
+
+    return mentionedUserIds
+      .map((userId) => knownUsers.get(userId))
+      .filter((user): user is SlackUserIdentity => Boolean(user));
   }
 
   async #handleInteractiveSessionEvent(

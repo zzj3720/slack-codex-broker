@@ -90,6 +90,18 @@ export class MockSlackServer {
           real_name: "Mock User 234"
         }
       }
+    ],
+    [
+      "UBOT",
+      {
+        id: "UBOT",
+        name: "mock-bot",
+        real_name: "Mock Bot",
+        profile: {
+          display_name: "Mock Bot",
+          real_name: "Mock Bot"
+        }
+      }
     ]
   ]);
   readonly #threadMessages = new Map<string, MockThreadMessage[]>();

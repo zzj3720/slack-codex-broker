@@ -66,27 +66,29 @@ export class SlackInboundStore {
 
     const existing = this.#sessions.getInboundMessage(session.channelId, session.rootThreadTs, item.messageTs);
     if (!existing) {
+      const enrichedItem = await this.#enrichMentionedUsers(item);
       const now = new Date().toISOString();
       await this.#sessions.upsertInboundMessage({
         key: createInboundMessageKey(session.key, item.messageTs),
         sessionKey: session.key,
         channelId: session.channelId,
-        channelType: item.channelType,
+        channelType: enrichedItem.channelType,
         rootThreadTs: session.rootThreadTs,
         messageTs: item.messageTs,
         source: item.source,
-        userId: item.userId,
-        text: item.text,
-        senderKind: item.senderKind,
-        botId: item.botId,
-        appId: item.appId,
-        senderUsername: item.senderUsername,
-        mentionedUserIds: item.mentionedUserIds ?? [],
-        contextText: item.contextText,
-        images: item.images ?? [],
-        slackMessage: item.slackMessage,
-        backgroundJob: item.backgroundJob,
-        unexpectedTurnStop: item.unexpectedTurnStop,
+        userId: enrichedItem.userId,
+        text: enrichedItem.text,
+        senderKind: enrichedItem.senderKind,
+        botId: enrichedItem.botId,
+        appId: enrichedItem.appId,
+        senderUsername: enrichedItem.senderUsername,
+        mentionedUserIds: enrichedItem.mentionedUserIds ?? [],
+        mentionedUsers: enrichedItem.mentionedUsers ?? [],
+        contextText: enrichedItem.contextText,
+        images: enrichedItem.images ?? [],
+        slackMessage: enrichedItem.slackMessage,
+        backgroundJob: enrichedItem.backgroundJob,
+        unexpectedTurnStop: enrichedItem.unexpectedTurnStop,
         status: "pending",
         createdAt: now,
         updatedAt: now
@@ -121,11 +123,31 @@ export class SlackInboundStore {
       appId: message.appId,
       senderUsername: message.senderUsername,
       mentionedUserIds: message.mentionedUserIds,
+      mentionedUsers: message.mentionedUsers,
       contextText: message.contextText,
       images: message.images,
       slackMessage: message.slackMessage,
       backgroundJob: message.backgroundJob,
       unexpectedTurnStop: message.unexpectedTurnStop
+    };
+  }
+
+  async #enrichMentionedUsers(item: SlackInputMessage): Promise<SlackInputMessage> {
+    if ((item.mentionedUsers?.length ?? 0) > 0 || !item.mentionedUserIds || item.mentionedUserIds.length === 0) {
+      return item;
+    }
+
+    const mentionedUsers = (
+      await Promise.all(item.mentionedUserIds.map((userId) => this.#slackApi.getUserIdentity(userId)))
+    ).filter((user): user is NonNullable<typeof user> => user !== null);
+
+    if (mentionedUsers.length === 0) {
+      return item;
+    }
+
+    return {
+      ...item,
+      mentionedUsers
     };
   }
 

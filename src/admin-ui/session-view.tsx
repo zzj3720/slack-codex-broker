@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } fro
 
 import { getAdminStatusSnapshot, subscribeAdminStatus } from "./admin-status-store";
 import { stableSessionOrder } from "./session-order";
+import { getTimelineEventDisplay, statusLabel, type TimelineEvent } from "./timeline-display";
 
 type UiState = {
   readonly adminView: string;
@@ -12,7 +13,6 @@ type UiState = {
 
 type SessionRecord = Record<string, any>;
 type TimelinePayload = { readonly events?: TimelineEvent[]; readonly trace?: Record<string, any> } | TimelineEvent[];
-type TimelineEvent = Record<string, any>;
 
 const timelineCache = new Map<string, TimelinePayload>();
 const sessionFilters = ["ongoing", "all", "active", "inbound", "jobs", "issues", "usage"];
@@ -294,7 +294,7 @@ function Timeline({ events }: { readonly events: readonly TimelineEvent[] }): Re
 }
 
 function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.Element {
-  const title = event.title || statusLabel(event.type);
+  const display = getTimelineEventDisplay(event);
   const badgeTone = statusTone(event.status === "failed" || event.status === "error" ? event.status : event.type);
   const meta = [
     event.status ? ("状态 " + statusLabel(event.status)) : "",
@@ -305,9 +305,9 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
   return (
     <div className="timeline-event">
       <span>{fmtTime(event.at)}</span>
-      <Badge label={event.type || event.status || "event"} tone={badgeTone} />
+      <Badge label={display.badgeLabel} tone={badgeTone} />
       <div className="timeline-main">
-        <div className="timeline-title"><strong>{title}</strong><span>{event.summary || ""}</span></div>
+        <div className="timeline-title"><strong>{display.title}</strong><span>{display.summary}</span></div>
         {meta ? <div className="trace-meta">{meta}</div> : null}
         {event.detail ? (
           <details className="trace-details">
@@ -573,62 +573,6 @@ function statusTone(status: unknown): string {
   if (value.startsWith("agent_")) return "info";
   if (["deploy", "rollback"].includes(value)) return "info";
   return "";
-}
-
-function statusLabel(value: unknown): string {
-  const labels: Record<string, string> = {
-    active: "活跃",
-    idle: "空闲",
-    ok: "正常",
-    running: "运行中",
-    registered: "已注册",
-    pending: "待处理",
-    inflight: "处理中",
-    done: "已完成",
-    completed: "已完成",
-    succeeded: "成功",
-    failed: "失败",
-    error: "错误",
-    stopped: "已停止",
-    cancelled: "已取消",
-    started: "已开始",
-    starting: "启动中",
-    wait: "等待",
-    final: "结束",
-    block: "阻塞",
-    progress: "进展",
-    inspect: "查看",
-    session: "会话",
-    admin: "管理",
-    audit: "审计",
-    exact: "精确",
-    estimated: "估算",
-    missing: "缺失",
-    unknown: "未知",
-    combined: "合并模式",
-    session_created: "会话创建",
-    inbound_message: "Slack 消息",
-    background_job: "后台任务",
-    turn_signal: "回合信号",
-    not_configured: "未关联",
-    broker_db: "DB Trace",
-    agent_system_prompt: "系统 Prompt",
-    agent_memory: "记忆",
-    agent_user_message: "用户消息",
-    agent_runtime_reminder: "Runtime 提醒",
-    agent_assistant_message: "Assistant",
-    agent_tool_call: "工具调用",
-    agent_tool_result: "工具结果",
-    agent_turn_started: "回合开始",
-    agent_turn_completed: "回合结束",
-    agent_runtime_instruction: "Runtime 指令",
-    agent_runtime_event: "Runtime",
-    agent_reasoning: "推理",
-    agent_token_count: "Token",
-    agent_raw_event: "原始事件",
-    agent_response_item: "Response Item"
-  };
-  return labels[String(value || "").toLowerCase()] || String(value || "");
 }
 
 function sourceLabel(value: unknown): string {

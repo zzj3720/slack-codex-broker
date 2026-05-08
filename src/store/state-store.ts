@@ -17,7 +17,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 6;
+export const CURRENT_STATE_SCHEMA_VERSION = 7;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -37,6 +37,8 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
         CREATE TABLE IF NOT EXISTS sessions (
           key TEXT PRIMARY KEY,
           channel_id TEXT NOT NULL,
+          channel_name TEXT,
+          channel_type TEXT,
           root_thread_ts TEXT NOT NULL,
           workspace_path TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -249,8 +251,29 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
     up(database) {
       repairSessionAgentSchema(database);
     }
+  },
+  {
+    version: 7,
+    name: "session_channel_metadata",
+    up(database) {
+      repairSessionChannelMetadataSchema(database);
+    }
   }
 ];
+
+function repairSessionChannelMetadataSchema(database: DatabaseSync): void {
+  if (!tableExists(database, "sessions")) {
+    return;
+  }
+
+  const columns = tableColumns(database, "sessions");
+  if (!columns.has("channel_name")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN channel_name TEXT");
+  }
+  if (!columns.has("channel_type")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN channel_type TEXT");
+  }
+}
 
 function repairSessionAgentSchema(database: DatabaseSync): void {
   if (!tableExists(database, "sessions")) {
@@ -790,7 +813,7 @@ export class StateStore {
   #upsertSession(record: SlackSessionRecord): void {
     this.#databaseRequired().prepare(`
       INSERT INTO sessions (
-        key, channel_id, root_thread_ts, workspace_path, created_at, updated_at,
+        key, channel_id, channel_name, channel_type, root_thread_ts, workspace_path, created_at, updated_at,
         agent_session_id, active_turn_id, active_turn_started_at,
         last_observed_message_ts, last_delivered_message_ts, last_slack_reply_at,
         last_progress_reminder_at, last_turn_signal_turn_id, last_turn_signal_kind,
@@ -798,9 +821,11 @@ export class StateStore {
         co_author_candidate_user_ids, co_author_candidate_revision,
         co_author_confirmed_user_ids, co_author_confirmed_revision,
         co_author_ignore_missing_revision, co_author_prompt_revision, co_author_prompted_at
-      ) VALUES (${placeholders(24)})
+      ) VALUES (${placeholders(26)})
       ON CONFLICT(key) DO UPDATE SET
         channel_id = excluded.channel_id,
+        channel_name = excluded.channel_name,
+        channel_type = excluded.channel_type,
         root_thread_ts = excluded.root_thread_ts,
         workspace_path = excluded.workspace_path,
         created_at = excluded.created_at,
@@ -826,6 +851,8 @@ export class StateStore {
     `).run(
       record.key,
       record.channelId,
+      record.channelName ?? null,
+      record.channelType ?? null,
       record.rootThreadTs,
       record.workspacePath,
       record.createdAt,
@@ -1125,6 +1152,8 @@ export class StateStore {
     return this.#normalizeSession({
       key: stringColumn(row, "key"),
       channelId: stringColumn(row, "channel_id"),
+      channelName: optionalStringColumn(row, "channel_name"),
+      channelType: optionalStringColumn(row, "channel_type"),
       rootThreadTs: stringColumn(row, "root_thread_ts"),
       workspacePath: stringColumn(row, "workspace_path"),
       createdAt: stringColumn(row, "created_at"),
@@ -1302,6 +1331,8 @@ export class StateStore {
     return {
       key: String(session.key),
       channelId: String(session.channelId),
+      channelName: optionalNonEmptyString(session.channelName),
+      channelType: optionalNonEmptyString(session.channelType),
       rootThreadTs: String(session.rootThreadTs),
       workspacePath,
       createdAt: String(session.createdAt),
@@ -1566,6 +1597,14 @@ function stringColumn(row: SqlRow, column: string): string {
 function optionalStringColumn(row: SqlRow, column: string): string | undefined {
   const value = row[column];
   return value === null || value === undefined ? undefined : String(value);
+}
+
+function optionalNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function optionalNumberColumn(row: SqlRow, column: string): number | undefined {

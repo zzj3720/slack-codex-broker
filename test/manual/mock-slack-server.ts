@@ -39,6 +39,15 @@ export interface MockThreadMessage {
   readonly attachments?: readonly Record<string, unknown>[] | undefined;
 }
 
+export interface MockConversation {
+  readonly id: string;
+  readonly name?: string | undefined;
+  readonly is_im?: boolean | undefined;
+  readonly is_mpim?: boolean | undefined;
+  readonly is_group?: boolean | undefined;
+  readonly is_channel?: boolean | undefined;
+}
+
 export class MockSlackServer {
   readonly #server: http.Server;
   readonly #wsServer: WebSocketServer;
@@ -48,6 +57,7 @@ export class MockSlackServer {
   readonly assistantStatusUpdates: AssistantStatusUpdate[] = [];
   readonly reactionOperations: ReactionOperation[] = [];
   readonly #activeReactions = new Set<string>();
+  readonly #channels = new Map<string, MockConversation>();
   readonly #users = new Map<string, {
     readonly id: string;
     readonly name: string;
@@ -90,8 +100,13 @@ export class MockSlackServer {
       readonly botId?: string;
       readonly appId?: string;
       readonly assistantStatusError?: string;
+      readonly channels?: readonly MockConversation[] | undefined;
     }
   ) {
+    for (const channel of options?.channels ?? []) {
+      this.#channels.set(channel.id, channel);
+    }
+
     this.#server = http.createServer((request, response) => {
       void this.#handleHttp(request, response);
     });
@@ -339,6 +354,20 @@ export class MockSlackServer {
       return;
     }
 
+    if (request.url === "/api/conversations.info") {
+      const channelId = String(body.channel);
+      const channel = this.#channels.get(channelId) ?? inferMockConversation(channelId);
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          ok: true,
+          channel
+        })
+      );
+      return;
+    }
+
     if (request.url === "/api/conversations.replies") {
       const channel = String(body.channel);
       const threadTs = String(body.ts);
@@ -423,4 +452,27 @@ function getThreadKey(channel: string, threadTs: string): string {
 
 function getReactionKey(channel: string, timestamp: string, name: string): string {
   return `${channel}:${timestamp}:${name}`;
+}
+
+function inferMockConversation(channelId: string): MockConversation {
+  if (channelId.startsWith("D")) {
+    return {
+      id: channelId,
+      is_im: true
+    };
+  }
+
+  if (channelId.startsWith("G")) {
+    return {
+      id: channelId,
+      name: channelId.toLowerCase(),
+      is_group: true
+    };
+  }
+
+  return {
+    id: channelId,
+    name: channelId.toLowerCase(),
+    is_channel: true
+  };
 }

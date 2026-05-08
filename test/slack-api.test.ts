@@ -190,6 +190,55 @@ describe("SlackApi.setAssistantThreadStatus", () => {
   });
 });
 
+describe("SlackApi.getConversationInfo", () => {
+  it("fetches and caches Slack channel metadata", async () => {
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (!url.endsWith("/conversations.info")) {
+        throw new Error(`Unexpected fetch ${url}`);
+      }
+
+      expect(init?.method).toBe("POST");
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("channel")).toBe("C123");
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          channel: {
+            id: "C123",
+            name: "deep-review",
+            is_channel: true
+          }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new SlackApi({
+      baseUrl: "https://slack.test/api",
+      appToken: "xapp-test",
+      botToken: "xoxb-test"
+    });
+
+    await expect(api.getConversationInfo("C123")).resolves.toEqual({
+      channelId: "C123",
+      name: "deep-review",
+      channelType: "channel"
+    });
+    await expect(api.getConversationInfo("C123")).resolves.toEqual({
+      channelId: "C123",
+      name: "deep-review",
+      channelType: "channel"
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("SlackApi.listThreadMessages", () => {
   it("preserves bot/app card messages with raw Slack payload", async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {

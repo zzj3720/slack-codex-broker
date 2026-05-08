@@ -271,8 +271,12 @@ describe("StateStore", () => {
           name: "agent_schema_repair"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 6,
           name: "session_agent_schema_repair"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "session_channel_metadata"
         }
       ]);
     } finally {

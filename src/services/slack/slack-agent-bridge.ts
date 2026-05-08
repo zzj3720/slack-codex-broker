@@ -10,6 +10,7 @@ import type {
 import type { AgentRuntime } from "../agent-runtime/types.js";
 import { GitHubAuthorMappingService } from "../github-author-mapping-service.js";
 import { SessionManager } from "../session-manager.js";
+import type { SessionChannelMetadata } from "../session-manager.js";
 import {
   type ParsedSlackEvent,
   isSlackMessageEffectivelyEmpty,
@@ -367,16 +368,19 @@ export class SlackAgentBridge {
       return;
     }
 
+    const channelMetadata = await this.#resolveChannelMetadata(parsed);
+
     switch (parsed.route) {
       case "app_mention":
         await this.#handleInteractiveSessionEvent(parsed, {
           createSession: true,
-          preloadHistory: parsed.rootThreadTs !== parsed.messageTs
+          preloadHistory: parsed.rootThreadTs !== parsed.messageTs,
+          channelMetadata
         });
         return;
       case "direct_message":
         if (parsed.controlText === "-stop" && (parsed.input.images?.length ?? 0) === 0) {
-          const existing = this.#sessions.getSession(parsed.channelId, parsed.rootThreadTs);
+          const existing = await this.#getSessionWithChannelMetadata(parsed, channelMetadata);
           if (existing) {
             await this.#handleStop(existing);
           }
@@ -385,11 +389,12 @@ export class SlackAgentBridge {
 
         await this.#handleInteractiveSessionEvent(parsed, {
           createSession: true,
-          preloadHistory: false
+          preloadHistory: false,
+          channelMetadata
         });
         return;
       case "thread_reply": {
-        const session = this.#sessions.getSession(parsed.channelId, parsed.rootThreadTs);
+        const session = await this.#getSessionWithChannelMetadata(parsed, channelMetadata);
         if (!session) {
           return;
         }
@@ -415,20 +420,52 @@ export class SlackAgentBridge {
     }
   }
 
+  async #getSessionWithChannelMetadata(
+    parsed: ParsedSlackEvent,
+    metadata: SessionChannelMetadata
+  ): Promise<SlackSessionRecord | undefined> {
+    const session = this.#sessions.getSession(parsed.channelId, parsed.rootThreadTs);
+    if (!session) {
+      return undefined;
+    }
+
+    return await this.#sessions.setChannelMetadata(parsed.channelId, parsed.rootThreadTs, metadata);
+  }
+
+  async #resolveChannelMetadata(parsed: ParsedSlackEvent): Promise<SessionChannelMetadata> {
+    const fallback: SessionChannelMetadata = {
+      channelType: parsed.channelType
+    };
+    const info = await this.#slackApi.getConversationInfo(parsed.channelId);
+    if (!info) {
+      return fallback;
+    }
+
+    return {
+      channelName: info.name,
+      channelType: parsed.channelType ?? info.channelType
+    };
+  }
+
   async #handleInteractiveSessionEvent(
     parsed: ParsedSlackEvent,
     options: {
       readonly createSession: boolean;
       readonly preloadHistory: boolean;
+      readonly channelMetadata: SessionChannelMetadata;
     }
   ): Promise<void> {
     const existing = this.#sessions.getSession(parsed.channelId, parsed.rootThreadTs);
     let session = options.createSession
-      ? await this.#sessions.ensureSession(parsed.channelId, parsed.rootThreadTs)
+      ? await this.#sessions.ensureSession(parsed.channelId, parsed.rootThreadTs, options.channelMetadata)
       : existing;
 
     if (!session) {
       return;
+    }
+
+    if (!options.createSession) {
+      session = await this.#sessions.setChannelMetadata(parsed.channelId, parsed.rootThreadTs, options.channelMetadata);
     }
 
     if (this.#conversations.isAlreadyHandled(session, parsed.messageTs)) {

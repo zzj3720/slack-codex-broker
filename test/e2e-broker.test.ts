@@ -37,7 +37,14 @@ describe.sequential("slack-codex-broker e2e", () => {
     let brokerBaseUrl = "";
     const mockSlack = new MockSlackServer("UBOT", {
       botId: "BBOT",
-      appId: "AAPP"
+      appId: "AAPP",
+      channels: [
+        {
+          id: "C123",
+          name: "deep-review",
+          is_channel: true
+        }
+      ]
     });
     const mockCodex = new MockCodexAppServer({
       onTurnStart: async (context) => {
@@ -214,7 +221,14 @@ describe.sequential("slack-codex-broker e2e", () => {
 
     const mockSlack = new MockSlackServer("UBOT", {
       botId: "BBOT",
-      appId: "AAPP"
+      appId: "AAPP",
+      channels: [
+        {
+          id: "C123",
+          name: "deep-review",
+          is_channel: true
+        }
+      ]
     });
     const mockCodex = new MockCodexAppServer();
     const slackPort = await mockSlack.start();
@@ -258,6 +272,10 @@ describe.sequential("slack-codex-broker e2e", () => {
 
     await waitFor(() => mockCodex.turnsStarted.length >= 1, "first turn start");
     await waitForSessionIdle(tempRoot, "C123:111.220");
+    await expect(readSessionRecord(tempRoot, "C123:111.220")).resolves.toMatchObject({
+      channelName: "deep-review",
+      channelType: "channel"
+    });
     const firstTurnText = collectTextInput(mockCodex.turnsStarted[0]!.input);
     expect(firstTurnText).toContain("ROOT_CONTEXT_ABC");
     expect(firstTurnText).toContain("RECENT_CONTEXT_DEF");

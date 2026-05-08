@@ -907,6 +907,8 @@ export class AdminService {
       key: session.key,
       channelId: session.channelId,
       channelLabel: channelLabelForSession(session, related.inbound),
+      channelName: session.channelName ?? null,
+      channelType: session.channelType ?? related.inbound.find((message) => message.channelType)?.channelType ?? null,
       rootThreadTs: session.rootThreadTs,
       threadUrl: buildSlackThreadUrl(session.channelId, session.rootThreadTs),
       workspacePath: session.workspacePath,
@@ -1253,14 +1255,18 @@ function channelLabelForSession(
   session: SlackSessionRecord,
   inbound: readonly PersistedInboundMessage[]
 ): string {
+  if (session.channelName) {
+    return formatSlackChannelName(session.channelName);
+  }
+
   const channelName = inbound
     .map((message) => readStringField(message.slackMessage, "channel_name"))
     .find((value) => value);
   if (channelName) {
-    return channelName.startsWith("#") ? channelName : `#${channelName}`;
+    return formatSlackChannelName(channelName);
   }
 
-  const channelType = inbound.find((message) => message.channelType)?.channelType;
+  const channelType = session.channelType ?? inbound.find((message) => message.channelType)?.channelType;
   if (channelType === "im") {
     return "私信";
   }
@@ -1268,6 +1274,10 @@ function channelLabelForSession(
     return "群聊";
   }
   return session.channelId;
+}
+
+function formatSlackChannelName(channelName: string): string {
+  return channelName.startsWith("#") ? channelName : `#${channelName}`;
 }
 
 function buildSlackThreadUrl(channelId: string, rootThreadTs: string): string {

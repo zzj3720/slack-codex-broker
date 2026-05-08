@@ -1,6 +1,8 @@
 export interface SlackSessionRecord {
   readonly key: string;
   readonly channelId: string;
+  readonly channelName?: string | undefined;
+  readonly channelType?: string | undefined;
   readonly rootThreadTs: string;
   readonly workspacePath: string;
   readonly createdAt: string;

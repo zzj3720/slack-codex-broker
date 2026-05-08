@@ -18,6 +18,11 @@ import type {
 import { StateStore } from "../store/state-store.js";
 import { ensureDir } from "../utils/fs.js";
 
+export interface SessionChannelMetadata {
+  readonly channelName?: string | undefined;
+  readonly channelType?: string | undefined;
+}
+
 export class SessionManager {
   readonly #stateStore: StateStore;
   readonly #sessionsRoot: string;
@@ -84,11 +89,15 @@ export class SessionManager {
     await this.#stateStore.markSlackEventProcessed(eventId);
   }
 
-  async ensureSession(channelId: string, rootThreadTs: string): Promise<SlackSessionRecord> {
+  async ensureSession(
+    channelId: string,
+    rootThreadTs: string,
+    metadata?: SessionChannelMetadata | undefined
+  ): Promise<SlackSessionRecord> {
     const existing = this.getSession(channelId, rootThreadTs);
     if (existing) {
       await ensureDir(existing.workspacePath);
-      return existing;
+      return await this.#applyChannelMetadata(existing, metadata);
     }
 
     const workspacePath = this.#createWorkspacePath(channelId, rootThreadTs);
@@ -97,6 +106,7 @@ export class SessionManager {
     const record: SlackSessionRecord = {
       key: SessionManager.createKey(channelId, rootThreadTs),
       channelId,
+      ...normalizeChannelMetadata(metadata),
       rootThreadTs,
       workspacePath,
       createdAt: new Date().toISOString(),
@@ -112,6 +122,15 @@ export class SessionManager {
       ...record,
       updatedAt: new Date().toISOString()
     });
+  }
+
+  async setChannelMetadata(
+    channelId: string,
+    rootThreadTs: string,
+    metadata: SessionChannelMetadata
+  ): Promise<SlackSessionRecord> {
+    const session = this.#requireSession(channelId, rootThreadTs);
+    return await this.#applyChannelMetadata(session, metadata);
   }
 
   findSessionByWorkspace(cwd: string): SlackSessionRecord | undefined {
@@ -421,6 +440,32 @@ export class SessionManager {
     return isSubpathOf(resolvedSessionsRoot, sessionRoot) ? sessionRoot : undefined;
   }
 
+  async #applyChannelMetadata(
+    session: SlackSessionRecord,
+    metadata?: SessionChannelMetadata | undefined
+  ): Promise<SlackSessionRecord> {
+    const normalized = normalizeChannelMetadata(metadata);
+    if (!normalized.channelName && !normalized.channelType) {
+      return session;
+    }
+
+    const patch: Record<string, string> = {};
+    if (normalized.channelName && normalized.channelName !== session.channelName) {
+      patch.channelName = normalized.channelName;
+    }
+    if (normalized.channelType && normalized.channelType !== session.channelType) {
+      patch.channelType = normalized.channelType;
+    }
+    if (!Object.keys(patch).length) {
+      return session;
+    }
+
+    return await this.#stateStore.patchSession(session.key, {
+      ...patch,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
   async #patchSession(
     channelId: string,
     rootThreadTs: string,
@@ -432,6 +477,23 @@ export class SessionManager {
       updatedAt: new Date().toISOString()
     });
   }
+}
+
+function normalizeChannelMetadata(
+  metadata?: SessionChannelMetadata | undefined
+): SessionChannelMetadata {
+  return {
+    channelName: normalizeNonEmptyString(metadata?.channelName),
+    channelType: normalizeNonEmptyString(metadata?.channelType)
+  };
+}
+
+function normalizeNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function isSubpathOf(rootPath: string, targetPath: string): boolean {

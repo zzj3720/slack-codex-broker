@@ -29,11 +29,18 @@ export interface SlackUploadedFile {
   readonly size?: number | undefined;
 }
 
+export interface SlackConversationInfo {
+  readonly channelId: string;
+  readonly name?: string | undefined;
+  readonly channelType?: string | undefined;
+}
+
 export class SlackApi {
   readonly #baseUrl: string;
   readonly #appToken: string;
   readonly #botToken: string;
   readonly #userIdentityCache = new Map<string, Promise<SlackUserIdentity | null>>();
+  readonly #conversationInfoCache = new Map<string, Promise<SlackConversationInfo | null>>();
 
   constructor(options: {
     readonly baseUrl: string;
@@ -287,6 +294,27 @@ export class SlackApi {
     }
   }
 
+  async getConversationInfo(channelId: string): Promise<SlackConversationInfo | null> {
+    const cached = this.#conversationInfoCache.get(channelId);
+    if (cached) {
+      return await cached;
+    }
+
+    const pending = this.#fetchConversationInfo(channelId);
+    this.#conversationInfoCache.set(channelId, pending);
+
+    try {
+      return await pending;
+    } catch (error) {
+      logger.warn("Failed to fetch Slack conversation info", {
+        channelId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      this.#conversationInfoCache.set(channelId, Promise.resolve(null));
+      return null;
+    }
+  }
+
   async listThreadMessages(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;
@@ -424,6 +452,36 @@ export class SlackApi {
       displayName,
       realName,
       email: normalizeSlackField(response.user.profile?.email)?.toLowerCase()
+    };
+  }
+
+  async #fetchConversationInfo(channelId: string): Promise<SlackConversationInfo | null> {
+    const response = await this.#post<{
+      channel?: {
+        id?: string;
+        name?: string;
+        name_normalized?: string;
+        is_im?: boolean;
+        is_mpim?: boolean;
+        is_group?: boolean;
+        is_channel?: boolean;
+      };
+    }>(
+      "conversations.info",
+      {
+        channel: channelId
+      },
+      this.#botToken
+    );
+
+    if (!response.channel?.id) {
+      return null;
+    }
+
+    return {
+      channelId: response.channel.id,
+      name: normalizeSlackField(response.channel.name) ?? normalizeSlackField(response.channel.name_normalized),
+      channelType: conversationType(response.channel)
     };
   }
 
@@ -645,6 +703,27 @@ function normalizeSlackField(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function conversationType(channel: {
+  readonly is_im?: boolean;
+  readonly is_mpim?: boolean;
+  readonly is_group?: boolean;
+  readonly is_channel?: boolean;
+}): string | undefined {
+  if (channel.is_im) {
+    return "im";
+  }
+  if (channel.is_mpim) {
+    return "mpim";
+  }
+  if (channel.is_group) {
+    return "group";
+  }
+  if (channel.is_channel) {
+    return "channel";
+  }
+  return undefined;
 }
 
 function normalizeSlackNumber(value: unknown): number | undefined {

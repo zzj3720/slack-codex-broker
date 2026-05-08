@@ -64,6 +64,11 @@ interface CodexTokenCountUsageEvent {
   readonly cumulativeTotalTokens?: number | undefined;
 }
 
+interface ThreadRuntimeDefaults {
+  readonly model?: string | undefined;
+  readonly effort?: string | undefined;
+}
+
 export interface StartedTurn {
   readonly turnId: string;
   readonly completion: Promise<CodexTurnResult>;
@@ -151,6 +156,7 @@ export class AppServerClient extends EventEmitter {
   readonly #pendingRequests = new Map<string, PendingRequest>();
   readonly #activeTurns = new Map<string, ActiveTurn>();
   readonly #bufferedTurnEvents = new Map<string, BufferedTurnEvents>();
+  readonly #threadRuntimeDefaults = new Map<string, ThreadRuntimeDefaults>();
   #pendingAnonymousTokenUsage: AgentTurnTokenUsage | undefined;
   #pendingAnonymousTokenUsageCumulativeTokens: number | undefined;
   #connected = false;
@@ -319,8 +325,13 @@ export class AppServerClient extends EventEmitter {
         persistExtendedHistory: true
       }) as {
         thread: { id: string };
+        model?: unknown;
+        reasoningEffort?: unknown;
+        reasoning_effort?: unknown;
+        effort?: unknown;
       };
 
+      this.#rememberThreadRuntimeDefaults(result.thread.id, result);
       return result.thread.id;
     }
 
@@ -341,7 +352,12 @@ export class AppServerClient extends EventEmitter {
       persistExtendedHistory: true
     }) as {
       thread: { id: string };
+      model?: unknown;
+      reasoningEffort?: unknown;
+      reasoning_effort?: unknown;
+      effort?: unknown;
     };
+    this.#rememberThreadRuntimeDefaults(result.thread.id, result);
     this.emit("notification", "broker/system_prompt", {
       threadId: result.thread.id,
       cwd: session.workspacePath,
@@ -518,7 +534,7 @@ export class AppServerClient extends EventEmitter {
       .map((item, index) => normalizeGeneratedImageArtifact(item, index))
       .filter((item): item is GeneratedImageArtifact => item !== null);
     const status = normalizeTurnStatus(turn.status);
-    const usage = normalizeAgentTurnUsageFromThreadTurn(turn);
+    const usage = this.#withThreadRuntimeDefaults(threadId, normalizeAgentTurnUsageFromThreadTurn(turn));
 
     const normalizedResult: ReadTurnResult = {
       status,
@@ -767,6 +783,37 @@ export class AppServerClient extends EventEmitter {
     this.emit("disconnected", error);
   }
 
+  #rememberThreadRuntimeDefaults(threadId: string, value: unknown): void {
+    const defaults = normalizeThreadRuntimeDefaults(value);
+    if (defaults) {
+      this.#threadRuntimeDefaults.set(threadId, defaults);
+    }
+  }
+
+  #withThreadRuntimeDefaults(
+    threadId: string,
+    usage: AgentTurnTokenUsage | undefined
+  ): AgentTurnTokenUsage | undefined {
+    if (!usage) {
+      return undefined;
+    }
+
+    const defaults = this.#threadRuntimeDefaults.get(threadId);
+    if (!defaults) {
+      return usage;
+    }
+
+    if ((usage.model || !defaults.model) && (usage.effort || !defaults.effort)) {
+      return usage;
+    }
+
+    return {
+      ...usage,
+      model: usage.model ?? defaults.model,
+      effort: usage.effort ?? defaults.effort
+    };
+  }
+
   #syncActiveTurn(turnId: string, result: ReadTurnResult): void {
     const turn = this.#activeTurns.get(turnId);
     if (!turn) {
@@ -933,7 +980,7 @@ export class AppServerClient extends EventEmitter {
       upsertGeneratedImage(turn.generatedImages, image);
     }
     if (buffered.usage) {
-      turn.usage = buffered.usage;
+      turn.usage = this.#withThreadRuntimeDefaults(turn.threadId, buffered.usage);
     }
     turn.lastTokenCountCumulativeTokens = updateTokenCountCumulativeTotal(
       turn.lastTokenCountCumulativeTokens,
@@ -959,7 +1006,7 @@ export class AppServerClient extends EventEmitter {
       finalMessage: turn.text.trim(),
       aborted,
       generatedImages: [...turn.generatedImages]
-    }, turn.usage));
+    }, this.#withThreadRuntimeDefaults(turn.threadId, turn.usage)));
   }
 
   #startHeartbeat(socket: WebSocket, intervalMs = 30_000): void {
@@ -1133,6 +1180,35 @@ function updateTokenCountCumulativeTotal(
     return nextCumulativeTotalTokens;
   }
   return Math.max(previousCumulativeTotalTokens, nextCumulativeTotalTokens);
+}
+
+function normalizeThreadRuntimeDefaults(value: unknown): ThreadRuntimeDefaults | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const thread = isRecord(value.thread) ? value.thread : {};
+  const model =
+    normalizeOptionalString(value.model) ??
+    normalizeOptionalString(thread.model) ??
+    normalizeOptionalString(value.modelName) ??
+    normalizeOptionalString(thread.modelName);
+  const effort =
+    normalizeOptionalString(value.reasoningEffort) ??
+    normalizeOptionalString(value.reasoning_effort) ??
+    normalizeOptionalString(value.effort) ??
+    normalizeOptionalString(thread.reasoningEffort) ??
+    normalizeOptionalString(thread.reasoning_effort) ??
+    normalizeOptionalString(thread.effort);
+
+  if (!model && !effort) {
+    return undefined;
+  }
+
+  return {
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {})
+  };
 }
 
 function normalizeAgentTurnUsageFromThreadTurn(turn: {

@@ -4,9 +4,10 @@ import path from "node:path";
 import type {
   PersistedAdminAuditEvent,
   PersistedAdminOperation,
+  PersistedAgentTraceEvent,
   JsonLike,
   PersistedBackgroundJob,
-  PersistedCodexTurnUsage,
+  PersistedAgentTurnUsage,
   PersistedInboundMessage,
   PersistedInboundMessageStatus,
   PersistedInboundSource,
@@ -16,7 +17,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 3;
+export const CURRENT_STATE_SCHEMA_VERSION = 6;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -40,7 +41,7 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
           workspace_path TEXT NOT NULL,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
-          codex_thread_id TEXT,
+          agent_session_id TEXT,
           active_turn_id TEXT,
           active_turn_started_at TEXT,
           last_observed_message_ts TEXT,
@@ -172,38 +173,146 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
   },
   {
     version: 3,
-    name: "codex_turn_usage",
+    name: "agent_turn_usage",
+    up(database) {
+      createAgentTurnUsageSchema(database);
+    }
+  },
+  {
+    version: 4,
+    name: "agent_trace_events",
     up(database) {
       database.exec(`
-        CREATE TABLE IF NOT EXISTS codex_turn_usage (
-          turn_id TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS agent_trace_events (
+          id TEXT PRIMARY KEY,
           session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
-          channel_id TEXT NOT NULL,
-          root_thread_ts TEXT NOT NULL,
-          codex_thread_id TEXT,
-          status TEXT NOT NULL,
           source TEXT NOT NULL,
-          model TEXT,
-          effort TEXT,
-          input_tokens INTEGER NOT NULL DEFAULT 0,
-          cached_input_tokens INTEGER NOT NULL DEFAULT 0,
-          output_tokens INTEGER NOT NULL DEFAULT 0,
-          reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-          total_tokens INTEGER NOT NULL DEFAULT 0,
-          raw_usage TEXT,
-          started_at TEXT,
-          completed_at TEXT,
+          type TEXT NOT NULL,
+          at TEXT NOT NULL,
+          sequence INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          detail TEXT,
+          status TEXT,
+          role TEXT,
+          tool_name TEXT,
+          call_id TEXT,
+          turn_id TEXT,
+          detail_truncated INTEGER NOT NULL DEFAULT 0,
+          detail_original_chars INTEGER,
+          metadata TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
 
-        CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_session ON codex_turn_usage(session_key, completed_at);
-        CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_completed ON codex_turn_usage(completed_at);
-        CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_total ON codex_turn_usage(total_tokens);
+        CREATE INDEX IF NOT EXISTS idx_agent_trace_events_session_sequence ON agent_trace_events(session_key, sequence);
+        CREATE INDEX IF NOT EXISTS idx_agent_trace_events_session_at ON agent_trace_events(session_key, at);
+        CREATE INDEX IF NOT EXISTS idx_agent_trace_events_turn ON agent_trace_events(session_key, turn_id);
       `);
+    }
+  },
+  {
+    version: 5,
+    name: "agent_schema_repair",
+    up(database) {
+      createAgentTurnUsageSchema(database);
+
+      if (!tableExists(database, "codex_turn_usage")) {
+        return;
+      }
+
+      const columns = tableColumns(database, "codex_turn_usage");
+      const agentSessionColumn = columns.has("codex_thread_id")
+        ? "codex_thread_id"
+        : (columns.has("agent_session_id") ? "agent_session_id" : "NULL");
+      database.exec(`
+        INSERT OR IGNORE INTO agent_turn_usage (
+          turn_id, session_key, channel_id, root_thread_ts, agent_session_id,
+          status, source, model, effort,
+          input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens,
+          raw_usage, started_at, completed_at, created_at, updated_at
+        )
+        SELECT
+          turn_id, session_key, channel_id, root_thread_ts, ${agentSessionColumn},
+          status, source, model, effort,
+          input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens,
+          raw_usage, started_at, completed_at, created_at, updated_at
+        FROM codex_turn_usage;
+
+        DROP TABLE codex_turn_usage;
+      `);
+    }
+  },
+  {
+    version: 6,
+    name: "session_agent_schema_repair",
+    up(database) {
+      repairSessionAgentSchema(database);
     }
   }
 ];
+
+function repairSessionAgentSchema(database: DatabaseSync): void {
+  if (!tableExists(database, "sessions")) {
+    return;
+  }
+
+  const columns = tableColumns(database, "sessions");
+  if (!columns.has("agent_session_id")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN agent_session_id TEXT");
+  }
+
+  if (columns.has("codex_thread_id")) {
+    database.exec(`
+      UPDATE sessions
+      SET agent_session_id = COALESCE(agent_session_id, codex_thread_id)
+      WHERE codex_thread_id IS NOT NULL
+    `);
+  }
+}
+
+function createAgentTurnUsageSchema(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS agent_turn_usage (
+      turn_id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL,
+      root_thread_ts TEXT NOT NULL,
+      agent_session_id TEXT,
+      status TEXT NOT NULL,
+      source TEXT NOT NULL,
+      model TEXT,
+      effort TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      raw_usage TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_turn_usage_session ON agent_turn_usage(session_key, completed_at);
+    CREATE INDEX IF NOT EXISTS idx_agent_turn_usage_completed ON agent_turn_usage(completed_at);
+    CREATE INDEX IF NOT EXISTS idx_agent_turn_usage_total ON agent_turn_usage(total_tokens);
+  `);
+}
+
+function tableExists(database: DatabaseSync, tableName: string): boolean {
+  return Boolean(database
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName));
+}
+
+function tableColumns(database: DatabaseSync, tableName: string): Set<string> {
+  return new Set(
+    (database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>)
+      .map((row) => row.name)
+  );
+}
 
 export class StateStore {
   readonly #stateDir: string;
@@ -602,21 +711,40 @@ export class StateStore {
     });
   }
 
-  listCodexTurnUsage(limit = 1000): PersistedCodexTurnUsage[] {
+  listAgentTurnUsage(limit = 1000): PersistedAgentTurnUsage[] {
     return this.#databaseRequired()
       .prepare(`
-        SELECT * FROM codex_turn_usage
+        SELECT * FROM agent_turn_usage
         ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, updated_at DESC
         LIMIT ?
       `)
       .all(limit)
-      .map((row) => this.#rowToCodexTurnUsage(row as SqlRow));
+      .map((row) => this.#rowToAgentTurnUsage(row as SqlRow));
   }
 
-  async upsertCodexTurnUsage(record: PersistedCodexTurnUsage): Promise<void> {
-    const normalized = this.#normalizeCodexTurnUsage(record);
+  async upsertAgentTurnUsage(record: PersistedAgentTurnUsage): Promise<void> {
+    const normalized = this.#normalizeAgentTurnUsage(record);
     this.#transaction(() => {
-      this.#upsertCodexTurnUsage(normalized);
+      this.#upsertAgentTurnUsage(normalized);
+    });
+  }
+
+  listAgentTraceEvents(sessionKey: string, limit = 1000): PersistedAgentTraceEvent[] {
+    return this.#databaseRequired()
+      .prepare(`
+        SELECT * FROM agent_trace_events
+        WHERE session_key = ?
+        ORDER BY sequence ASC, at ASC, id ASC
+        LIMIT ?
+      `)
+      .all(sessionKey, limit)
+      .map((row) => this.#rowToAgentTraceEvent(row as SqlRow));
+  }
+
+  async upsertAgentTraceEvent(record: PersistedAgentTraceEvent): Promise<void> {
+    const normalized = this.#normalizeAgentTraceEvent(record);
+    this.#transaction(() => {
+      this.#upsertAgentTraceEvent(normalized);
     });
   }
 
@@ -663,7 +791,7 @@ export class StateStore {
     this.#databaseRequired().prepare(`
       INSERT INTO sessions (
         key, channel_id, root_thread_ts, workspace_path, created_at, updated_at,
-        codex_thread_id, active_turn_id, active_turn_started_at,
+        agent_session_id, active_turn_id, active_turn_started_at,
         last_observed_message_ts, last_delivered_message_ts, last_slack_reply_at,
         last_progress_reminder_at, last_turn_signal_turn_id, last_turn_signal_kind,
         last_turn_signal_reason, last_turn_signal_at,
@@ -677,7 +805,7 @@ export class StateStore {
         workspace_path = excluded.workspace_path,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
-        codex_thread_id = excluded.codex_thread_id,
+        agent_session_id = excluded.agent_session_id,
         active_turn_id = excluded.active_turn_id,
         active_turn_started_at = excluded.active_turn_started_at,
         last_observed_message_ts = excluded.last_observed_message_ts,
@@ -702,7 +830,7 @@ export class StateStore {
       record.workspacePath,
       record.createdAt,
       record.updatedAt,
-      record.codexThreadId ?? null,
+      record.agentSessionId ?? null,
       record.activeTurnId ?? null,
       record.activeTurnStartedAt ?? null,
       record.lastObservedMessageTs ?? null,
@@ -870,10 +998,10 @@ export class StateStore {
     );
   }
 
-  #upsertCodexTurnUsage(record: PersistedCodexTurnUsage): void {
+  #upsertAgentTurnUsage(record: PersistedAgentTurnUsage): void {
     this.#databaseRequired().prepare(`
-      INSERT INTO codex_turn_usage (
-        turn_id, session_key, channel_id, root_thread_ts, codex_thread_id,
+      INSERT INTO agent_turn_usage (
+        turn_id, session_key, channel_id, root_thread_ts, agent_session_id,
         status, source, model, effort, input_tokens, cached_input_tokens,
         output_tokens, reasoning_tokens, total_tokens, raw_usage,
         started_at, completed_at, created_at, updated_at
@@ -882,7 +1010,7 @@ export class StateStore {
         session_key = excluded.session_key,
         channel_id = excluded.channel_id,
         root_thread_ts = excluded.root_thread_ts,
-        codex_thread_id = excluded.codex_thread_id,
+        agent_session_id = excluded.agent_session_id,
         status = excluded.status,
         source = excluded.source,
         model = excluded.model,
@@ -902,7 +1030,7 @@ export class StateStore {
       record.sessionKey,
       record.channelId,
       record.rootThreadTs,
-      record.codexThreadId ?? null,
+      record.agentSessionId ?? null,
       record.status,
       record.source,
       record.model ?? null,
@@ -915,6 +1043,54 @@ export class StateStore {
       jsonOrNull(record.rawUsage),
       record.startedAt ?? null,
       record.completedAt ?? null,
+      record.createdAt,
+      record.updatedAt
+    );
+  }
+
+  #upsertAgentTraceEvent(record: PersistedAgentTraceEvent): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO agent_trace_events (
+        id, session_key, source, type, at, sequence, title, summary, detail,
+        status, role, tool_name, call_id, turn_id, detail_truncated,
+        detail_original_chars, metadata, created_at, updated_at
+      ) VALUES (${placeholders(19)})
+      ON CONFLICT(id) DO UPDATE SET
+        session_key = excluded.session_key,
+        source = excluded.source,
+        type = excluded.type,
+        at = excluded.at,
+        sequence = excluded.sequence,
+        title = excluded.title,
+        summary = excluded.summary,
+        detail = excluded.detail,
+        status = excluded.status,
+        role = excluded.role,
+        tool_name = excluded.tool_name,
+        call_id = excluded.call_id,
+        turn_id = excluded.turn_id,
+        detail_truncated = excluded.detail_truncated,
+        detail_original_chars = excluded.detail_original_chars,
+        metadata = excluded.metadata,
+        updated_at = excluded.updated_at
+    `).run(
+      record.id,
+      record.sessionKey,
+      record.source,
+      record.type,
+      record.at,
+      record.sequence,
+      record.title,
+      record.summary,
+      record.detail ?? null,
+      record.status ?? null,
+      record.role ?? null,
+      record.toolName ?? null,
+      record.callId ?? null,
+      record.turnId ?? null,
+      record.detailTruncated ? 1 : 0,
+      record.detailOriginalChars ?? null,
+      jsonOrNull(record.metadata),
       record.createdAt,
       record.updatedAt
     );
@@ -953,7 +1129,7 @@ export class StateStore {
       workspacePath: stringColumn(row, "workspace_path"),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
-      codexThreadId: optionalStringColumn(row, "codex_thread_id"),
+      agentSessionId: optionalStringColumn(row, "agent_session_id"),
       activeTurnId: optionalStringColumn(row, "active_turn_id"),
       activeTurnStartedAt: optionalStringColumn(row, "active_turn_started_at"),
       lastObservedMessageTs: optionalStringColumn(row, "last_observed_message_ts"),
@@ -1067,15 +1243,15 @@ export class StateStore {
     });
   }
 
-  #rowToCodexTurnUsage(row: SqlRow): PersistedCodexTurnUsage {
-    return this.#normalizeCodexTurnUsage({
+  #rowToAgentTurnUsage(row: SqlRow): PersistedAgentTurnUsage {
+    return this.#normalizeAgentTurnUsage({
       turnId: stringColumn(row, "turn_id"),
       sessionKey: stringColumn(row, "session_key"),
       channelId: stringColumn(row, "channel_id"),
       rootThreadTs: stringColumn(row, "root_thread_ts"),
-      codexThreadId: optionalStringColumn(row, "codex_thread_id"),
-      status: stringColumn(row, "status") as PersistedCodexTurnUsage["status"],
-      source: stringColumn(row, "source") as PersistedCodexTurnUsage["source"],
+      agentSessionId: optionalStringColumn(row, "agent_session_id"),
+      status: stringColumn(row, "status") as PersistedAgentTurnUsage["status"],
+      source: stringColumn(row, "source") as PersistedAgentTurnUsage["source"],
       model: optionalStringColumn(row, "model"),
       effort: optionalStringColumn(row, "effort"),
       inputTokens: optionalNumberColumn(row, "input_tokens") ?? 0,
@@ -1086,6 +1262,30 @@ export class StateStore {
       rawUsage: readJsonColumn<JsonLike | undefined>(row, "raw_usage", undefined),
       startedAt: optionalStringColumn(row, "started_at"),
       completedAt: optionalStringColumn(row, "completed_at"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at")
+    });
+  }
+
+  #rowToAgentTraceEvent(row: SqlRow): PersistedAgentTraceEvent {
+    return this.#normalizeAgentTraceEvent({
+      id: stringColumn(row, "id"),
+      sessionKey: stringColumn(row, "session_key"),
+      source: stringColumn(row, "source") as PersistedAgentTraceEvent["source"],
+      type: stringColumn(row, "type"),
+      at: stringColumn(row, "at"),
+      sequence: optionalNumberColumn(row, "sequence") ?? 0,
+      title: stringColumn(row, "title"),
+      summary: stringColumn(row, "summary"),
+      detail: optionalStringColumn(row, "detail"),
+      status: optionalStringColumn(row, "status"),
+      role: optionalStringColumn(row, "role"),
+      toolName: optionalStringColumn(row, "tool_name"),
+      callId: optionalStringColumn(row, "call_id"),
+      turnId: optionalStringColumn(row, "turn_id"),
+      detailTruncated: booleanColumn(row, "detail_truncated", false),
+      detailOriginalChars: optionalNumberColumn(row, "detail_original_chars"),
+      metadata: readJsonColumn<JsonLike | undefined>(row, "metadata", undefined),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at")
     });
@@ -1106,7 +1306,7 @@ export class StateStore {
       workspacePath,
       createdAt: String(session.createdAt),
       updatedAt: String(session.updatedAt),
-      codexThreadId: session.codexThreadId,
+      agentSessionId: session.agentSessionId,
       activeTurnId: session.activeTurnId,
       activeTurnStartedAt: session.activeTurnStartedAt,
       lastObservedMessageTs: session.lastObservedMessageTs,
@@ -1239,9 +1439,9 @@ export class StateStore {
     };
   }
 
-  #normalizeCodexTurnUsage(raw: Partial<PersistedCodexTurnUsage>): PersistedCodexTurnUsage {
+  #normalizeAgentTurnUsage(raw: Partial<PersistedAgentTurnUsage>): PersistedAgentTurnUsage {
     if (!raw.turnId || !raw.sessionKey || !raw.channelId || !raw.rootThreadTs || !raw.status || !raw.source) {
-      throw new Error(`Invalid Codex turn usage: ${raw.turnId ?? "unknown"}`);
+      throw new Error(`Invalid Agent turn usage: ${raw.turnId ?? "unknown"}`);
     }
 
     const now = new Date().toISOString();
@@ -1250,7 +1450,7 @@ export class StateStore {
       sessionKey: String(raw.sessionKey),
       channelId: String(raw.channelId),
       rootThreadTs: String(raw.rootThreadTs),
-      codexThreadId: typeof raw.codexThreadId === "string" ? raw.codexThreadId : undefined,
+      agentSessionId: typeof raw.agentSessionId === "string" ? raw.agentSessionId : undefined,
       status: raw.status,
       source: raw.source,
       model: typeof raw.model === "string" ? raw.model : undefined,
@@ -1263,6 +1463,35 @@ export class StateStore {
       rawUsage: raw.rawUsage,
       startedAt: typeof raw.startedAt === "string" ? raw.startedAt : undefined,
       completedAt: typeof raw.completedAt === "string" ? raw.completedAt : undefined,
+      createdAt: String(raw.createdAt ?? now),
+      updatedAt: String(raw.updatedAt ?? raw.createdAt ?? now)
+    };
+  }
+
+  #normalizeAgentTraceEvent(raw: Partial<PersistedAgentTraceEvent>): PersistedAgentTraceEvent {
+    if (!raw.id || !raw.sessionKey || !raw.source || !raw.type || !raw.at || !raw.title) {
+      throw new Error(`Invalid agent trace event: ${raw.id ?? "unknown"}`);
+    }
+
+    const now = new Date().toISOString();
+    return {
+      id: String(raw.id),
+      sessionKey: String(raw.sessionKey),
+      source: raw.source,
+      type: String(raw.type),
+      at: String(raw.at),
+      sequence: normalizeFiniteNumber(raw.sequence) ?? timestampSequence(raw.at),
+      title: String(raw.title),
+      summary: String(raw.summary ?? ""),
+      detail: typeof raw.detail === "string" ? raw.detail : undefined,
+      status: typeof raw.status === "string" ? raw.status : undefined,
+      role: typeof raw.role === "string" ? raw.role : undefined,
+      toolName: typeof raw.toolName === "string" ? raw.toolName : undefined,
+      callId: typeof raw.callId === "string" ? raw.callId : undefined,
+      turnId: typeof raw.turnId === "string" ? raw.turnId : undefined,
+      detailTruncated: raw.detailTruncated,
+      detailOriginalChars: normalizeFiniteNumber(raw.detailOriginalChars),
+      metadata: raw.metadata,
       createdAt: String(raw.createdAt ?? now),
       updatedAt: String(raw.updatedAt ?? raw.createdAt ?? now)
     };
@@ -1398,4 +1627,9 @@ function normalizeFiniteNumber(value: unknown): number | undefined {
 function normalizeTokenCount(value: unknown): number {
   const parsed = normalizeFiniteNumber(value) ?? 0;
   return Math.max(0, Math.trunc(parsed));
+}
+
+function timestampSequence(value: unknown): number {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
 }

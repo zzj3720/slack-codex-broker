@@ -15,6 +15,7 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS build
 
 COPY tsconfig.json ./
+COPY vite.config.ts ./
 COPY src ./src
 RUN pnpm build
 

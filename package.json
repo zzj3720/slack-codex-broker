@@ -17,9 +17,12 @@
     "node": ">=22.5.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/build/copy-static-assets.mjs",
+    "build": "pnpm build:admin-ui && tsc -p tsconfig.json && node scripts/build/copy-static-assets.mjs",
+    "build:admin-ui": "vp build",
     "dev": "tsx watch src/index.ts",
-    "dev:admin": "tsx watch src/admin-index.ts",
+    "dev:admin": "node scripts/dev/admin.mjs",
+    "dev:admin:server": "tsx watch src/admin-index.ts",
+    "dev:admin-ui": "vp dev --host 127.0.0.1 --port 5173",
     "dev:worker": "tsx watch src/worker-index.ts",
     "ops:check:real": "node scripts/ops/check-real.mjs",
     "ops:auth:real": "node scripts/ops/auth-real.mjs",
@@ -37,13 +40,20 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "6.0.1",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
+    "vite": "8.0.11",
+    "vite-plus": "0.1.20",
     "vitest": "^3.2.4"
   }
 }

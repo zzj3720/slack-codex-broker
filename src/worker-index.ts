@@ -5,6 +5,7 @@ import { createHttpHandler } from "./http/router.js";
 import { logger } from "./logger.js";
 import {
   configureServiceLogger,
+  createAgentRuntime,
   createCodexBroker,
   createDiskPressureCleanup,
   createGitHubAuthorMappings,
@@ -23,10 +24,14 @@ export async function startWorkerService(): Promise<{
   const { sessions: sessionManager } = createSessionServices(config);
   const githubAuthorMappings = await createGitHubAuthorMappings(config);
   const codexBroker = createCodexBroker(config);
+  const agentRuntime = createAgentRuntime({
+    codex: codexBroker,
+    sessions: sessionManager
+  });
   const bridge = createSlackBridge({
     config,
     sessions: sessionManager,
-    codex: codexBroker,
+    agentRuntime,
     mappings: githubAuthorMappings
   });
   const isolatedMcp = createIsolatedMcpService(config);

@@ -10,7 +10,7 @@ describe("SlackTurnReconciler", () => {
       channelId: "C123",
       rootThreadTs: "111.222",
       workspacePath: "/tmp/workspace",
-      codexThreadId: "thread-1",
+      agentSessionId: "thread-1",
       activeTurnId: "turn-1",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -19,7 +19,7 @@ describe("SlackTurnReconciler", () => {
     const setActiveTurnId = vi.fn();
     const resetTurnBatchToPending = vi.fn();
     const readTurnSnapshot = vi.fn(async () => null);
-    const ensureCodexThread = vi.fn(async () => session);
+    const ensureAgentSession = vi.fn(async () => session);
 
     const reconciler = new SlackTurnReconciler({
       sessions: {
@@ -29,13 +29,13 @@ describe("SlackTurnReconciler", () => {
         resetTurnBatchToPending
       } as never,
       turnRunner: {
-        ensureCodexThread,
+        ensureAgentSession,
         readTurnSnapshot
       } as never
     });
 
     await expect(reconciler.reconcileSingleActiveTurn(session)).resolves.toBe("retained");
-    expect(ensureCodexThread).toHaveBeenCalledWith(session);
+    expect(ensureAgentSession).toHaveBeenCalledWith(session);
     expect(readTurnSnapshot).toHaveBeenCalledWith(session, "turn-1", {
       syncActiveTurn: true,
       treatMissingAsStale: false
@@ -50,7 +50,7 @@ describe("SlackTurnReconciler", () => {
       channelId: "C123",
       rootThreadTs: "111.222",
       workspacePath: "/tmp/workspace",
-      codexThreadId: "thread-1",
+      agentSessionId: "thread-1",
       activeTurnId: "turn-1",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -59,7 +59,7 @@ describe("SlackTurnReconciler", () => {
     const setActiveTurnId = vi.fn(async () => session);
     const resetTurnBatchToPending = vi.fn();
     const readTurnSnapshot = vi.fn(async () => null);
-    const ensureCodexThread = vi.fn(async () => session);
+    const ensureAgentSession = vi.fn(async () => session);
 
     const reconciler = new SlackTurnReconciler({
       sessions: {
@@ -69,7 +69,7 @@ describe("SlackTurnReconciler", () => {
         resetTurnBatchToPending
       } as never,
       turnRunner: {
-        ensureCodexThread,
+        ensureAgentSession,
         readTurnSnapshot
       } as never
     });

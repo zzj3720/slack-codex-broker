@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   createSlackFailureFingerprint,
   formatSlackRunFailureMessage,
-  isMissingCodexThreadError,
-  isMissingActiveTurnSteerError,
+  isMissingAgentSessionError,
+  isMissingActiveTurnInputError,
   parseActiveTurnMismatch,
   shouldResetConflictingActiveTurnMismatch,
   shouldAutoRecoverSession,
@@ -14,13 +14,13 @@ import {
 } from "../src/services/slack/slack-conversation-utils.js";
 
 describe("slack conversation utils", () => {
-  it("detects a missing active turn steer error", () => {
-    expect(isMissingActiveTurnSteerError(new Error("no active turn to steer"))).toBe(true);
+  it("detects a missing active turn input delivery error", () => {
+    expect(isMissingActiveTurnInputError(new Error("no active turn to deliver input"))).toBe(true);
   });
 
-  it("detects an active turn mismatch steer error", () => {
+  it("detects an active turn mismatch input delivery error", () => {
     expect(
-      isMissingActiveTurnSteerError(
+      isMissingActiveTurnInputError(
         new Error("expected active turn id `turn-old` but found `turn-new`")
       )
     ).toBe(true);
@@ -58,13 +58,13 @@ describe("slack conversation utils", () => {
   });
 
   it("formats recoverable websocket failures for Slack users", () => {
-    expect(formatSlackRunFailureMessage(new Error("Codex app-server websocket closed"))).toBe(
+    expect(formatSlackRunFailureMessage(new Error("app-server websocket closed"))).toBe(
       "I lost my connection while working on this thread. I will resume as soon as the connection comes back."
     );
   });
 
   it("suppresses visible Slack notifications for recoverable websocket failures", () => {
-    expect(shouldPostSlackRunFailure(new Error("Codex app-server websocket closed"))).toBe(false);
+    expect(shouldPostSlackRunFailure(new Error("app-server websocket closed"))).toBe(false);
   });
 
   it("treats EPIPE transport failures as recoverable", () => {
@@ -84,11 +84,11 @@ describe("slack conversation utils", () => {
     );
   });
 
-  it("detects missing codex thread errors", () => {
-    expect(isMissingCodexThreadError(new Error("no rollout found for thread id 019cf4fd"))).toBe(true);
+  it("detects missing agent session errors", () => {
+    expect(isMissingAgentSessionError(new Error("no rollout found for thread id 019cf4fd"))).toBe(true);
   });
 
-  it("formats missing codex thread errors for Slack users", () => {
+  it("formats missing agent session errors for Slack users", () => {
     expect(
       formatSlackRunFailureMessage(new Error("no rollout found for thread id 019cf4fd"))
     ).toBe(

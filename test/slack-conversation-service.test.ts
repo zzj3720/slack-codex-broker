@@ -4,14 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../src/config.js";
 import { SlackConversationService } from "../src/services/slack/slack-conversation-service.js";
-import type { PersistedInboundMessage, SlackSessionRecord } from "../src/types.js";
+import type { PersistedAgentTraceEvent, PersistedInboundMessage, SlackSessionRecord } from "../src/types.js";
 
 const TEST_SESSION: SlackSessionRecord = {
   key: "C123:111.222",
   channelId: "C123",
   rootThreadTs: "111.222",
   workspacePath: "/tmp/workspace",
-  codexThreadId: "thread-1",
+  agentSessionId: "thread-1",
   activeTurnId: "turn-1",
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString()
@@ -31,17 +31,18 @@ afterEach(() => {
 });
 
 describe("SlackConversationService", () => {
-  it("removes the Codex notification listener on stop", async () => {
-    const codex = new EventEmitter();
-    const listSessions = vi.fn(() => [TEST_SESSION]);
+  it("removes the agent runtime event listener on stop", async () => {
+    const agentRuntime = new EventEmitter();
+    const getSessionByKey = vi.fn(() => TEST_SESSION);
     const setAssistantThreadStatus = vi.fn(async () => undefined);
 
     const service = new SlackConversationService({
       config: TEST_CONFIG,
       sessions: {
-        listSessions
+        getSessionByKey,
+        upsertAgentTraceEvent: vi.fn()
       } as never,
-      codex: codex as never,
+      agentRuntime: agentRuntime as never,
       slackApi: {
         setAssistantThreadStatus,
         addReaction: vi.fn(),
@@ -50,11 +51,16 @@ describe("SlackConversationService", () => {
       selfMessageFilter: {} as never
     });
 
-    expect(codex.listenerCount("notification")).toBe(1);
+    expect(agentRuntime.listenerCount("event")).toBe(1);
 
-    codex.emit("notification", "assistant.state", {
-      thread_id: TEST_SESSION.codexThreadId,
-      state: { phase: "thinking" }
+    agentRuntime.emit("event", {
+      type: "agent.tool.started",
+      agentSessionId: TEST_SESSION.agentSessionId,
+      brokerSessionKey: TEST_SESSION.key,
+      turnId: TEST_SESSION.activeTurnId,
+      callId: "call-1",
+      name: "exec_command",
+      at: new Date().toISOString()
     });
 
     await vi.waitFor(() => {
@@ -63,29 +69,35 @@ describe("SlackConversationService", () => {
 
     await service.stop();
 
-    expect(codex.listenerCount("notification")).toBe(0);
+    expect(agentRuntime.listenerCount("event")).toBe(0);
     expect(setAssistantThreadStatus).toHaveBeenCalledTimes(2);
 
-    codex.emit("notification", "assistant.state", {
-      thread_id: TEST_SESSION.codexThreadId,
-      state: { phase: "thinking" }
+    agentRuntime.emit("event", {
+      type: "agent.tool.started",
+      agentSessionId: TEST_SESSION.agentSessionId,
+      brokerSessionKey: TEST_SESSION.key,
+      turnId: TEST_SESSION.activeTurnId,
+      callId: "call-2",
+      name: "exec_command",
+      at: new Date().toISOString()
     });
 
     await Promise.resolve();
     expect(setAssistantThreadStatus).toHaveBeenCalledTimes(2);
   });
 
-  it("skips session scans for notifications without a turn or thread id", async () => {
-    const codex = new EventEmitter();
-    const listSessions = vi.fn(() => [TEST_SESSION]);
+  it("skips runtime events without a broker session key", async () => {
+    const agentRuntime = new EventEmitter();
+    const getSessionByKey = vi.fn(() => TEST_SESSION);
     const setAssistantThreadStatus = vi.fn(async () => undefined);
 
     const service = new SlackConversationService({
       config: TEST_CONFIG,
       sessions: {
-        listSessions
+        getSessionByKey,
+        upsertAgentTraceEvent: vi.fn()
       } as never,
-      codex: codex as never,
+      agentRuntime: agentRuntime as never,
       slackApi: {
         setAssistantThreadStatus,
         addReaction: vi.fn(),
@@ -94,20 +106,88 @@ describe("SlackConversationService", () => {
       selfMessageFilter: {} as never
     });
 
-    codex.emit("notification", "assistant.state", {
-      state: { phase: "thinking" }
+    agentRuntime.emit("event", {
+      type: "agent.error",
+      code: "runtime_error",
+      message: "missing session",
+      recoverable: false,
+      at: new Date().toISOString()
     });
 
     await Promise.resolve();
 
-    expect(listSessions).not.toHaveBeenCalled();
+    expect(getSessionByKey).not.toHaveBeenCalled();
     expect(setAssistantThreadStatus).not.toHaveBeenCalled();
 
     await service.stop();
   });
 
+  it("persists normalized agent runtime events as agent trace events", async () => {
+    const agentRuntime = new EventEmitter();
+    const records: PersistedAgentTraceEvent[] = [];
+    const upsertAgentTraceEvent = vi.fn(async (record: PersistedAgentTraceEvent) => {
+      records.push(record);
+    });
+
+    const service = new SlackConversationService({
+      config: TEST_CONFIG,
+      sessions: {
+        getSessionByKey: vi.fn(() => TEST_SESSION),
+        upsertAgentTraceEvent
+      } as never,
+      agentRuntime: agentRuntime as never,
+      slackApi: {
+        setAssistantThreadStatus: vi.fn(),
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {} as never
+    });
+
+    agentRuntime.emit("event", {
+      type: "agent.session.started",
+      agentSessionId: TEST_SESSION.agentSessionId,
+      brokerSessionKey: TEST_SESSION.key,
+      systemPrompt: [
+        "System instruction",
+        "",
+        "Personal long-lived memory from ~/.codex/AGENT.md:",
+        "- remember the admin language",
+        "",
+        "Slack thread message model:",
+        "live thread"
+      ].join("\n"),
+      memory: "- remember the admin language",
+      at: new Date().toISOString()
+    });
+    agentRuntime.emit("event", {
+      type: "agent.tool.started",
+      agentSessionId: TEST_SESSION.agentSessionId,
+      brokerSessionKey: TEST_SESSION.key,
+      turnId: TEST_SESSION.activeTurnId,
+      callId: "call-1",
+      name: "exec_command",
+      at: new Date().toISOString()
+    });
+
+    await vi.waitFor(() => {
+      expect(upsertAgentTraceEvent).toHaveBeenCalledTimes(3);
+    });
+    expect(records.map((record) => record.type)).toEqual(expect.arrayContaining([
+      "agent_system_prompt",
+      "agent_memory",
+      "agent_tool_call"
+    ]));
+    expect(records.find((record) => record.type === "agent_tool_call")).toEqual(expect.objectContaining({
+      source: "agent_runtime",
+      toolName: "exec_command"
+    }));
+
+    await service.stop();
+  });
+
   it("converts file upload initial comments from markdownish to mrkdwn", async () => {
-    const codex = new EventEmitter();
+    const agentRuntime = new EventEmitter();
     const uploadThreadFile = vi.fn(async () => ({
       fileId: "F123"
     }));
@@ -118,7 +198,7 @@ describe("SlackConversationService", () => {
       sessions: {
         setLastSlackReplyAt
       } as never,
-      codex: codex as never,
+      agentRuntime: agentRuntime as never,
       slackApi: {
         uploadThreadFile,
         setAssistantThreadStatus: vi.fn(),
@@ -147,7 +227,7 @@ describe("SlackConversationService", () => {
   });
 
   it("records a silent stop state without owning active turn completion", async () => {
-    const codex = new EventEmitter();
+    const agentRuntime = new EventEmitter();
     const recordTurnSignal = vi.fn(async () => TEST_SESSION);
     const setActiveTurnId = vi.fn(async () => ({
       ...TEST_SESSION,
@@ -165,7 +245,7 @@ describe("SlackConversationService", () => {
         updateInboundMessagesForBatch: vi.fn(async () => []),
         setLastDeliveredMessageTs: vi.fn(async () => TEST_SESSION)
       } as never,
-      codex: codex as never,
+      agentRuntime: agentRuntime as never,
       slackApi: {
         setAssistantThreadStatus: vi.fn(),
         addReaction: vi.fn(),
@@ -198,7 +278,7 @@ describe("SlackConversationService", () => {
   });
 
   it("records a visible final Slack message without owning active turn completion", async () => {
-    const codex = new EventEmitter();
+    const agentRuntime = new EventEmitter();
     const recordTurnSignal = vi.fn(async () => TEST_SESSION);
     const setActiveTurnId = vi.fn(async () => ({
       ...TEST_SESSION,
@@ -217,7 +297,7 @@ describe("SlackConversationService", () => {
         updateInboundMessagesForBatch: vi.fn(async () => []),
         setLastDeliveredMessageTs: vi.fn(async () => TEST_SESSION)
       } as never,
-      codex: codex as never,
+      agentRuntime: agentRuntime as never,
       slackApi: {
         postThreadMessage,
         setAssistantThreadStatus: vi.fn(),

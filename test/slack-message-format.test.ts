@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  formatSlackHistoryContextForCodex,
-  formatSlackMessageForCodex
+  formatSlackHistoryContextForAgent,
+  formatSlackMessageForAgent
 } from "../src/services/slack/slack-message-format.js";
 
-describe("formatSlackMessageForCodex", () => {
+describe("formatSlackMessageForAgent", () => {
   it("includes sender identity and thread metadata", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "thread_reply",
         channelId: "C123",
@@ -82,7 +82,7 @@ describe("formatSlackMessageForCodex", () => {
   });
 
   it("falls back to ids when profile lookup is unavailable", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "direct_message",
         channelId: "D123",
@@ -102,7 +102,7 @@ describe("formatSlackMessageForCodex", () => {
   });
 
   it("prepends earlier thread context when provided", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "app_mention",
         channelId: "C123",
@@ -125,7 +125,7 @@ describe("formatSlackMessageForCodex", () => {
   });
 
   it("includes resolved mentioned users and readable mention text", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "thread_reply",
         channelId: "C123",
@@ -157,7 +157,7 @@ describe("formatSlackMessageForCodex", () => {
   });
 
   it("renders image-only messages without dropping the body block", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "thread_reply",
         channelId: "C123",
@@ -183,7 +183,7 @@ describe("formatSlackMessageForCodex", () => {
   });
 
   it("renders recovered missed messages as one chronological batch", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "recovered_thread_batch",
         channelId: "C123",
@@ -243,7 +243,7 @@ describe("formatSlackMessageForCodex", () => {
   });
 
   it("renders bot/app card messages with raw Slack payload intact", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "thread_reply",
         channelId: "C123",
@@ -281,7 +281,7 @@ describe("formatSlackMessageForCodex", () => {
   });
 
   it("includes only selected Slack payload fields for bot cards", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "thread_reply",
         channelId: "C123",
@@ -308,7 +308,7 @@ describe("formatSlackMessageForCodex", () => {
             }
           ],
           metadata: {
-            noisy: "not needed by Codex"
+            noisy: "not needed by app-server"
           }
         }
       },
@@ -322,7 +322,7 @@ describe("formatSlackMessageForCodex", () => {
   });
 
   it("renders background job events without pretending they came from a Slack user", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "background_job_event",
         channelId: "C123",
@@ -358,7 +358,7 @@ describe("formatSlackMessageForCodex", () => {
   });
 
   it("renders unexpected stop nudges as structured broker events", () => {
-    const result = formatSlackMessageForCodex(
+    const result = formatSlackMessageForAgent(
       {
         source: "unexpected_turn_stop",
         channelId: "C123",
@@ -387,9 +387,9 @@ describe("formatSlackMessageForCodex", () => {
   });
 });
 
-describe("formatSlackHistoryContextForCodex", () => {
+describe("formatSlackHistoryContextForAgent", () => {
   it("renders a readable thread history block", () => {
-    const result = formatSlackHistoryContextForCodex([
+    const result = formatSlackHistoryContextForAgent([
       {
         channelId: "C123",
         channelType: "channel",

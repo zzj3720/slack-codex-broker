@@ -34,6 +34,12 @@ export interface MockTurnContext {
   interrupt: (message?: string) => void;
 }
 
+export interface MockTurnSteerRequest {
+  readonly threadId: string;
+  readonly expectedTurnId: string;
+  readonly input: readonly CodexInputItem[];
+}
+
 export class MockCodexAppServer {
   readonly #server = http.createServer();
   readonly #wsServer = new WebSocketServer({ server: this.#server });
@@ -45,15 +51,25 @@ export class MockCodexAppServer {
     readonly turnId: string;
     readonly input: readonly CodexInputItem[];
   }> = [];
+  readonly interrupts: Array<{
+    readonly threadId: string;
+    readonly turnId: string;
+  }> = [];
   readonly onTurnStart: ((context: MockTurnContext) => Promise<void> | void) | undefined;
   readonly onTurnSteer: ((context: MockTurnContext) => Promise<void> | void) | undefined;
+  readonly onTurnSteerRequest: ((request: MockTurnSteerRequest) => string | undefined) | undefined;
+  readonly #emitThreadTokenUsage: boolean;
 
   constructor(options?: {
     readonly onTurnStart?: (context: MockTurnContext) => Promise<void> | void;
     readonly onTurnSteer?: (context: MockTurnContext) => Promise<void> | void;
+    readonly onTurnSteerRequest?: (request: MockTurnSteerRequest) => string | undefined;
+    readonly emitThreadTokenUsage?: boolean;
   }) {
     this.onTurnStart = options?.onTurnStart;
     this.onTurnSteer = options?.onTurnSteer;
+    this.onTurnSteerRequest = options?.onTurnSteerRequest;
+    this.#emitThreadTokenUsage = options?.emitThreadTokenUsage ?? false;
 
     this.#wsServer.on("connection", (socket) => {
       this.#connections.add(socket);
@@ -245,6 +261,16 @@ export class MockCodexAppServer {
 
         const turn = this.#requireTurn(thread, expectedTurnId);
         const input = normalizeInput(params.input);
+        const requestError = this.onTurnSteerRequest?.({
+          threadId,
+          expectedTurnId,
+          input
+        });
+        if (requestError) {
+          this.#error(socket, message.id, requestError);
+          return;
+        }
+
         this.steers.push({
           threadId,
           turnId: expectedTurnId,
@@ -263,6 +289,10 @@ export class MockCodexAppServer {
         const turnId = String(params.turnId ?? "");
         const thread = this.#requireThread(threadId);
         const turn = this.#requireTurn(thread, turnId);
+        this.interrupts.push({
+          threadId,
+          turnId
+        });
         this.#respond(socket, message.id, { ok: true });
         this.#interruptTurn(socket, thread, turn, "interrupted");
         return;
@@ -309,8 +339,18 @@ export class MockCodexAppServer {
 
         turn.status = "completed";
         turn.finalMessage = message;
-        turn.usage = usage;
+        turn.usage = this.#emitThreadTokenUsage ? undefined : usage;
         thread.activeTurnId = undefined;
+        if (usage && this.#emitThreadTokenUsage) {
+          socket.send(JSON.stringify({
+            method: "thread/tokenUsage/updated",
+            params: {
+              threadId: thread.id,
+              turnId: turn.turnId,
+              tokenUsage: toThreadTokenUsage(usage)
+            }
+          }));
+        }
         if (message) {
           socket.send(JSON.stringify({
             method: "item/agentMessage/delta",
@@ -325,9 +365,9 @@ export class MockCodexAppServer {
           params: {
             turn: {
               id: turn.turnId,
-              usage
+              usage: this.#emitThreadTokenUsage ? undefined : usage
             },
-            usage
+            usage: this.#emitThreadTokenUsage ? undefined : usage
           }
         }));
       },
@@ -404,4 +444,28 @@ function normalizeInput(value: unknown): readonly CodexInputItem[] {
   }
 
   return value as readonly CodexInputItem[];
+}
+
+function toThreadTokenUsage(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      last: {},
+      total: {}
+    };
+  }
+
+  const record = value as Record<string, unknown>;
+  const usage = {
+    inputTokens: record.input_tokens ?? record.inputTokens ?? 0,
+    cachedInputTokens: record.cached_input_tokens ?? record.cachedInputTokens ?? 0,
+    outputTokens: record.output_tokens ?? record.outputTokens ?? 0,
+    reasoningOutputTokens: record.reasoning_tokens ?? record.reasoningTokens ?? record.reasoning_output_tokens ?? record.reasoningOutputTokens ?? 0,
+    totalTokens: record.total_tokens ?? record.totalTokens ?? 0,
+    model: record.model,
+    effort: record.effort
+  };
+  return {
+    last: usage,
+    total: usage
+  };
 }

@@ -13,7 +13,8 @@ import type {
   SlackThreadMessage,
   SlackTurnSignalKind
 } from "../../types.js";
-import { CodexBroker } from "../codex/codex-broker.js";
+import type { AgentRuntime, AgentRuntimeEvent } from "../agent-runtime/types.js";
+import { AgentTraceRecorder } from "../agent-runtime/agent-trace-recorder.js";
 import {
   SlackApi,
   type SlackUploadedFile
@@ -31,10 +32,10 @@ import {
   createSlackFailureFingerprint,
   formatSlackRunFailureMessage,
   isBeforeSlackTs,
-  isMissingCodexThreadError,
-  isRecoverableCodexTurnFailure,
+  isMissingAgentSessionError,
+  isRecoverableAgentTurnFailure,
   parseActiveTurnMismatch,
-  isMissingActiveTurnSteerError,
+  isMissingActiveTurnInputError,
   isSlackMessageAfterCursor,
   shouldResetConflictingActiveTurnMismatch,
   shouldForceResetStaleIdleRuntime,
@@ -44,7 +45,7 @@ import {
 } from "./slack-conversation-utils.js";
 import { SlackInboundStore } from "./slack-inbound-store.js";
 import {
-  formatSlackHistoryContextForCodex
+  formatSlackHistoryContextForAgent
 } from "./slack-message-format.js";
 import { markdownishToMrkdwn } from "./slack-mrkdwn.js";
 import { SlackSelfMessageFilter } from "./slack-self-filter.js";
@@ -75,7 +76,8 @@ const NONRECOVERABLE_DISPATCH_RETRY_COOLDOWN_MS = 5 * 60 * 1_000;
 export class SlackConversationService {
   readonly #config: AppConfig;
   readonly #sessions: SessionManager;
-  readonly #codex: CodexBroker;
+  readonly #agentRuntime: AgentRuntime;
+  readonly #traceRecorder: AgentTraceRecorder;
   readonly #slackApi: SlackApi;
   readonly #selfMessageFilter: SlackSelfMessageFilter;
   readonly #coauthors: {
@@ -89,7 +91,7 @@ export class SlackConversationService {
   readonly #inboundStore: SlackInboundStore;
   readonly #turnRunner: SlackTurnRunner;
   readonly #turnReconciler: SlackTurnReconciler;
-  readonly #codexNotificationHandler: (method: string, params: Record<string, unknown> | undefined) => void;
+  readonly #agentRuntimeEventHandler: (event: AgentRuntimeEvent) => void;
   #botUserId = "";
   #activeTurnReconcileTimer: NodeJS.Timeout | undefined;
   #catchUpPromise: Promise<void> | undefined;
@@ -98,14 +100,14 @@ export class SlackConversationService {
   constructor(options: {
     readonly config: AppConfig;
     readonly sessions: SessionManager;
-    readonly codex: CodexBroker;
+    readonly agentRuntime: AgentRuntime;
     readonly slackApi: SlackApi;
     readonly selfMessageFilter: SlackSelfMessageFilter;
     readonly coauthors?: SlackCoauthorService | undefined;
   }) {
     this.#config = options.config;
     this.#sessions = options.sessions;
-    this.#codex = options.codex;
+    this.#agentRuntime = options.agentRuntime;
     this.#slackApi = options.slackApi;
     this.#selfMessageFilter = options.selfMessageFilter;
     this.#coauthors = options.coauthors ?? {
@@ -115,8 +117,11 @@ export class SlackConversationService {
       sessions: this.#sessions,
       slackApi: this.#slackApi
     });
+    this.#traceRecorder = new AgentTraceRecorder({
+      sessions: this.#sessions
+    });
     this.#turnRunner = new SlackTurnRunner({
-      codex: options.codex,
+      agentRuntime: this.#agentRuntime,
       slackApi: this.#slackApi,
       sessions: this.#sessions,
       inboundStore: this.#inboundStore
@@ -126,10 +131,10 @@ export class SlackConversationService {
       turnRunner: this.#turnRunner,
       inboundStore: this.#inboundStore
     });
-    this.#codexNotificationHandler = (method: string, params: Record<string, unknown> | undefined) => {
-      this.#handleCodexNotification(method, params ?? {});
+    this.#agentRuntimeEventHandler = (event) => {
+      this.#handleAgentRuntimeEvent(event);
     };
-    this.#codex.on("notification", this.#codexNotificationHandler);
+    this.#agentRuntime.on("event", this.#agentRuntimeEventHandler);
   }
 
   setBotUserId(botUserId: string): void {
@@ -146,7 +151,7 @@ export class SlackConversationService {
 
   async stop(): Promise<void> {
     this.#stopActiveTurnReconciler();
-    this.#codex.off("notification", this.#codexNotificationHandler);
+    this.#agentRuntime.off("event", this.#agentRuntimeEventHandler);
     for (const runtime of this.#runtimeSessions.values()) {
       if (!runtime.autoResumeTimer) {
         continue;
@@ -163,8 +168,8 @@ export class SlackConversationService {
     return this.#inboundStore.isAlreadyHandled(session, messageTs);
   }
 
-  async ensureCodexThread(session: SlackSessionRecord): Promise<SlackSessionRecord> {
-    return await this.#turnRunner.ensureCodexThread(session);
+  async ensureAgentSession(session: SlackSessionRecord): Promise<SlackSessionRecord> {
+    return await this.#turnRunner.ensureAgentSession(session);
   }
 
   async readThreadHistory(options: {
@@ -220,7 +225,7 @@ export class SlackConversationService {
 
     return {
       messages: resolvedMessages,
-      formattedText: formatSlackHistoryContextForCodex(resolvedMessages),
+      formattedText: formatSlackHistoryContextForAgent(resolvedMessages),
       hasMore: filteredMessages.length > boundedMessages.length
     };
   }
@@ -511,11 +516,11 @@ export class SlackConversationService {
     const runtime = this.#getRuntimeSession(session.key);
     runtime.queue.length = 0;
 
-    if (!session.activeTurnId || !session.codexThreadId) {
+    if (!session.activeTurnId || !session.agentSessionId) {
       return false;
     }
 
-    await this.#turnRunner.ensureCodexThread(session);
+    await this.#turnRunner.ensureAgentSession(session);
     await this.#turnRunner.interrupt(session);
     await this.#inboundStore.markTurnBatchDone(session, session.activeTurnId);
     await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
@@ -604,7 +609,7 @@ export class SlackConversationService {
           await this.#maybeRemindSilentActiveTurn(this.#findSessionByKey(session.key));
         }
       } catch (error) {
-        logger.warn("Failed to reconcile live Codex turn state", {
+        logger.warn("Failed to reconcile live agent turn state", {
           sessionKey: session.key,
           turnId: session.activeTurnId ?? null,
           error: error instanceof Error ? error.message : String(error)
@@ -760,7 +765,7 @@ export class SlackConversationService {
   }
 
   async #maybeRemindSilentActiveTurn(session: SlackSessionRecord): Promise<void> {
-    if (!session.activeTurnId || !session.codexThreadId || !session.activeTurnStartedAt) {
+    if (!session.activeTurnId || !session.agentSessionId || !session.activeTurnStartedAt) {
       return;
     }
 
@@ -788,7 +793,7 @@ export class SlackConversationService {
     }
 
     try {
-      await this.#turnRunner.steerReminder(
+      await this.#turnRunner.submitRuntimeReminder(
         session,
         [
           "You have been working in this Slack thread for a while without a user-visible update.",
@@ -798,8 +803,8 @@ export class SlackConversationService {
         ].join("\n")
       );
     } catch (error) {
-      if (isMissingActiveTurnSteerError(error)) {
-        await this.#syncActiveTurnFromSteerError(session, error);
+      if (isMissingActiveTurnInputError(error)) {
+        await this.#syncActiveTurnFromActiveInputError(session, error);
         return;
       }
       throw error;
@@ -827,21 +832,21 @@ export class SlackConversationService {
     if (latestSession.activeTurnId) {
       try {
         const input = this.#inboundStore.createSlackInputFromPersistedMessage(pendingMessage);
-        const steeredSession = await this.#steerPersistedMessageIntoActiveTurn(latestSession, pendingMessage, input);
-        if (steeredSession) {
-          latestSession = steeredSession;
+        const submittedSession = await this.#submitPersistedMessageIntoActiveTurn(latestSession, pendingMessage, input);
+        if (submittedSession) {
+          latestSession = submittedSession;
           return;
         }
       } catch (error) {
-        logger.warn("Failed to steer persisted Slack message into active Codex turn; falling back to queue", {
+        logger.warn("Failed to deliver persisted Slack message into active agent turn", {
           sessionKey: session.key,
           turnId: latestSession.activeTurnId,
           messageTs,
           error: error instanceof Error ? error.message : String(error)
         });
 
-        if (isMissingActiveTurnSteerError(error)) {
-          latestSession = await this.#syncActiveTurnFromSteerError(latestSession, error, {
+        if (isMissingActiveTurnInputError(error)) {
+          latestSession = await this.#syncActiveTurnFromActiveInputError(latestSession, error, {
             messageTs
           });
         }
@@ -874,25 +879,25 @@ export class SlackConversationService {
           return 0;
         }
 
-        const steeredSession = await this.#steerPersistedBatchIntoActiveTurn(
+        const submittedSession = await this.#submitPersistedBatchIntoActiveTurn(
           latestSession,
           pendingMessages,
           input
         );
-        if (steeredSession) {
-          latestSession = steeredSession;
+        if (submittedSession) {
+          latestSession = submittedSession;
           return pendingMessages.length;
         }
       } catch (error) {
-        logger.warn("Failed to steer recovered Slack backlog into active Codex turn; queuing backlog", {
+        logger.warn("Failed to deliver recovered Slack backlog into active agent turn", {
           sessionKey: session.key,
           turnId: latestSession.activeTurnId,
           recoveryKind,
           error: error instanceof Error ? error.message : String(error)
         });
 
-        if (isMissingActiveTurnSteerError(error)) {
-          latestSession = await this.#syncActiveTurnFromSteerError(latestSession, error);
+        if (isMissingActiveTurnInputError(error)) {
+          latestSession = await this.#syncActiveTurnFromActiveInputError(latestSession, error);
         }
       }
     }
@@ -929,7 +934,7 @@ export class SlackConversationService {
     }
   }
 
-  async #steerPersistedMessageIntoActiveTurn(
+  async #submitPersistedMessageIntoActiveTurn(
     session: SlackSessionRecord,
     pendingMessage: PersistedInboundMessage,
     input: SlackInputMessage
@@ -942,13 +947,13 @@ export class SlackConversationService {
       }
 
       try {
-        await this.#turnRunner.steerActiveTurn(latestSession, input);
+        await this.#turnRunner.submitAdditionalInput(latestSession, input);
         await this.#inboundStore.markMessagesInflight(
           latestSession,
           [pendingMessage],
           latestSession.activeTurnId
         );
-        logger.debug("Steered persisted Slack message into active Codex turn", {
+        logger.debug("Delivered persisted Slack message into active agent turn", {
           sessionKey: session.key,
           turnId: latestSession.activeTurnId,
           source: input.source,
@@ -956,8 +961,8 @@ export class SlackConversationService {
         });
         return latestSession;
       } catch (error) {
-        const syncedSession = isMissingActiveTurnSteerError(error)
-          ? await this.#syncActiveTurnFromSteerError(latestSession, error, {
+        const syncedSession = isMissingActiveTurnInputError(error)
+          ? await this.#syncActiveTurnFromActiveInputError(latestSession, error, {
               messageTs: pendingMessage.messageTs
             })
           : latestSession;
@@ -975,7 +980,7 @@ export class SlackConversationService {
     return null;
   }
 
-  async #steerPersistedBatchIntoActiveTurn(
+  async #submitPersistedBatchIntoActiveTurn(
     session: SlackSessionRecord,
     pendingMessages: readonly PersistedInboundMessage[],
     input: SlackInputMessage
@@ -988,7 +993,7 @@ export class SlackConversationService {
       }
 
       try {
-        await this.#turnRunner.steerActiveTurn(latestSession, input);
+        await this.#turnRunner.submitAdditionalInput(latestSession, input);
         await this.#inboundStore.markMessagesInflight(
           latestSession,
           pendingMessages,
@@ -996,8 +1001,8 @@ export class SlackConversationService {
         );
         return latestSession;
       } catch (error) {
-        const syncedSession = isMissingActiveTurnSteerError(error)
-          ? await this.#syncActiveTurnFromSteerError(latestSession, error)
+        const syncedSession = isMissingActiveTurnInputError(error)
+          ? await this.#syncActiveTurnFromActiveInputError(latestSession, error)
           : latestSession;
         if (syncedSession.activeTurnId && syncedSession.activeTurnId !== latestSession.activeTurnId) {
           latestSession = syncedSession;
@@ -1013,7 +1018,7 @@ export class SlackConversationService {
     return null;
   }
 
-  async #syncActiveTurnFromSteerError(
+  async #syncActiveTurnFromActiveInputError(
     session: SlackSessionRecord,
     error: unknown,
     options?: {
@@ -1049,7 +1054,7 @@ export class SlackConversationService {
         return latestSession;
       }
 
-      logger.warn("Synchronizing broker active turn id to Codex-reported active turn", {
+      logger.warn("Synchronizing broker active turn id to agent-runtime-reported active turn", {
         sessionKey: session.key,
         previousTurnId: session.activeTurnId,
         actualTurnId: mismatch.actualTurnId,
@@ -1062,7 +1067,7 @@ export class SlackConversationService {
       );
     }
 
-    logger.warn("Detected stale active Codex turn; resetting broker runtime state", {
+    logger.warn("Detected stale active agent turn; resetting broker runtime state", {
       sessionKey: session.key,
       turnId: session.activeTurnId,
       messageTs: options?.messageTs ?? null
@@ -1105,7 +1110,7 @@ export class SlackConversationService {
         }
 
         this.#setAssistantThinking(session);
-        session = await this.#turnRunner.ensureCodexThread(session);
+        session = await this.#turnRunner.ensureAgentSession(session);
         const pendingMessages = this.#inboundStore.listPendingMessages(session);
 
         if (pendingMessages.length === 0) {
@@ -1122,7 +1127,7 @@ export class SlackConversationService {
         }
 
         const input = await this.#turnRunner.buildTurnInput(slackInput);
-        const turnOutcome = await this.#turnRunner.runTurnWithRecovery({
+        const turnOutcome = await this.#turnRunner.submitInputWithRecovery({
           session,
           sessionKey,
           senderUserId: slackInput.userId,
@@ -1136,7 +1141,7 @@ export class SlackConversationService {
 
         session = turnOutcome.session;
         const result = turnOutcome.result;
-        logger.debug("Codex turn finished without broker-managed Slack reply forwarding", {
+        logger.debug("agent turn finished without broker-managed Slack reply forwarding", {
           sessionKey,
           turnId: result.turnId,
           aborted: result.aborted,
@@ -1186,9 +1191,9 @@ export class SlackConversationService {
         }
         await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
         if (
-          isRecoverableCodexTurnFailure(error) ||
-          isMissingActiveTurnSteerError(error) ||
-          isMissingCodexThreadError(error)
+          isRecoverableAgentTurnFailure(error) ||
+          isMissingActiveTurnInputError(error) ||
+          isMissingAgentSessionError(error)
         ) {
           this.#scheduleAutoResume(session.key);
         } else {
@@ -1482,101 +1487,45 @@ export class SlackConversationService {
     return controller;
   }
 
-  #handleCodexNotification(method: string, params: Record<string, unknown>): void {
-    const session = this.#findSessionForCodexNotification(params);
+  #handleAgentRuntimeEvent(event: AgentRuntimeEvent): void {
+    void this.#traceRecorder.record(event).catch((error: unknown) => {
+      logger.warn("Failed to persist agent runtime trace event", {
+        type: event.type,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+
+    const sessionKey = "brokerSessionKey" in event ? event.brokerSessionKey : undefined;
+    const session = sessionKey ? this.#sessions.getSessionByKey(sessionKey) : undefined;
     if (!session) {
       return;
     }
 
     const controller = this.#getStatusController(session.channelId, session.rootThreadTs);
-
-    switch (method) {
-      case "assistant.state":
-      case "workspace.assistant.state":
-        controller.handleAssistantState(asRecord(params.state));
+    switch (event.type) {
+      case "agent.tool.started":
+        controller.handleToolStart({
+          name: event.name,
+          callId: event.callId,
+          turnId: event.turnId
+        });
         return;
-      case "tool_start":
-      case "codex/event/tool_start":
-        controller.handleToolStart(params);
+      case "agent.tool.completed":
+        controller.handleToolEnd({
+          name: event.name,
+          callId: event.callId,
+          turnId: event.turnId,
+          status: event.status
+        });
         return;
-      case "tool_end":
-      case "codex/event/tool_end":
-        controller.handleToolEnd(params);
-        return;
-      case "status":
-      case "codex/event/status":
-        controller.handleTerminalStatus(typeof params.status === "string" ? params.status : undefined);
-        return;
-      case "item/agentMessage/delta":
-      case "turn/completed":
-      case "codex/event/turn_aborted":
-      case "error":
-      case "codex/event/error":
+      case "agent.message.delta":
+      case "agent.message.completed":
+      case "agent.turn.completed":
+      case "agent.error":
         controller.clear();
         return;
       default:
         return;
     }
   }
-
-  #findSessionForCodexNotification(params: Record<string, unknown>): SlackSessionRecord | undefined {
-    const turnId = normalizeCodexTurnId(params);
-    const threadId = normalizeCodexThreadId(params);
-    if (!turnId && !threadId) {
-      return undefined;
-    }
-
-    const sessions = this.#sessions.listSessions();
-    for (const session of sessions) {
-      if (turnId && session.activeTurnId === turnId) {
-        return session;
-      }
-      if (threadId && session.codexThreadId === threadId) {
-        return session;
-      }
-    }
-
-    return undefined;
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Record<string, unknown>;
-}
-
-function normalizeCodexTurnId(params: Record<string, unknown>): string | undefined {
-  const direct = normalizeNonEmptyString(
-    params.turnId ??
-      params.turn_id ??
-      (asRecord(params.turn)?.id) ??
-      (asRecord(params.msg)?.turn_id)
-  );
-  if (direct) {
-    return direct;
-  }
-
-  return normalizeNonEmptyString(asRecord(params.state)?.turn_id);
-}
-
-function normalizeCodexThreadId(params: Record<string, unknown>): string | undefined {
-  return normalizeNonEmptyString(
-    params.threadId ??
-      params.thread_id ??
-      (asRecord(params.thread)?.id) ??
-      (asRecord(params.msg)?.thread_id) ??
-      (asRecord(params.state)?.thread_id)
-  );
-}
-
-function normalizeNonEmptyString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }

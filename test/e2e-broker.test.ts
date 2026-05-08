@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CodexInputItem } from "../src/services/codex/app-server-client.js";
 import { SessionManager } from "../src/services/session-manager.js";
 import { StateStore } from "../src/store/state-store.js";
-import type { PersistedInboundMessage, SlackSessionRecord } from "../src/types.js";
+import type { PersistedAgentTraceEvent, PersistedInboundMessage, SlackSessionRecord } from "../src/types.js";
 import { MockCodexAppServer } from "./helpers/mock-codex-app-server.js";
 import { MockSlackServer } from "./manual/mock-slack-server.js";
 
@@ -388,7 +388,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(recoveredText).toContain("\"batch_message_count\": 2");
   }, 90_000);
 
-  it("starts a fresh turn instead of resyncing back to an older active turn after a steer mismatch reset", async () => {
+  it("starts a fresh turn instead of resyncing back to an older active turn after a active input mismatch reset", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {
       await removeTempRoot(tempRoot);
@@ -439,7 +439,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     });
     cleanups.push(() => broker.stop());
 
-    await mockSlack.sendEvent("evt-steer-mismatch-session", {
+    await mockSlack.sendEvent("evt-active-input-mismatch-session", {
       type: "app_mention",
       user: "U123",
       channel: "C123",
@@ -488,7 +488,7 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "MISSED_AFTER_MISMATCH",
       user: "U234"
     });
-    const codexThread = existingSession?.codexThreadId ? mockCodex.getThread(existingSession.codexThreadId) : undefined;
+    const codexThread = existingSession?.agentSessionId ? mockCodex.getThread(existingSession.agentSessionId) : undefined;
     if (codexThread) {
       codexThread.activeTurnId = undefined;
       for (const turn of codexThread.turns) {
@@ -511,7 +511,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     cleanups.push(() => restarted.stop());
 
     try {
-      await waitFor(() => mockCodex.turnsStarted.length >= 2, "replacement turn after steer mismatch", 60_000);
+      await waitFor(() => mockCodex.turnsStarted.length >= 2, "replacement turn after active input mismatch", 60_000);
     } catch (error) {
       console.error(restarted.logs.join("").slice(-8_000));
       throw error;
@@ -525,7 +525,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     await waitFor(async () => {
       const session = await readSessionRecord(tempRoot, sessionKey);
       return !session.activeTurnId && session.lastDeliveredMessageTs === "223.222";
-    }, "steer-mismatch recovered delivery cursor");
+    }, "active-input-mismatch recovered delivery cursor");
     const finalSession = await readSessionRecord(tempRoot, sessionKey);
     expect(finalSession.activeTurnId).toBeUndefined();
     expect(finalSession.lastDeliveredMessageTs).toBe("223.222");
@@ -533,7 +533,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     await waitFor(async () => {
       const inbound = await readInboundMessages(tempRoot, sessionKey);
       return inbound.every((message) => message.status === "done");
-    }, "all recovered steer-mismatch inbound messages done");
+    }, "all recovered active-input-mismatch inbound messages done");
     const finalInbound = await readInboundMessages(tempRoot, sessionKey);
     expect(finalInbound.filter((message) => message.status !== "done")).toHaveLength(0);
   }, 90_000);
@@ -947,7 +947,7 @@ describe.sequential("slack-codex-broker e2e", () => {
         mockCodex.steers.some((steer) =>
           collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
         ),
-      "progress reminder steer"
+      "progress reminder input"
     );
 
     const reminder = mockCodex.steers.find((steer) =>
@@ -957,6 +957,199 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(collectTextInput(reminder!.input)).toContain("If yes, send a short Slack update. If not, keep working.");
     await waitForSessionIdle(tempRoot, "C123:444.220");
   }, 60_000);
+
+  it("delivers idle input, active follow-up input, and progress reminders through one broker agent input contract", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const releaseTurn = createDeferred<void>();
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer({
+      onTurnStart: async (context) => {
+        await releaseTurn.promise;
+        context.complete("CONTRACT_DONE");
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      releaseTurn.resolve();
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const sessionKey = "C123:445.220";
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot,
+      extraEnv: {
+        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100",
+        SLACK_PROGRESS_REMINDER_AFTER_MS: "200",
+        SLACK_PROGRESS_REMINDER_REPEAT_MS: "200"
+      }
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-contract-initial", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "445.220",
+      ts: "445.221",
+      text: "<@UBOT> INITIAL_CONTRACT_INPUT"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length === 1, "initial input starts one turn");
+    await waitForSessionActive(tempRoot, sessionKey);
+
+    await mockSlack.sendEvent("evt-contract-follow-up", {
+      type: "message",
+      user: "U234",
+      channel: "C123",
+      thread_ts: "445.220",
+      ts: "445.222",
+      text: "FOLLOW_UP_ACTIVE_INPUT"
+    });
+
+    await waitFor(
+      () => mockCodex.steers.some((steer) => collectTextInput(steer.input).includes("FOLLOW_UP_ACTIVE_INPUT")),
+      "active follow-up delivered immediately"
+    );
+    await waitFor(
+      () => mockCodex.steers.some((steer) =>
+        collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
+      ),
+      "active progress reminder delivered immediately"
+    );
+
+    expect(mockCodex.turnsStarted).toHaveLength(1);
+    expect(mockCodex.interrupts).toHaveLength(0);
+    const inflightBeforeCompletion = await readInboundMessages(tempRoot, sessionKey);
+    expect(inflightBeforeCompletion.find((message) => message.messageTs === "445.222")?.status).toBe("inflight");
+
+    releaseTurn.resolve();
+    await waitForSessionIdle(tempRoot, sessionKey);
+
+    const traceEvents = await readAgentTraceEvents(tempRoot, sessionKey);
+    const deliveredEvents = traceEvents.filter((event) => event.type === "agent_input_delivered");
+    expect(deliveredEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        status: "started_turn",
+        metadata: expect.objectContaining({
+          delivery: "started_turn"
+        })
+      }),
+      expect.objectContaining({
+        status: "joined_active_turn",
+        metadata: expect.objectContaining({
+          delivery: "joined_active_turn"
+        })
+      })
+    ]));
+    expect(deliveredEvents.filter((event) => event.status === "joined_active_turn")).toHaveLength(2);
+    expect(traceEvents.map((event) => event.type)).toEqual(expect.arrayContaining([
+      "agent_input_received",
+      "agent_input_delivered",
+      "agent_turn_started",
+      "agent_turn_completed"
+    ]));
+  }, 90_000);
+
+  it("queues active Slack follow-up input when immediate active delivery fails", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const releaseInitialTurn = createDeferred<void>();
+    const releaseFollowUpTurn = createDeferred<void>();
+    let steerFailureInjected = false;
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer({
+      onTurnSteerRequest: (request) => {
+        if (!steerFailureInjected && collectTextInput(request.input).includes("FOLLOW_UP_QUEUED_AFTER_ACTIVE_DELIVERY_FAILURE")) {
+          steerFailureInjected = true;
+          return "temporary active input delivery failure";
+        }
+        return undefined;
+      },
+      onTurnStart: async (context) => {
+        if (mockCodex.turnsStarted.length === 1) {
+          await releaseInitialTurn.promise;
+          context.complete("INITIAL_DONE");
+          return;
+        }
+
+        await releaseFollowUpTurn.promise;
+        context.complete("FOLLOW_UP_DONE");
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      releaseInitialTurn.resolve();
+      releaseFollowUpTurn.resolve();
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const sessionKey = "C123:446.220";
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-active-delivery-fallback-initial", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "446.220",
+      ts: "446.221",
+      text: "<@UBOT> INITIAL_ACTIVE_DELIVERY_FAILURE_TEST"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length === 1, "initial turn before active delivery failure");
+    await waitForSessionActive(tempRoot, sessionKey);
+
+    await mockSlack.sendEvent("evt-active-delivery-fallback-follow-up", {
+      type: "message",
+      user: "U234",
+      channel: "C123",
+      thread_ts: "446.220",
+      ts: "446.222",
+      text: "FOLLOW_UP_QUEUED_AFTER_ACTIVE_DELIVERY_FAILURE"
+    });
+
+    await waitFor(() => steerFailureInjected, "active delivery failure injected");
+    expect(mockCodex.steers).toHaveLength(0);
+
+    releaseInitialTurn.resolve();
+    await waitFor(
+      () => mockCodex.turnsStarted.some((turn) => collectTextInput(turn.input).includes("FOLLOW_UP_QUEUED_AFTER_ACTIVE_DELIVERY_FAILURE")),
+      "follow-up starts as queued turn after active delivery failure"
+    );
+
+    const followUpTurn = mockCodex.turnsStarted.find((turn) =>
+      collectTextInput(turn.input).includes("FOLLOW_UP_QUEUED_AFTER_ACTIVE_DELIVERY_FAILURE")
+    );
+    expect(followUpTurn).toBeTruthy();
+    expect(mockSlack.postedMessages.map((message) => message.text)).not.toContain(
+      "I hit an internal issue while working on this thread. Send a quick follow-up and I will continue from the latest state."
+    );
+  }, 90_000);
 
   it("wakes a turn that ends without an explicit final, block, or wait state", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
@@ -1687,6 +1880,16 @@ async function readInboundMessages(tempRoot: string, sessionKey: string): Promis
   await store.load();
   try {
     return store.listInboundMessages({ sessionKey });
+  } finally {
+    store.close();
+  }
+}
+
+async function readAgentTraceEvents(tempRoot: string, sessionKey: string): Promise<PersistedAgentTraceEvent[]> {
+  const store = new StateStore(path.join(tempRoot, "state"), path.join(tempRoot, "sessions"));
+  await store.load();
+  try {
+    return store.listAgentTraceEvents(sessionKey);
   } finally {
     store.close();
   }

@@ -1,9 +1,12 @@
 import http from "node:http";
-import vm from "node:vm";
+import fs from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";
+import { renderAdminShellHtml } from "../src/admin-ui/admin-shell.js";
+import { stableSessionOrder } from "../src/admin-ui/session-order.js";
+import { renderAdminPage } from "../src/http/admin-page.js";
 import { createHttpHandler } from "../src/http/router.js";
 
 describe("admin routes", () => {
@@ -95,27 +98,46 @@ describe("admin routes", () => {
     const page = await fetch(`${baseUrl}/admin`);
     expect(page.status).toBe(200);
     const html = await page.text();
+    const shell = renderAdminShellHtml("slack-codex-broker");
+    const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
 
-    expect(html).toContain("open-add-profile-dialog");
-    expect(html).toContain("auth-profiles-panel");
-    expect(html).toContain("认证档案");
-    expect(html).toContain("github-authors-panel");
-    expect(html).toContain("GitHub 作者映射");
-    expect(html).toContain("发布");
-    expect(html).toContain("deploy-release-button");
-    expect(html).toContain("运行信息");
-    expect(html).toContain("add-profile-dialog");
-    expect(html).toContain("session-search");
-    expect(html).toContain("系统日志");
-    expect(html).toContain("待处理：");
-    expect(html).toContain("人：");
-    expect(html).toContain("系统：");
-    expect(html).not.toContain("MSG: ");
-    expect(html).not.toContain("profile-name-input");
-    expect(html).not.toContain("Account Quota");
-    expect(html).not.toContain("Control");
-    expect(html).not.toContain("ADMIN TOKEN");
-    expect(html).not.toContain("/admin/api/runtime-files");
+    expect(html).toContain('id="admin-root"');
+    expect(html).toContain('id="admin-config"');
+    expect(html).toContain('/admin/assets/admin-ui.css');
+    expect(html).toContain('/admin/assets/admin-ui.js');
+    expect(html).not.toContain("switchAdminView");
+    expect(shell).toContain("open-add-profile-dialog");
+    expect(shell).toContain("admin-nav");
+    expect(shell).toContain('data-admin-view="sessions"');
+    expect(shell).toContain('data-admin-view="ops"');
+    expect(shell).toContain('data-view-target="sessions"');
+    expect(shell).toContain('data-view-target="ops"');
+    expect(shell).toContain('id="topbar-quota"');
+    expect(shell).toContain("auth-profiles-panel");
+    expect(shell).toContain("认证档案");
+    expect(shell).toContain("github-authors-panel");
+    expect(shell).toContain("GitHub 作者映射");
+    expect(shell).toContain("发布");
+    expect(shell).toContain("deploy-release-button");
+    expect(shell).toContain("add-profile-dialog");
+    expect(shell).toContain("session-react-root");
+    expect(sessionViewSource).toContain("session-search");
+    expect(sessionViewSource).toContain("session-detail-panel");
+    expect(sessionViewSource).toContain("会话详情");
+    expect(shell).not.toContain("Session Inspector");
+    expect(shell).not.toContain("session-table-header");
+    expect(shell).toContain("系统日志");
+    expect(sessionViewSource).toContain("待处理：");
+    expect(sessionViewSource).toContain("人：");
+    expect(sessionViewSource).toContain("系统：");
+    expect(shell).not.toContain("status-strip");
+    expect(shell).not.toContain("command-grid");
+    expect(shell).not.toContain("MSG: ");
+    expect(shell).not.toContain("profile-name-input");
+    expect(shell).not.toContain("Account Quota");
+    expect(shell).not.toContain("Control");
+    expect(shell).not.toContain("ADMIN TOKEN");
+    expect(shell).not.toContain("/admin/api/runtime-files");
   });
 
   it("persists session ui state in the admin page script", async () => {
@@ -136,15 +158,86 @@ describe("admin routes", () => {
     const page = await fetch(`${baseUrl}/admin`);
     expect(page.status).toBe(200);
     const html = await page.text();
+    const adminClientSource = await fs.readFile(new URL("../src/admin-ui/admin-legacy.js", import.meta.url), "utf8");
+    const adminMainSource = await fs.readFile(new URL("../src/admin-ui/main.tsx", import.meta.url), "utf8");
+    const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
+    const adminCssSource = await fs.readFile(new URL("../src/admin-ui/admin.css", import.meta.url), "utf8");
 
-    expect(html).toContain("admin-ui-state:");
-    expect(html).toContain("expandedSessionKeys");
-    expect(html).toContain('data-session-key="');
-    expect(html).toContain("scheduleUiStatePersistence");
-    expect(html).toContain("pruneExpandedSessionKeys");
-    expect(html).toContain("window.localStorage.getItem");
-    expect(html).toContain('row.addEventListener("toggle"');
-    expect(html).toContain("sessionSearch.onblur");
+    expect(adminClientSource).toContain("admin-ui-state:");
+    expect(adminClientSource).toContain("selectedSessionKey");
+    expect(sessionViewSource).toContain("data-session-key");
+    expect(adminMainSource).toContain("AdminSessionsView");
+    expect(adminMainSource).toContain("useReactSessions: true");
+    expect(adminMainSource).toContain("publishAdminStatus");
+    expect(adminClientSource).toContain("options.onStatus?.(data)");
+    expect(sessionViewSource).toContain("useSyncExternalStore");
+    expect(sessionViewSource).toContain("orderRef");
+    expect(sessionViewSource).toContain("key={session.key}");
+    expect(sessionViewSource).not.toContain("innerHTML");
+    expect(sessionViewSource).not.toContain("dangerouslySetInnerHTML");
+    expect(adminClientSource).toContain("scheduleUiStatePersistence");
+    expect(adminClientSource).toContain("window.localStorage.getItem");
+    expect(adminClientSource).toContain("selectSession(sessionKey");
+    expect(adminClientSource).not.toContain("expandedSessionKeys");
+    expect(adminClientSource).not.toContain('row.addEventListener("toggle"');
+    expect(adminClientSource).toContain("sessionSearch.onblur");
+    expect(sessionViewSource).toContain("ongoing");
+    expect(adminClientSource).toContain("renderAccountChip");
+    expect(adminClientSource).toContain("账号异常");
+    expect(sessionViewSource).toContain("sessionQueueState");
+    expect(sessionViewSource).toContain("compareSessionsForMode");
+    expect(sessionViewSource).toContain("session-card");
+    expect(sessionViewSource).toContain("session-meta-pill");
+    expect(sessionViewSource).toContain("待人处理");
+    expect(sessionViewSource).toContain('mode === "usage"');
+    expect(sessionViewSource).toContain("fmtRelativeTime");
+    expect(adminCssSource).toContain("text-overflow: ellipsis");
+    expect(adminCssSource).toContain(".quota-account.is-error");
+    expect(adminCssSource).toContain("html, body { width: 100%; height: 100%; overflow: hidden; }");
+    expect(adminCssSource).toContain(".shell { width: 100%; height: 100dvh;");
+    expect(adminCssSource).toContain("grid-template-columns: minmax(320px, 420px)");
+    expect(adminCssSource).toContain(".session-detail-panel > .panel-body");
+    expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: auto;");
+    expect(adminCssSource).toContain(".session-card { display: block; overflow: hidden; }");
+    expect(adminCssSource).toContain(".session-meta-line { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap;");
+    expect(adminCssSource).toContain(".session-meta-pill { min-width: 0; max-width: 100%; flex: 0 1 auto;");
+    expect(adminCssSource).toContain(".session-card");
+    expect(adminCssSource).toContain(".session-priority-danger");
+    expect(adminCssSource).not.toContain(".admin-nav { grid-template-columns: 1fr; }");
+  });
+
+  it("keeps the session list order stable while the same view is being refreshed", () => {
+    const initial = stableSessionOrder({ viewKey: "", keys: [] }, "ongoing\n", ["a", "b", "c"]);
+    expect(initial.keys).toEqual(["a", "b", "c"]);
+
+    const refreshed = stableSessionOrder(initial, "ongoing\n", ["c", "a", "d", "b"]);
+    expect(refreshed.keys).toEqual(["a", "b", "c", "d"]);
+
+    const removed = stableSessionOrder(refreshed, "ongoing\n", ["d", "a"]);
+    expect(removed.keys).toEqual(["a", "d"]);
+
+    const changedView = stableSessionOrder(removed, "usage\n", ["d", "a"]);
+    expect(changedView.keys).toEqual(["d", "a"]);
+  });
+
+  it("uses the Vite dev server assets when admin ui dev origin is configured", () => {
+    const previous = process.env.ADMIN_UI_DEV_ORIGIN;
+    process.env.ADMIN_UI_DEV_ORIGIN = "http://127.0.0.1:5173/";
+    try {
+      const html = renderAdminPage({ serviceName: "slack-codex-broker" });
+      expect(html).toContain("http://127.0.0.1:5173/@react-refresh");
+      expect(html).toContain("__vite_plugin_react_preamble_installed__");
+      expect(html).toContain("http://127.0.0.1:5173/@vite/client");
+      expect(html).toContain("http://127.0.0.1:5173/src/admin-ui/main.tsx");
+      expect(html).not.toContain("/admin/assets/admin-ui.css");
+      expect(html).not.toContain("/admin/assets/admin-ui.js");
+    } finally {
+      if (previous == null) {
+        delete process.env.ADMIN_UI_DEV_ORIGIN;
+      } else {
+        process.env.ADMIN_UI_DEV_ORIGIN = previous;
+      }
+    }
   });
 
   it("accepts auth profile creation without an explicit name", async () => {
@@ -222,7 +315,7 @@ describe("admin routes", () => {
     ]);
   });
 
-  it("emits admin page inline script without syntax errors", async () => {
+  it("loads the admin client module without syntax errors", async () => {
     const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",
       SLACK_BOT_TOKEN: "xoxb-test"
@@ -239,13 +332,11 @@ describe("admin routes", () => {
 
     const page = await fetch(`${baseUrl}/admin`);
     const html = await page.text();
-    const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
-    expect(scriptMatch?.[1]).toBeTruthy();
-    const scriptSource = scriptMatch?.[1];
-    if (!scriptSource) {
-      throw new Error("missing admin inline script");
-    }
-    expect(() => new vm.Script(scriptSource)).not.toThrow();
+    expect(html).not.toMatch(/<script>[\s\S]*switchAdminView[\s\S]*<\/script>/);
+    const adminClient = await import(new URL("../src/admin-ui/admin-legacy.js", import.meta.url).href) as {
+      readonly initAdminPage?: unknown;
+    };
+    expect(adminClient.initAdminPage).toBeTypeOf("function");
   });
 
   it("forwards deploy requests to the admin service", async () => {

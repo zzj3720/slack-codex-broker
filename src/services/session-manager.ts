@@ -5,8 +5,9 @@ import type {
   JsonLike,
   PersistedAdminAuditEvent,
   PersistedAdminOperation,
+  PersistedAgentTraceEvent,
   PersistedBackgroundJob,
-  PersistedCodexTurnUsage,
+  PersistedAgentTurnUsage,
   PersistedInboundMessage,
   PersistedInboundMessageStatus,
   PersistedInboundSource,
@@ -122,13 +123,13 @@ export class SessionManager {
     return candidates[0];
   }
 
-  async setCodexThreadId(
+  async setAgentSessionId(
     channelId: string,
     rootThreadTs: string,
-    codexThreadId: string | undefined
+    agentSessionId: string | undefined
   ): Promise<SlackSessionRecord> {
     return await this.#patchSession(channelId, rootThreadTs, {
-      codexThreadId
+      agentSessionId
     });
   }
 
@@ -377,12 +378,20 @@ export class SessionManager {
     await this.#stateStore.appendAdminAuditEvent(record);
   }
 
-  listCodexTurnUsage(limit?: number): PersistedCodexTurnUsage[] {
-    return this.#stateStore.listCodexTurnUsage(limit);
+  listAgentTurnUsage(limit?: number): PersistedAgentTurnUsage[] {
+    return this.#stateStore.listAgentTurnUsage(limit);
   }
 
-  async upsertCodexTurnUsage(record: PersistedCodexTurnUsage): Promise<void> {
-    await this.#stateStore.upsertCodexTurnUsage(record);
+  async upsertAgentTurnUsage(record: PersistedAgentTurnUsage): Promise<void> {
+    await this.#stateStore.upsertAgentTurnUsage(record);
+  }
+
+  listAgentTraceEvents(sessionKey: string, limit?: number): PersistedAgentTraceEvent[] {
+    return this.#stateStore.listAgentTraceEvents(sessionKey, limit);
+  }
+
+  async upsertAgentTraceEvent(record: PersistedAgentTraceEvent): Promise<void> {
+    await this.#stateStore.upsertAgentTraceEvent(record);
   }
 
   #requireSession(channelId: string, rootThreadTs: string): SlackSessionRecord {

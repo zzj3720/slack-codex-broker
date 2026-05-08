@@ -11,7 +11,7 @@ import { AdminService } from "../src/services/admin-service.js";
 import { SessionManager } from "../src/services/session-manager.js";
 import { StateStore } from "../src/store/state-store.js";
 import type { AppConfig } from "../src/config.js";
-import type { PersistedBackgroundJob, PersistedInboundMessage } from "../src/types.js";
+import type { PersistedAgentTraceEvent, PersistedBackgroundJob, PersistedInboundMessage } from "../src/types.js";
 
 describe("admin control plane e2e", () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -25,6 +25,9 @@ describe("admin control plane e2e", () => {
   it("exposes overview, sessions, timeline, and preflight as separate control-plane resources", async () => {
     const { baseUrl, sessions } = await startAdminFixture();
     await seedActiveSession(sessions);
+    const agentSessionId = "019e022d-049b-7d32-a69b-d6d23b3773f2";
+    await sessions.setAgentSessionId("C123", "111.222", agentSessionId);
+    await seedAgentTraceFixture(sessions, "C123:111.222");
 
     const overview = await readJson(`${baseUrl}/admin/api/overview`);
     expect(overview).toMatchObject({
@@ -45,8 +48,17 @@ describe("admin control plane e2e", () => {
         {
           key: "C123:111.222",
           activeTurnId: "turn-1",
+          channelLabel: "C123",
+          threadUrl: "https://slack.com/app_redirect?channel=C123&message_ts=111.222",
+          firstUserMessage: {
+            textPreview: "initial request"
+          },
+          lastUserMessage: {
+            textPreview: "follow up"
+          },
           openInboundCount: 1,
-          runningBackgroundJobCount: 1
+          runningBackgroundJobCount: 1,
+          backgroundJobCount: 1
         }
       ]
     });
@@ -56,15 +68,39 @@ describe("admin control plane e2e", () => {
       ok: true,
       session: {
         key: "C123:111.222",
+        agentSessionId,
         lastTurnSignalKind: "wait"
+      },
+      trace: {
+        source: "broker_db",
+        eventCount: 7,
+        categories: {
+          agent_system_prompt: 1,
+          agent_memory: 1,
+          agent_user_message: 1,
+          agent_runtime_reminder: 1,
+          agent_assistant_message: 1,
+          agent_tool_call: 1,
+          agent_tool_result: 1
+        }
       }
     });
-    expect((timeline.events as Array<{ type: string; summary?: string }>).map((event) => event.type)).toEqual([
+    expect(timeline.trace).not.toHaveProperty("rolloutPath");
+    expect(JSON.stringify(timeline)).not.toContain(".jsonl");
+    const eventTypes = (timeline.events as Array<{ type: string; summary?: string }>).map((event) => event.type);
+    expect(eventTypes).toEqual(expect.arrayContaining([
       "session_created",
       "inbound_message",
       "background_job",
-      "turn_signal"
-    ]);
+      "turn_signal",
+      "agent_system_prompt",
+      "agent_memory",
+      "agent_user_message",
+      "agent_runtime_reminder",
+      "agent_assistant_message",
+      "agent_tool_call",
+      "agent_tool_result"
+    ]));
     expect(timeline.events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -81,6 +117,42 @@ describe("admin control plane e2e", () => {
           type: "turn_signal",
           status: "wait",
           summary: "waiting on CI"
+        }),
+        expect.objectContaining({
+          type: "agent_system_prompt",
+          title: "系统 Prompt",
+          detail: expect.stringContaining("System core instruction")
+        }),
+        expect.objectContaining({
+          type: "agent_memory",
+          title: "记忆",
+          detail: expect.stringContaining("prefer Chinese admin pages")
+        }),
+        expect.objectContaining({
+          type: "agent_user_message",
+          title: "用户消息",
+          detail: expect.stringContaining("请检查发布状态")
+        }),
+        expect.objectContaining({
+          type: "agent_runtime_reminder",
+          title: "Runtime 提醒",
+          detail: expect.stringContaining("Runtime reminder")
+        }),
+        expect.objectContaining({
+          type: "agent_assistant_message",
+          title: "Assistant 消息",
+          detail: expect.stringContaining("我会先检查状态")
+        }),
+        expect.objectContaining({
+          type: "agent_tool_call",
+          title: "工具调用",
+          toolName: "exec_command",
+          detail: expect.stringContaining("pnpm test")
+        }),
+        expect.objectContaining({
+          type: "agent_tool_result",
+          title: "工具结果",
+          detail: expect.stringContaining("PASS admin-control-plane")
         })
       ])
     );
@@ -214,6 +286,7 @@ describe("admin control plane e2e", () => {
 
   async function startAdminFixture(): Promise<{
     readonly baseUrl: string;
+    readonly config: AppConfig;
     readonly sessions: SessionManager;
     readonly deploymentCalls: Array<Record<string, unknown>>;
   }> {
@@ -323,11 +396,128 @@ describe("admin control plane e2e", () => {
 
     return {
       baseUrl: `http://127.0.0.1:${address.port}`,
+      config,
       sessions,
       deploymentCalls
     };
   }
 });
+
+async function seedAgentTraceFixture(sessions: SessionManager, sessionKey: string): Promise<void> {
+  const baseInstructions = [
+    "System core instruction",
+    "",
+    "Personal long-lived memory from ~/.codex/AGENT.md:",
+    "- prefer Chinese admin pages",
+    "- preserve Slack context",
+    "",
+    "Slack thread message model:",
+    "The following messages are the live Slack thread."
+  ].join("\n");
+  const records: Array<Omit<PersistedAgentTraceEvent, "sessionKey" | "createdAt" | "updatedAt">> = [
+    {
+      id: `${sessionKey}:broker:system_prompt`,
+      source: "broker",
+      type: "agent_system_prompt",
+      at: "2026-03-19T00:00:00.000Z",
+      sequence: 0,
+      title: "系统 Prompt",
+      summary: "Codex 线程启动指令",
+      detail: baseInstructions,
+      status: "loaded",
+      role: "system"
+    },
+    {
+      id: `${sessionKey}:broker:memory`,
+      source: "broker",
+      type: "agent_memory",
+      at: "2026-03-19T00:00:00.000Z",
+      sequence: 1,
+      title: "记忆",
+      summary: "- prefer Chinese admin pages - preserve Slack context",
+      detail: "- prefer Chinese admin pages\n- preserve Slack context",
+      status: "loaded",
+      role: "system"
+    },
+    {
+      id: `${sessionKey}:broker:user`,
+      source: "broker",
+      type: "agent_user_message",
+      at: "2026-03-19T00:00:01.000Z",
+      sequence: 1000,
+      title: "用户消息",
+      summary: "请检查发布状态",
+      detail: "请检查发布状态",
+      status: "received",
+      role: "user",
+      turnId: "turn-1"
+    },
+    {
+      id: `${sessionKey}:broker:runtime-reminder`,
+      source: "broker",
+      type: "agent_runtime_reminder",
+      at: "2026-03-19T00:00:02.000Z",
+      sequence: 2000,
+      title: "Runtime 提醒",
+      summary: "Runtime reminder: 你已经工作了一段时间，请发进展。",
+      detail: "Runtime reminder: 你已经工作了一段时间，请发进展。",
+      status: "sent",
+      role: "system",
+      turnId: "turn-1"
+    },
+    {
+      id: `${sessionKey}:runtime:assistant`,
+      source: "agent_runtime",
+      type: "agent_assistant_message",
+      at: "2026-03-19T00:00:03.000Z",
+      sequence: 3000,
+      title: "Assistant 消息",
+      summary: "我会先检查状态。",
+      detail: "我会先检查状态。",
+      status: "completed",
+      role: "assistant",
+      turnId: "turn-1"
+    },
+    {
+      id: `${sessionKey}:runtime:tool-call`,
+      source: "agent_runtime",
+      type: "agent_tool_call",
+      at: "2026-03-19T00:00:04.000Z",
+      sequence: 4000,
+      title: "工具调用",
+      summary: "exec_command",
+      detail: "{\"cmd\":\"pnpm test\"}",
+      status: "running",
+      role: "assistant",
+      toolName: "exec_command",
+      callId: "call-1",
+      turnId: "turn-1"
+    },
+    {
+      id: `${sessionKey}:runtime:tool-result`,
+      source: "agent_runtime",
+      type: "agent_tool_result",
+      at: "2026-03-19T00:00:05.000Z",
+      sequence: 5000,
+      title: "工具结果",
+      summary: "PASS admin-control-plane",
+      detail: "PASS admin-control-plane",
+      status: "completed",
+      role: "tool",
+      callId: "call-1",
+      turnId: "turn-1"
+    }
+  ];
+  const now = "2026-03-19T00:00:06.000Z";
+  for (const record of records) {
+    await sessions.upsertAgentTraceEvent({
+      ...record,
+      sessionKey,
+      createdAt: now,
+      updatedAt: now
+    });
+  }
+}
 
 async function seedActiveSession(sessions: SessionManager): Promise<void> {
   const session = await sessions.ensureSession("C123", "111.222");
@@ -340,6 +530,17 @@ async function seedActiveSession(sessions: SessionManager): Promise<void> {
   });
   await sessions.upsertInboundMessage(inboundMessage({
     sessionKey: session.key,
+    key: "C123:111.222:111.222",
+    messageTs: "111.222",
+    status: "done",
+    text: "initial request",
+    createdAt: "2026-03-19T00:00:00.000Z",
+    updatedAt: "2026-03-19T00:00:00.000Z"
+  }));
+  await sessions.upsertInboundMessage(inboundMessage({
+    sessionKey: session.key,
+    key: "C123:111.222:111.223",
+    messageTs: "111.223",
     status: "pending",
     text: "follow up",
     updatedAt: "2026-03-19T00:00:01.000Z"

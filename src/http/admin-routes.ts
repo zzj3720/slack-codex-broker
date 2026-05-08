@@ -1,5 +1,7 @@
 import http from "node:http";
-import { URL } from "node:url";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, URL } from "node:url";
 
 import type { AppConfig } from "../config.js";
 import type { AdminService } from "../services/admin-service.js";
@@ -22,6 +24,10 @@ export async function handleAdminRequest(
       serviceName: options.config.serviceName
     }));
     return true;
+  }
+
+  if (method === "GET" && url.pathname.startsWith("/admin/assets/")) {
+    return serveAdminAsset(url, response);
   }
 
   if (!url.pathname.startsWith("/admin/api/")) {
@@ -225,6 +231,53 @@ export async function handleAdminRequest(
   }
 
   return false;
+}
+
+async function serveAdminAsset(url: URL, response: http.ServerResponse): Promise<boolean> {
+  const assetName = decodeURIComponent(url.pathname.slice("/admin/assets/".length));
+  if (!assetName || assetName.includes("\0")) {
+    return false;
+  }
+
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const assetRoots = [
+    path.resolve(moduleDir, "..", "..", "admin-ui", "assets"),
+    path.resolve(moduleDir, "..", "..", "dist", "admin-ui", "assets")
+  ];
+
+  for (const assetRoot of assetRoots) {
+    const assetPath = path.resolve(assetRoot, assetName);
+    if (!assetPath.startsWith(`${assetRoot}${path.sep}`)) {
+      continue;
+    }
+
+    try {
+      const content = await fs.readFile(assetPath);
+      response.writeHead(200, {
+        "content-type": contentTypeForAsset(assetPath),
+        "cache-control": "no-store"
+      });
+      response.end(content);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+
+  response.writeHead(404, { "content-type": "application/json" });
+  response.end(JSON.stringify({ ok: false, error: "admin_asset_not_found" }));
+  return true;
+}
+
+function contentTypeForAsset(assetPath: string): string {
+  const extension = path.extname(assetPath).toLowerCase();
+  if (extension === ".css") return "text/css; charset=utf-8";
+  if (extension === ".js") return "text/javascript; charset=utf-8";
+  if (extension === ".map") return "application/json; charset=utf-8";
+  if (extension === ".svg") return "image/svg+xml";
+  return "application/octet-stream";
 }
 
 async function readAdminBody(

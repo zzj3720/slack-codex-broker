@@ -1,13 +1,15 @@
 import type { AppConfig } from "../config.js";
 import { configureLogger } from "../logger.js";
 import { StateStore } from "../store/state-store.js";
+import type { AgentRuntime } from "./agent-runtime/types.js";
+import { CodexAppServerRuntime } from "./agent-runtime/codex-app-server-runtime.js";
 import { CodexBroker } from "./codex/codex-broker.js";
 import { IsolatedMcpService } from "./codex/isolated-mcp-service.js";
 import { DiskPressureCleanupService } from "./disk-pressure-cleanup-service.js";
 import { GitHubAuthorMappingService } from "./github-author-mapping-service.js";
 import { JobManager } from "./job-manager.js";
 import { SessionManager } from "./session-manager.js";
-import { SlackCodexBridge } from "./slack/slack-codex-bridge.js";
+import { SlackAgentBridge } from "./slack/slack-agent-bridge.js";
 
 export function configureServiceLogger(config: AppConfig): void {
   configureLogger({
@@ -64,16 +66,26 @@ export function createCodexBroker(config: AppConfig): CodexBroker {
   });
 }
 
+export function createAgentRuntime(options: {
+  readonly codex: CodexBroker;
+  readonly sessions: SessionManager;
+}): AgentRuntime {
+  return new CodexAppServerRuntime({
+    codex: options.codex,
+    sessions: options.sessions
+  });
+}
+
 export function createSlackBridge(options: {
   readonly config: AppConfig;
   readonly sessions: SessionManager;
-  readonly codex: CodexBroker;
+  readonly agentRuntime: AgentRuntime;
   readonly mappings: GitHubAuthorMappingService;
-}): SlackCodexBridge {
-  return new SlackCodexBridge({
+}): SlackAgentBridge {
+  return new SlackAgentBridge({
     config: options.config,
     sessions: options.sessions,
-    codex: options.codex,
+    agentRuntime: options.agentRuntime,
     mappings: options.mappings
   });
 }
@@ -88,7 +100,7 @@ export function createIsolatedMcpService(config: AppConfig): IsolatedMcpService 
 export function createJobManager(options: {
   readonly config: AppConfig;
   readonly sessions: SessionManager;
-  readonly bridge: SlackCodexBridge;
+  readonly bridge: SlackAgentBridge;
 }): JobManager {
   return new JobManager({
     sessions: options.sessions,

@@ -7,7 +7,7 @@ import type {
   SlackSessionRecord,
   SlackUserIdentity
 } from "../../types.js";
-import { CodexBroker } from "../codex/codex-broker.js";
+import type { AgentRuntime } from "../agent-runtime/types.js";
 import { GitHubAuthorMappingService } from "../github-author-mapping-service.js";
 import { SessionManager } from "../session-manager.js";
 import {
@@ -21,10 +21,10 @@ import { SlackConversationService } from "./slack-conversation-service.js";
 import { SlackSelfMessageFilter } from "./slack-self-filter.js";
 import { SlackSocketModeClient } from "./socket-mode-client.js";
 
-export class SlackCodexBridge {
+export class SlackAgentBridge {
   readonly #config: AppConfig;
   readonly #sessions: SessionManager;
-  readonly #codex: CodexBroker;
+  readonly #agentRuntime: AgentRuntime;
   readonly #slackApi: SlackApi;
   readonly #slackSocket: SlackSocketModeClient;
   readonly #selfMessageFilter = new SlackSelfMessageFilter();
@@ -39,12 +39,12 @@ export class SlackCodexBridge {
   constructor(options: {
     readonly config: AppConfig;
     readonly sessions: SessionManager;
-    readonly codex: CodexBroker;
+    readonly agentRuntime: AgentRuntime;
     readonly mappings: GitHubAuthorMappingService;
   }) {
     this.#config = options.config;
     this.#sessions = options.sessions;
-    this.#codex = options.codex;
+    this.#agentRuntime = options.agentRuntime;
     this.#slackApi = new SlackApi({
       baseUrl: this.#config.slackApiBaseUrl,
       appToken: this.#config.slackAppToken,
@@ -62,7 +62,7 @@ export class SlackCodexBridge {
     this.#conversations = new SlackConversationService({
       config: this.#config,
       sessions: this.#sessions,
-      codex: this.#codex,
+      agentRuntime: this.#agentRuntime,
       slackApi: this.#slackApi,
       selfMessageFilter: this.#selfMessageFilter,
       coauthors: this.#coauthors
@@ -70,7 +70,7 @@ export class SlackCodexBridge {
   }
 
   async start(): Promise<void> {
-    await this.#codex.start();
+    await this.#agentRuntime.start();
 
     const auth = await this.#slackApi.authTest();
     this.#botUserId = auth.userId;
@@ -78,7 +78,7 @@ export class SlackCodexBridge {
     this.#conversations.setBotUserId(auth.userId);
 
     this.#botIdentity = await this.#slackApi.getUserIdentity(this.#botUserId);
-    this.#codex.setSlackBotIdentity(this.#botIdentity);
+    this.#agentRuntime.setSlackBotIdentity(this.#botIdentity);
 
     await this.#conversations.start();
     await this.#drainPersistedSlackEvents("startup");
@@ -104,7 +104,7 @@ export class SlackCodexBridge {
     this.#clearSlackEventRetryTimer();
     await this.#slackSocket.stop();
     await this.#conversations.stop();
-    await this.#codex.stop();
+    await this.#agentRuntime.stop();
   }
 
   async readThreadHistory(options: {
@@ -443,7 +443,7 @@ export class SlackCodexBridge {
       });
     }
 
-    session = await this.#conversations.ensureCodexThread(session);
+    session = await this.#conversations.ensureAgentSession(session);
 
     if (isSlackMessageEffectivelyEmpty(parsed.input.text, parsed.input.images, parsed.input.slackMessage)) {
       return;

@@ -25,12 +25,12 @@ export class SlackTurnReconciler {
       readonly treatMissingAsStale?: boolean | undefined;
     }
   ): Promise<"cleared" | "retained"> {
-    if (!session.codexThreadId || !session.activeTurnId) {
+    if (!session.agentSessionId || !session.activeTurnId) {
       await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
       return "cleared";
     }
 
-    const hydratedSession = await this.#turnRunner.ensureCodexThread(session);
+    const hydratedSession = await this.#turnRunner.ensureAgentSession(session);
     const activeTurnId = hydratedSession.activeTurnId!;
     const snapshot = await this.#turnRunner.readTurnSnapshot(hydratedSession, activeTurnId, {
       syncActiveTurn: true,
@@ -39,7 +39,7 @@ export class SlackTurnReconciler {
 
     if (!snapshot) {
       if (options?.treatMissingAsStale) {
-        logger.info("Active Codex turn missing from thread snapshot during stale-turn reconciliation", {
+        logger.info("Active agent turn missing from thread snapshot during stale-turn reconciliation", {
           sessionKey: session.key,
           turnId: activeTurnId,
           reason: "turn_missing_from_snapshot"
@@ -53,7 +53,7 @@ export class SlackTurnReconciler {
         return "cleared";
       }
 
-      logger.debug("Active Codex turn not present in thread snapshot yet; retaining turn", {
+      logger.debug("Active agent turn not present in thread snapshot yet; retaining turn", {
         sessionKey: session.key,
         turnId: activeTurnId,
         reason: "turn_missing_from_snapshot"
@@ -65,7 +65,7 @@ export class SlackTurnReconciler {
       return "retained";
     }
 
-    logger.info("Reconciling terminal Codex turn state from snapshot", {
+    logger.info("Reconciling terminal agent turn state from snapshot", {
       sessionKey: session.key,
       turnId: activeTurnId,
       status: snapshot.status

@@ -3,7 +3,7 @@ import { URL } from "node:url";
 
 import type { AppConfig } from "../config.js";
 import { logger } from "../logger.js";
-import type { SlackCodexBridge } from "../services/slack/slack-codex-bridge.js";
+import type { SlackAgentBridge } from "../services/slack/slack-agent-bridge.js";
 import {
   readBoolean,
   readJsonBody,
@@ -18,7 +18,7 @@ export async function handleSlackRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   options: {
-    readonly bridge: SlackCodexBridge;
+    readonly bridge: SlackAgentBridge;
     readonly config: AppConfig;
   }
 ): Promise<boolean> {
@@ -69,7 +69,7 @@ async function handleSlackThreadHistoryRequest(
   url: URL,
   response: http.ServerResponse,
   options: {
-    readonly bridge: SlackCodexBridge;
+    readonly bridge: SlackAgentBridge;
     readonly config: AppConfig;
   }
 ): Promise<void> {
@@ -132,7 +132,7 @@ async function handleSlackReplayThreadMessageRequest(
   url: URL,
   response: http.ServerResponse,
   options: {
-    readonly bridge: SlackCodexBridge;
+    readonly bridge: SlackAgentBridge;
   }
 ): Promise<void> {
   const channelId = url.searchParams.get("channel_id");
@@ -179,7 +179,7 @@ async function handleSlackPostMessageRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   options: {
-    readonly bridge: SlackCodexBridge;
+    readonly bridge: SlackAgentBridge;
   }
 ): Promise<void> {
   let body: Record<string, string>;
@@ -256,7 +256,7 @@ async function handleSlackPostStateRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   options: {
-    readonly bridge: SlackCodexBridge;
+    readonly bridge: SlackAgentBridge;
   }
 ): Promise<void> {
   let body: Record<string, string>;
@@ -332,7 +332,7 @@ async function handleSlackPostFileRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   options: {
-    readonly bridge: SlackCodexBridge;
+    readonly bridge: SlackAgentBridge;
   }
 ): Promise<void> {
   let body: Record<string, string>;
@@ -403,7 +403,7 @@ async function handleResolveCommitCoauthorsRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   options: {
-    readonly bridge: SlackCodexBridge;
+    readonly bridge: SlackAgentBridge;
   }
 ): Promise<void> {
   try {
@@ -444,7 +444,7 @@ async function handleGetCommitCoauthorStatusRequest(
   url: URL,
   response: http.ServerResponse,
   options: {
-    readonly bridge: SlackCodexBridge;
+    readonly bridge: SlackAgentBridge;
   }
 ): Promise<void> {
   const cwd = url.searchParams.get("cwd")?.trim();
@@ -483,7 +483,7 @@ async function handleConfigureCommitCoauthorsRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   options: {
-    readonly bridge: SlackCodexBridge;
+    readonly bridge: SlackAgentBridge;
   }
 ): Promise<void> {
   try {

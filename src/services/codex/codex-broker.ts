@@ -105,8 +105,8 @@ export class CodexBroker extends EventEmitter {
   }
 
   async ensureThread(session: SlackSessionRecord): Promise<string> {
-    if (session.codexThreadId && this.#loadedThreadIds.has(session.codexThreadId)) {
-      return session.codexThreadId;
+    if (session.agentSessionId && this.#loadedThreadIds.has(session.agentSessionId)) {
+      return session.agentSessionId;
     }
 
     const threadId = await this.#withRecovery(() => this.#client.ensureThread(session));
@@ -115,23 +115,23 @@ export class CodexBroker extends EventEmitter {
   }
 
   async startTurn(session: SlackSessionRecord, input: readonly CodexInputItem[]): Promise<StartedTurn> {
-    if (!session.codexThreadId) {
+    if (!session.agentSessionId) {
       throw new Error(`Session ${session.key} has no Codex thread id`);
     }
 
     return await this.#withRecovery(() =>
-      this.#client.startTurn(session.codexThreadId!, session.workspacePath, input)
+      this.#client.startTurn(session.agentSessionId!, session.workspacePath, input)
     );
   }
 
   async steer(session: SlackSessionRecord, input: readonly CodexInputItem[]): Promise<void> {
-    if (!session.codexThreadId || !session.activeTurnId) {
+    if (!session.agentSessionId || !session.activeTurnId) {
       throw new Error(`Session ${session.key} has no active Codex turn to steer`);
     }
 
     await this.#withRecovery(() =>
       this.#client.steerTurn({
-        threadId: session.codexThreadId!,
+        threadId: session.agentSessionId!,
         turnId: session.activeTurnId!,
         input
       })
@@ -139,11 +139,11 @@ export class CodexBroker extends EventEmitter {
   }
 
   async interrupt(session: SlackSessionRecord): Promise<void> {
-    if (!session.codexThreadId || !session.activeTurnId) {
+    if (!session.agentSessionId || !session.activeTurnId) {
       return;
     }
 
-    await this.#withRecovery(() => this.#client.interruptTurn(session.codexThreadId!, session.activeTurnId!));
+    await this.#withRecovery(() => this.#client.interruptTurn(session.agentSessionId!, session.activeTurnId!));
   }
 
   async readTurnResult(
@@ -151,11 +151,11 @@ export class CodexBroker extends EventEmitter {
     turnId: string,
     options?: ReadTurnResultOptions
   ): Promise<ReadTurnResult | null> {
-    if (!session.codexThreadId) {
+    if (!session.agentSessionId) {
       return null;
     }
 
-    return await this.#withRecovery(() => this.#client.readTurnResult(session.codexThreadId!, turnId, options));
+    return await this.#withRecovery(() => this.#client.readTurnResult(session.agentSessionId!, turnId, options));
   }
 
   async readAccountSummary(refreshToken = false): Promise<AppServerAccountSummary> {

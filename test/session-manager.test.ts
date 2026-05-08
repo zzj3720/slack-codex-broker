@@ -43,10 +43,10 @@ describe("SessionManager", () => {
 
     await manager.load();
     await manager.ensureSession("C123", "111.222");
-    await manager.setCodexThreadId("C123", "111.222", "thread-1");
+    await manager.setAgentSessionId("C123", "111.222", "thread-1");
     const updated = await manager.setActiveTurnId("C123", "111.222", "turn-1");
 
-    expect(updated.codexThreadId).toBe("thread-1");
+    expect(updated.agentSessionId).toBe("thread-1");
     expect(updated.activeTurnId).toBe("turn-1");
     expect(updated.activeTurnStartedAt).toBeTruthy();
     expect(updated.lastProgressReminderAt).toBeUndefined();

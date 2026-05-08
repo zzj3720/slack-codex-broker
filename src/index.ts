@@ -8,6 +8,7 @@ import { AuthProfileService } from "./services/auth-profile-service.js";
 import { CodexRuntimeControl } from "./services/codex-runtime-control.js";
 import {
   configureServiceLogger,
+  createAgentRuntime,
   createCodexBroker,
   createDiskPressureCleanup,
   createGitHubAuthorMappings,
@@ -26,10 +27,14 @@ export async function startService(): Promise<{
   const { sessions: sessionManager } = createSessionServices(config);
   const githubAuthorMappings = await createGitHubAuthorMappings(config);
   const codexBroker = createCodexBroker(config);
+  const agentRuntime = createAgentRuntime({
+    codex: codexBroker,
+    sessions: sessionManager
+  });
   const bridge = createSlackBridge({
     config,
     sessions: sessionManager,
-    codex: codexBroker,
+    agentRuntime,
     mappings: githubAuthorMappings
   });
   const isolatedMcp = createIsolatedMcpService(config);

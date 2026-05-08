@@ -25,20 +25,20 @@ interface SlackRenderableMessage {
   readonly unexpectedTurnStop?: UnexpectedTurnStopPayload | undefined;
 }
 
-export function formatSlackMessageForCodex(
+export function formatSlackMessageForAgent(
   message: SlackInputMessage,
   sender: SlackUserIdentity | null
 ): string {
   if (message.source === "background_job_event" && message.backgroundJob) {
-    return formatBackgroundJobEventForCodex(message);
+    return formatBackgroundJobEventForAgent(message);
   }
 
   if (message.source === "unexpected_turn_stop" && message.unexpectedTurnStop) {
-    return formatUnexpectedTurnStopForCodex(message);
+    return formatUnexpectedTurnStopForAgent(message);
   }
 
   if (message.batchMessages && message.batchMessages.length > 0) {
-    return formatRecoveredSlackBatchForCodex(message);
+    return formatRecoveredSlackBatchForAgent(message);
   }
 
   const currentMessageBlock = formatSlackMessageBlock(message, sender);
@@ -54,7 +54,7 @@ export function formatSlackMessageForCodex(
   ].join("\n\n");
 }
 
-export function formatSlackHistoryContextForCodex(
+export function formatSlackHistoryContextForAgent(
   history: readonly ResolvedSlackThreadMessage[]
 ): string | undefined {
   if (history.length === 0) {
@@ -105,7 +105,7 @@ function formatSlackMessageBlock(
   return `${header}\nstructured_message_json:\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
 }
 
-function formatBackgroundJobEventForCodex(message: SlackInputMessage): string {
+function formatBackgroundJobEventForAgent(message: SlackInputMessage): string {
   const payload = {
     source: message.source,
     message_ts: message.messageTs,
@@ -132,7 +132,7 @@ function formatBackgroundJobEventForCodex(message: SlackInputMessage): string {
   ].join("\n");
 }
 
-function formatUnexpectedTurnStopForCodex(message: SlackInputMessage): string {
+function formatUnexpectedTurnStopForAgent(message: SlackInputMessage): string {
   const payload = {
     source: message.source,
     message_ts: message.messageTs,
@@ -162,7 +162,7 @@ function formatUnexpectedTurnStopForCodex(message: SlackInputMessage): string {
   ].join("\n");
 }
 
-function formatRecoveredSlackBatchForCodex(message: SlackInputMessage): string {
+function formatRecoveredSlackBatchForAgent(message: SlackInputMessage): string {
   const batchMessages = message.batchMessages ?? [];
   const payload = {
     source: message.source,

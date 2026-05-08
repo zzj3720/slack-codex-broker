@@ -408,6 +408,202 @@ describe("AppServerClient disconnect handling", () => {
     });
   });
 
+  it("captures exact token usage from thread/tokenUsage/updated notifications", async () => {
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        return;
+      }
+
+      if (message.method === "turn/start") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            turn: {
+              id: "turn-thread-usage"
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-thread-usage",
+            tokenUsage: {
+              total: {
+                totalTokens: 2_050,
+                inputTokens: 1_500,
+                cachedInputTokens: 250,
+                outputTokens: 550,
+                reasoningOutputTokens: 125
+              },
+              last: {
+                totalTokens: 2_050,
+                inputTokens: 1_500,
+                cachedInputTokens: 250,
+                outputTokens: 550,
+                reasoningOutputTokens: 125
+              },
+              modelContextWindow: 272_000
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "item/agentMessage/delta",
+          params: {
+            turnId: "turn-thread-usage",
+            delta: "done"
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "turn/completed",
+          params: {
+            turn: {
+              id: "turn-thread-usage"
+            }
+          }
+        }));
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos"
+    });
+
+    await client.connect();
+    const started = await client.startTurn("thread-1", "/tmp", [
+      {
+        type: "text",
+        text: "hello",
+        text_elements: []
+      }
+    ]);
+
+    await expect(started.completion).resolves.toMatchObject({
+      threadId: "thread-1",
+      turnId: "turn-thread-usage",
+      finalMessage: "done",
+      usage: {
+        source: "exact",
+        inputTokens: 1_500,
+        cachedInputTokens: 250,
+        outputTokens: 550,
+        reasoningTokens: 125,
+        totalTokens: 2_050
+      }
+    });
+  });
+
+  it("uses thread runtime defaults when token usage events omit model settings", async () => {
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        return;
+      }
+
+      if (message.method === "thread/start") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            thread: {
+              id: "thread-runtime-defaults"
+            },
+            model: "gpt-5.5",
+            reasoningEffort: "xhigh"
+          }
+        }));
+        return;
+      }
+
+      if (message.method === "turn/start") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            turn: {
+              id: "turn-runtime-defaults"
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: "thread-runtime-defaults",
+            turnId: "turn-runtime-defaults",
+            tokenUsage: {
+              total: {
+                totalTokens: 500,
+                inputTokens: 320,
+                cachedInputTokens: 100,
+                outputTokens: 180
+              },
+              last: {
+                totalTokens: 500,
+                inputTokens: 320,
+                cachedInputTokens: 100,
+                outputTokens: 180
+              }
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "turn/completed",
+          params: {
+            turn: {
+              id: "turn-runtime-defaults"
+            }
+          }
+        }));
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos"
+    });
+
+    await client.connect();
+    const threadId = await client.ensureThread({
+      workspacePath: "/tmp",
+      channelId: "C1",
+      rootThreadTs: "1.000001"
+    });
+    const started = await client.startTurn(threadId, "/tmp", [
+      {
+        type: "text",
+        text: "hello",
+        text_elements: []
+      }
+    ]);
+
+    await expect(started.completion).resolves.toMatchObject({
+      threadId: "thread-runtime-defaults",
+      turnId: "turn-runtime-defaults",
+      usage: {
+        source: "exact",
+        inputTokens: 320,
+        cachedInputTokens: 100,
+        outputTokens: 180,
+        reasoningTokens: 0,
+        totalTokens: 500,
+        model: "gpt-5.5",
+        effort: "xhigh"
+      }
+    });
+  });
+
   it("does not emit an unhandled rejection when a turn disconnects before completion is awaited", async () => {
     const server = await createServer((socket, message) => {
       if (message.method === "initialize") {
@@ -1077,11 +1273,12 @@ describe("AppServerClient disconnect handling", () => {
     await expect(client.ensureThread({
       channelId: "C123",
       rootThreadTs: "111.222",
-      codexThreadId: "thread-1",
+      agentSessionId: "thread-1",
       workspacePath: "/tmp/workspace"
     })).resolves.toBe("thread-1");
 
     expect(threadStartParams?.baseInstructions).toEqual(expect.stringContaining("channel_id: C123"));
+    expect(threadStartParams?.experimentalRawEvents).toBe(true);
     expect(threadStartParams?.baseInstructions).toEqual(expect.stringContaining("thread_ts: 111.222"));
     expect(threadStartParams?.baseInstructions).toEqual(expect.stringContaining("session_workspace: /tmp/workspace"));
     expect(threadStartParams?.baseInstructions).toEqual(

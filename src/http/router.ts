@@ -5,7 +5,7 @@ import type { AppConfig } from "../config.js";
 import type { AdminService } from "../services/admin-service.js";
 import type { IsolatedMcpService } from "../services/codex/isolated-mcp-service.js";
 import type { JobManager } from "../services/job-manager.js";
-import type { SlackCodexBridge } from "../services/slack/slack-codex-bridge.js";
+import type { SlackAgentBridge } from "../services/slack/slack-agent-bridge.js";
 import { handleAdminRequest } from "./admin-routes.js";
 import { handleIntegrationRequest } from "./integration-routes.js";
 import { handleJobRequest } from "./job-routes.js";
@@ -13,7 +13,7 @@ import { handleSlackRequest } from "./slack-routes.js";
 
 export function createHttpHandler(options: {
   readonly adminService?: AdminService | undefined;
-  readonly bridge?: SlackCodexBridge | undefined;
+  readonly bridge?: SlackAgentBridge | undefined;
   readonly isolatedMcp?: IsolatedMcpService | undefined;
   readonly jobManager?: JobManager | undefined;
   readonly config: AppConfig;
@@ -28,7 +28,7 @@ async function handleHttpRequest(
   response: http.ServerResponse,
   options: {
     readonly adminService?: AdminService | undefined;
-    readonly bridge?: SlackCodexBridge | undefined;
+    readonly bridge?: SlackAgentBridge | undefined;
     readonly isolatedMcp?: IsolatedMcpService | undefined;
     readonly jobManager?: JobManager | undefined;
     readonly config: AppConfig;

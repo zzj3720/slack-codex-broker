@@ -1,63 +1,89 @@
+import { EventEmitter } from "node:events";
+
 import { describe, expect, it, vi } from "vitest";
 
-import type { SlackSessionRecord } from "../src/types.js";
+import type { AgentRuntime } from "../src/services/agent-runtime/types.js";
 import { SlackTurnRunner } from "../src/services/slack/slack-turn-runner.js";
+import type { SlackSessionRecord } from "../src/types.js";
+
+function createRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
+  const runtime = new EventEmitter() as AgentRuntime;
+  const capabilities = {
+    submitWhileActive: true,
+    interrupt: true,
+    readTurn: true,
+    readSession: true,
+    rawEvents: true,
+    tokenUsage: "exact",
+    toolCalls: true,
+    systemPromptEcho: true
+  } as const;
+  runtime.getCapabilities = vi.fn(() => capabilities);
+  runtime.start = vi.fn();
+  runtime.stop = vi.fn();
+  runtime.setSlackBotIdentity = vi.fn();
+  runtime.ensureSession = vi.fn();
+  runtime.submitInput = vi.fn();
+  runtime.interrupt = vi.fn();
+  runtime.readSession = vi.fn();
+  runtime.readTurn = vi.fn();
+  return Object.assign(runtime, overrides);
+}
 
 describe("SlackTurnRunner", () => {
-  it("resets a missing stored codex thread id and starts a fresh thread", async () => {
+  it("resets a missing stored agent session id and starts a fresh session", async () => {
     let currentSession: SlackSessionRecord = {
       key: "C123:111.222",
       channelId: "C123",
       rootThreadTs: "111.222",
       workspacePath: "/tmp/workspace",
-      codexThreadId: "thread-old",
+      agentSessionId: "thread-old",
       createdAt: "2026-03-16T00:00:00.000Z",
       updatedAt: "2026-03-16T00:00:00.000Z"
     };
 
-    const ensureThread = vi.fn(async (session: SlackSessionRecord) => {
-      if (session.codexThreadId === "thread-old") {
+    const ensureSession = vi.fn(async (session: SlackSessionRecord) => {
+      if (session.agentSessionId === "thread-old") {
         throw new Error("no rollout found for thread id thread-old");
       }
 
-      return "thread-new";
+      return {
+        id: "thread-new",
+        brokerSessionKey: session.key,
+        runtime: "test",
+        createdAt: "2026-03-16T00:00:01.000Z"
+      };
     });
 
     const setActiveTurnId = vi.fn(async () => currentSession);
-    const setCodexThreadId = vi.fn(async (_channelId: string, _rootThreadTs: string, codexThreadId: string | undefined) => {
+    const setAgentSessionId = vi.fn(async (_channelId: string, _rootThreadTs: string, agentSessionId: string | undefined) => {
       currentSession = {
         ...currentSession,
-        codexThreadId
+        agentSessionId
       };
       return currentSession;
     });
 
     const runner = new SlackTurnRunner({
-      codex: {
-        ensureThread,
-        steer: vi.fn(),
-        startTurn: vi.fn(),
-        interrupt: vi.fn(),
-        readTurnResult: vi.fn()
-      } as any,
+      agentRuntime: createRuntime({ ensureSession }),
       slackApi: {
         getUserIdentity: vi.fn(),
         downloadImageAsDataUrl: vi.fn()
-      } as any,
+      } as never,
       sessions: {
         setActiveTurnId,
-        setCodexThreadId
-      } as any,
-      inboundStore: {} as any
+        setAgentSessionId
+      } as never,
+      inboundStore: {} as never
     });
 
-    const result = await runner.ensureCodexThread(currentSession);
+    const result = await runner.ensureAgentSession(currentSession);
 
-    expect(ensureThread).toHaveBeenCalledTimes(2);
+    expect(ensureSession).toHaveBeenCalledTimes(2);
     expect(setActiveTurnId).toHaveBeenCalledWith("C123", "111.222", undefined);
-    expect(setCodexThreadId).toHaveBeenNthCalledWith(1, "C123", "111.222", undefined);
-    expect(setCodexThreadId).toHaveBeenNthCalledWith(2, "C123", "111.222", "thread-new");
-    expect(result.codexThreadId).toBe("thread-new");
+    expect(setAgentSessionId).toHaveBeenNthCalledWith(1, "C123", "111.222", undefined);
+    expect(setAgentSessionId).toHaveBeenNthCalledWith(2, "C123", "111.222", "thread-new");
+    expect(result.agentSessionId).toBe("thread-new");
   });
 
   it("persists the active turn id before marking the Slack batch inflight", async () => {
@@ -67,7 +93,7 @@ describe("SlackTurnRunner", () => {
       channelId: "C123",
       rootThreadTs: "111.222",
       workspacePath: "/tmp/workspace",
-      codexThreadId: "thread-1",
+      agentSessionId: "thread-1",
       createdAt: "2026-03-16T00:00:00.000Z",
       updatedAt: "2026-03-16T00:00:00.000Z"
     };
@@ -78,32 +104,35 @@ describe("SlackTurnRunner", () => {
     };
 
     const runner = new SlackTurnRunner({
-      codex: {
-        ensureThread: vi.fn(),
-        steer: vi.fn(),
-        startTurn: vi.fn(async () => ({
-          turnId: "turn-1",
+      agentRuntime: createRuntime({
+        submitInput: vi.fn(async () => ({
+          receipt: {
+            agentSessionId: "thread-1",
+            turnId: "turn-1",
+            inputId: "input-1",
+            delivery: "started_turn" as const,
+            deliveredAt: "2026-03-16T00:00:01.000Z"
+          },
           completion: Promise.resolve({
-            threadId: "thread-1",
+            agentSessionId: "thread-1",
             turnId: "turn-1",
             finalMessage: "",
             aborted: false
           })
-        })),
-        interrupt: vi.fn(),
-        readTurnResult: vi.fn()
-      } as any,
+        }))
+      }),
       slackApi: {
         getUserIdentity: vi.fn(),
         downloadImageAsDataUrl: vi.fn()
-      } as any,
+      } as never,
       sessions: {
         setActiveTurnId: vi.fn(async (_channelId: string, _rootThreadTs: string, turnId: string | undefined) => {
           calls.push(turnId ? "set-active" : "clear-active");
           return turnId ? activeSession : session;
         }),
-        setCodexThreadId: vi.fn()
-      } as any,
+        setAgentSessionId: vi.fn(),
+        upsertAgentTurnUsage: vi.fn()
+      } as never,
       inboundStore: {
         markMessagesInflightByTs: vi.fn(async () => {
           calls.push("mark-inflight");
@@ -113,10 +142,10 @@ describe("SlackTurnRunner", () => {
           return activeSession;
         }),
         resetTurnBatchToPending: vi.fn()
-      } as any
+      } as never
     });
 
-    await runner.runTurnWithRecovery({
+    await runner.submitInputWithRecovery({
       session,
       sessionKey: session.key,
       senderUserId: "U123",

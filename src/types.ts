@@ -5,7 +5,7 @@ export interface SlackSessionRecord {
   readonly workspacePath: string;
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly codexThreadId?: string | undefined;
+  readonly agentSessionId?: string | undefined;
   readonly activeTurnId?: string | undefined;
   readonly activeTurnStartedAt?: string | undefined;
   readonly lastObservedMessageTs?: string | undefined;
@@ -163,11 +163,11 @@ export interface PersistedAdminAuditEvent {
   readonly createdAt: string;
 }
 
-export type CodexTurnUsageSource = "exact" | "estimated" | "missing";
-export type PersistedCodexTurnStatus = "completed" | "interrupted" | "failed";
+export type AgentTurnUsageSource = "exact" | "estimated" | "missing";
+export type PersistedAgentTurnStatus = "completed" | "interrupted" | "failed";
 
-export interface CodexTurnTokenUsage {
-  readonly source: CodexTurnUsageSource;
+export interface AgentTurnTokenUsage {
+  readonly source: AgentTurnUsageSource;
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
@@ -178,14 +178,14 @@ export interface CodexTurnTokenUsage {
   readonly rawUsage?: JsonLike | undefined;
 }
 
-export interface PersistedCodexTurnUsage {
+export interface PersistedAgentTurnUsage {
   readonly turnId: string;
   readonly sessionKey: string;
   readonly channelId: string;
   readonly rootThreadTs: string;
-  readonly codexThreadId?: string | undefined;
-  readonly status: PersistedCodexTurnStatus;
-  readonly source: CodexTurnUsageSource;
+  readonly agentSessionId?: string | undefined;
+  readonly status: PersistedAgentTurnStatus;
+  readonly source: AgentTurnUsageSource;
   readonly model?: string | undefined;
   readonly effort?: string | undefined;
   readonly inputTokens: number;
@@ -196,6 +196,28 @@ export interface PersistedCodexTurnUsage {
   readonly rawUsage?: JsonLike | undefined;
   readonly startedAt?: string | undefined;
   readonly completedAt?: string | undefined;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface PersistedAgentTraceEvent {
+  readonly id: string;
+  readonly sessionKey: string;
+  readonly source: "broker" | "agent_runtime";
+  readonly type: string;
+  readonly at: string;
+  readonly sequence: number;
+  readonly title: string;
+  readonly summary: string;
+  readonly detail?: string | undefined;
+  readonly status?: string | undefined;
+  readonly role?: string | undefined;
+  readonly toolName?: string | undefined;
+  readonly callId?: string | undefined;
+  readonly turnId?: string | undefined;
+  readonly detailTruncated?: boolean | undefined;
+  readonly detailOriginalChars?: number | undefined;
+  readonly metadata?: JsonLike | undefined;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -291,15 +313,6 @@ export interface SlackThreadMessage {
 export interface ResolvedSlackThreadMessage extends SlackThreadMessage {
   readonly sender: SlackUserIdentity | null;
   readonly mentionedUsers?: readonly SlackUserIdentity[];
-}
-
-export interface CodexTurnResult {
-  readonly threadId: string;
-  readonly turnId: string;
-  readonly finalMessage: string;
-  readonly aborted: boolean;
-  readonly generatedImages?: readonly GeneratedImageArtifact[] | undefined;
-  readonly usage?: CodexTurnTokenUsage | undefined;
 }
 
 export interface GeneratedImageArtifact {

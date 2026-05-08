@@ -43,7 +43,21 @@ export class AgentTraceRecorder {
 
   #resolveSession(event: AgentRuntimeEvent): SlackSessionRecord | undefined {
     const brokerSessionKey = "brokerSessionKey" in event ? event.brokerSessionKey : undefined;
-    return brokerSessionKey ? this.#sessions.getSessionByKey(brokerSessionKey) : undefined;
+    const byBrokerSessionKey = brokerSessionKey ? this.#sessions.getSessionByKey(brokerSessionKey) : undefined;
+    if (byBrokerSessionKey) {
+      return byBrokerSessionKey;
+    }
+
+    const agentSessionId = "agentSessionId" in event ? event.agentSessionId : undefined;
+    const turnId = "turnId" in event ? event.turnId : undefined;
+    if (!agentSessionId && !turnId) {
+      return undefined;
+    }
+
+    return this.#sessions.listSessions().find((session) =>
+      Boolean(agentSessionId && session.agentSessionId === agentSessionId) ||
+      Boolean(turnId && session.activeTurnId === turnId)
+    );
   }
 
   #toTraceEvents(session: SlackSessionRecord, event: AgentRuntimeEvent): PersistedAgentTraceEvent[] {

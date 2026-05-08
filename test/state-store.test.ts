@@ -267,13 +267,89 @@ describe("StateStore", () => {
           name: "agent_trace_events"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 5,
           name: "agent_schema_repair"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "session_agent_schema_repair"
         }
       ]);
     } finally {
       database.close();
     }
+  });
+
+  it("migrates old session Codex thread ids into agent session ids", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-old-session-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    await fs.mkdir(stateDir, { recursive: true });
+
+    const database = new DatabaseSync(path.join(stateDir, STATE_DATABASE_FILENAME));
+    try {
+      database.exec(`
+        CREATE TABLE schema_migrations (
+          version INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL
+        );
+
+        INSERT INTO schema_migrations (version, name, applied_at) VALUES
+          (1, 'initial_sqlite_state', '2026-03-15T00:00:00.000Z'),
+          (2, 'admin_operations', '2026-03-15T00:00:00.000Z'),
+          (3, 'codex_turn_usage', '2026-03-15T00:00:00.000Z');
+
+        CREATE TABLE sessions (
+          key TEXT PRIMARY KEY,
+          channel_id TEXT NOT NULL,
+          root_thread_ts TEXT NOT NULL,
+          workspace_path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          codex_thread_id TEXT,
+          active_turn_id TEXT,
+          active_turn_started_at TEXT,
+          last_observed_message_ts TEXT,
+          last_delivered_message_ts TEXT,
+          last_slack_reply_at TEXT,
+          last_progress_reminder_at TEXT,
+          last_turn_signal_turn_id TEXT,
+          last_turn_signal_kind TEXT,
+          last_turn_signal_reason TEXT,
+          last_turn_signal_at TEXT,
+          co_author_candidate_user_ids TEXT,
+          co_author_candidate_revision INTEGER,
+          co_author_confirmed_user_ids TEXT,
+          co_author_confirmed_revision INTEGER,
+          co_author_ignore_missing_revision INTEGER,
+          co_author_prompt_revision INTEGER,
+          co_author_prompted_at TEXT,
+          UNIQUE(channel_id, root_thread_ts)
+        );
+
+        INSERT INTO sessions (
+          key, channel_id, root_thread_ts, workspace_path, created_at, updated_at, codex_thread_id
+        ) VALUES (
+          'C123:111.222', 'C123', '111.222', '/tmp/workspace',
+          '2026-03-15T00:00:00.000Z', '2026-03-15T00:00:00.000Z', 'thread-old'
+        );
+      `);
+    } finally {
+      database.close();
+    }
+
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+    expect(store.getSession("C123:111.222")).toEqual(expect.objectContaining({
+      agentSessionId: "thread-old"
+    }));
+
+    await expect(store.patchSession("C123:111.222", {
+      updatedAt: "2026-03-15T00:00:01.000Z"
+    })).resolves.toEqual(expect.objectContaining({
+      agentSessionId: "thread-old"
+    }));
+    store.close();
   });
 
   it("migrates the old turn usage table into the agent schema and removes the old table", async () => {

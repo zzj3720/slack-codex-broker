@@ -17,7 +17,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 5;
+export const CURRENT_STATE_SCHEMA_VERSION = 6;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -242,8 +242,34 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
         DROP TABLE codex_turn_usage;
       `);
     }
+  },
+  {
+    version: 6,
+    name: "session_agent_schema_repair",
+    up(database) {
+      repairSessionAgentSchema(database);
+    }
   }
 ];
+
+function repairSessionAgentSchema(database: DatabaseSync): void {
+  if (!tableExists(database, "sessions")) {
+    return;
+  }
+
+  const columns = tableColumns(database, "sessions");
+  if (!columns.has("agent_session_id")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN agent_session_id TEXT");
+  }
+
+  if (columns.has("codex_thread_id")) {
+    database.exec(`
+      UPDATE sessions
+      SET agent_session_id = COALESCE(agent_session_id, codex_thread_id)
+      WHERE codex_thread_id IS NOT NULL
+    `);
+  }
+}
 
 function createAgentTurnUsageSchema(database: DatabaseSync): void {
   database.exec(`

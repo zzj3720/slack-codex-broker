@@ -157,6 +157,7 @@ export interface AgentMessageDeltaEvent {
   readonly type: "agent.message.delta";
   readonly agentSessionId: string;
   readonly turnId: string;
+  readonly brokerSessionKey?: string | undefined;
   readonly messageId: string;
   readonly role: "assistant";
   readonly delta: string;
@@ -167,6 +168,7 @@ export interface AgentMessageCompletedEvent {
   readonly type: "agent.message.completed";
   readonly agentSessionId: string;
   readonly turnId: string;
+  readonly brokerSessionKey?: string | undefined;
   readonly messageId: string;
   readonly role: "assistant" | "user" | "system";
   readonly text: string;

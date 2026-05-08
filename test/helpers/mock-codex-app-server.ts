@@ -51,13 +51,16 @@ export class MockCodexAppServer {
   }> = [];
   readonly onTurnStart: ((context: MockTurnContext) => Promise<void> | void) | undefined;
   readonly onTurnSteer: ((context: MockTurnContext) => Promise<void> | void) | undefined;
+  readonly #emitThreadTokenUsage: boolean;
 
   constructor(options?: {
     readonly onTurnStart?: (context: MockTurnContext) => Promise<void> | void;
     readonly onTurnSteer?: (context: MockTurnContext) => Promise<void> | void;
+    readonly emitThreadTokenUsage?: boolean;
   }) {
     this.onTurnStart = options?.onTurnStart;
     this.onTurnSteer = options?.onTurnSteer;
+    this.#emitThreadTokenUsage = options?.emitThreadTokenUsage ?? false;
 
     this.#wsServer.on("connection", (socket) => {
       this.#connections.add(socket);
@@ -317,8 +320,18 @@ export class MockCodexAppServer {
 
         turn.status = "completed";
         turn.finalMessage = message;
-        turn.usage = usage;
+        turn.usage = this.#emitThreadTokenUsage ? undefined : usage;
         thread.activeTurnId = undefined;
+        if (usage && this.#emitThreadTokenUsage) {
+          socket.send(JSON.stringify({
+            method: "thread/tokenUsage/updated",
+            params: {
+              threadId: thread.id,
+              turnId: turn.turnId,
+              tokenUsage: toThreadTokenUsage(usage)
+            }
+          }));
+        }
         if (message) {
           socket.send(JSON.stringify({
             method: "item/agentMessage/delta",
@@ -333,9 +346,9 @@ export class MockCodexAppServer {
           params: {
             turn: {
               id: turn.turnId,
-              usage
+              usage: this.#emitThreadTokenUsage ? undefined : usage
             },
-            usage
+            usage: this.#emitThreadTokenUsage ? undefined : usage
           }
         }));
       },
@@ -412,4 +425,28 @@ function normalizeInput(value: unknown): readonly CodexInputItem[] {
   }
 
   return value as readonly CodexInputItem[];
+}
+
+function toThreadTokenUsage(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      last: {},
+      total: {}
+    };
+  }
+
+  const record = value as Record<string, unknown>;
+  const usage = {
+    inputTokens: record.input_tokens ?? record.inputTokens ?? 0,
+    cachedInputTokens: record.cached_input_tokens ?? record.cachedInputTokens ?? 0,
+    outputTokens: record.output_tokens ?? record.outputTokens ?? 0,
+    reasoningOutputTokens: record.reasoning_tokens ?? record.reasoningTokens ?? record.reasoning_output_tokens ?? record.reasoningOutputTokens ?? 0,
+    totalTokens: record.total_tokens ?? record.totalTokens ?? 0,
+    model: record.model,
+    effort: record.effort
+  };
+  return {
+    last: usage,
+    total: usage
+  };
 }

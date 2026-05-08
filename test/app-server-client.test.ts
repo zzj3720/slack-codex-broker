@@ -408,6 +408,99 @@ describe("AppServerClient disconnect handling", () => {
     });
   });
 
+  it("captures exact token usage from thread/tokenUsage/updated notifications", async () => {
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        return;
+      }
+
+      if (message.method === "turn/start") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            turn: {
+              id: "turn-thread-usage"
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-thread-usage",
+            tokenUsage: {
+              total: {
+                totalTokens: 2_050,
+                inputTokens: 1_500,
+                cachedInputTokens: 250,
+                outputTokens: 550,
+                reasoningOutputTokens: 125
+              },
+              last: {
+                totalTokens: 2_050,
+                inputTokens: 1_500,
+                cachedInputTokens: 250,
+                outputTokens: 550,
+                reasoningOutputTokens: 125
+              },
+              modelContextWindow: 272_000
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "item/agentMessage/delta",
+          params: {
+            turnId: "turn-thread-usage",
+            delta: "done"
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "turn/completed",
+          params: {
+            turn: {
+              id: "turn-thread-usage"
+            }
+          }
+        }));
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos"
+    });
+
+    await client.connect();
+    const started = await client.startTurn("thread-1", "/tmp", [
+      {
+        type: "text",
+        text: "hello",
+        text_elements: []
+      }
+    ]);
+
+    await expect(started.completion).resolves.toMatchObject({
+      threadId: "thread-1",
+      turnId: "turn-thread-usage",
+      finalMessage: "done",
+      usage: {
+        source: "exact",
+        inputTokens: 1_500,
+        cachedInputTokens: 250,
+        outputTokens: 550,
+        reasoningTokens: 125,
+        totalTokens: 2_050
+      }
+    });
+  });
+
   it("does not emit an unhandled rejection when a turn disconnects before completion is awaited", async () => {
     const server = await createServer((socket, message) => {
       if (message.method === "initialize") {

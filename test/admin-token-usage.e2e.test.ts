@@ -32,6 +32,7 @@ describe("admin token usage e2e", () => {
     });
 
     const mockCodex = new MockCodexAppServer({
+      emitThreadTokenUsage: true,
       onTurnStart: (context) => {
         (context.complete as (message: string, usage: unknown) => void)("turn finished", {
           input_tokens: 1_200,

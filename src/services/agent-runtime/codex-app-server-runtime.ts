@@ -297,6 +297,20 @@ function codexNotificationToAgentEvents(
       at
     }];
   }
+  if (method === "thread/tokenUsage/updated") {
+    const usage = normalizeTokenUsage(params);
+    if (!usage) {
+      return [];
+    }
+    return [{
+      type: "agent.usage.updated",
+      agentSessionId,
+      turnId: turnId || undefined,
+      brokerSessionKey: session.key,
+      ...usage,
+      at
+    }];
+  }
   if (method === "turn/completed" && turnId) {
     return [{
       type: "agent.turn.completed",
@@ -431,24 +445,49 @@ function rawCodexEventToAgentEvents(
 function normalizeTokenUsage(value: Record<string, unknown>): Omit<Extract<AgentRuntimeEvent, { type: "agent.usage.updated" }>, "type" | "agentSessionId" | "turnId" | "brokerSessionKey" | "at"> | undefined {
   const record = asRecord(value.msg) ?? value;
   const info = asRecord(record.info) ?? record;
+  const tokenUsage = asRecord(info.tokenUsage) ?? asRecord(info.token_usage) ?? info;
+  const lastUsage =
+    asRecord(tokenUsage.last) ??
+    asRecord(tokenUsage.last_token_usage) ??
+    asRecord(tokenUsage.lastTokenUsage) ??
+    asRecord(info.last_token_usage) ??
+    asRecord(info.lastTokenUsage);
+  const totalUsage =
+    asRecord(tokenUsage.total) ??
+    asRecord(tokenUsage.total_token_usage) ??
+    asRecord(tokenUsage.totalTokenUsage) ??
+    asRecord(info.total_token_usage) ??
+    asRecord(info.totalTokenUsage);
+  const usage = lastUsage ?? tokenUsage;
   const totalTokens = normalizeFiniteNumber(
-    nestedUnknown(info, ["total_token_usage", "total_tokens"]) ??
-      nestedUnknown(info, ["last_token_usage", "total_tokens"]) ??
+    usage.total_tokens ??
+      usage.totalTokens ??
       info.total_tokens ??
-      info.totalTokens
+      info.totalTokens ??
+      totalUsage?.total_tokens ??
+      totalUsage?.totalTokens
   );
   if (totalTokens === undefined) {
     return undefined;
   }
   return {
-    inputTokens: normalizeFiniteNumber(nestedUnknown(info, ["last_token_usage", "input_tokens"]) ?? info.input_tokens) ?? 0,
-    cachedInputTokens: normalizeFiniteNumber(nestedUnknown(info, ["last_token_usage", "cached_input_tokens"]) ?? info.cached_input_tokens) ?? 0,
-    outputTokens: normalizeFiniteNumber(nestedUnknown(info, ["last_token_usage", "output_tokens"]) ?? info.output_tokens) ?? 0,
-    reasoningTokens: normalizeFiniteNumber(nestedUnknown(info, ["last_token_usage", "reasoning_output_tokens"]) ?? info.reasoning_tokens) ?? 0,
+    inputTokens: normalizeFiniteNumber(usage.input_tokens ?? usage.inputTokens ?? info.input_tokens ?? info.inputTokens) ?? 0,
+    cachedInputTokens: normalizeFiniteNumber(usage.cached_input_tokens ?? usage.cachedInputTokens ?? info.cached_input_tokens ?? info.cachedInputTokens) ?? 0,
+    outputTokens: normalizeFiniteNumber(usage.output_tokens ?? usage.outputTokens ?? info.output_tokens ?? info.outputTokens) ?? 0,
+    reasoningTokens: normalizeFiniteNumber(
+      usage.reasoning_tokens ??
+        usage.reasoningTokens ??
+        usage.reasoning_output_tokens ??
+        usage.reasoningOutputTokens ??
+        info.reasoning_tokens ??
+        info.reasoningTokens ??
+        info.reasoning_output_tokens ??
+        info.reasoningOutputTokens
+    ) ?? 0,
     totalTokens,
     source: "exact",
-    model: normalizeNonEmptyString(info.model),
-    effort: normalizeNonEmptyString(info.effort),
+    model: normalizeNonEmptyString(usage.model) ?? normalizeNonEmptyString(info.model),
+    effort: normalizeNonEmptyString(usage.effort) ?? normalizeNonEmptyString(info.effort),
     rawUsage: value
   };
 }

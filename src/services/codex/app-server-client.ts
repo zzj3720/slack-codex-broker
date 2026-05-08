@@ -690,6 +690,21 @@ export class AppServerClient extends EventEmitter {
       return;
     }
 
+    if (method === "thread/tokenUsage/updated") {
+      const usageEvent = normalizeAgentTurnUsageFromThreadTokenUsageUpdated(params);
+      if (!usageEvent) {
+        return;
+      }
+
+      const turnId = normalizeOptionalString(params.turnId) ?? normalizeOptionalString(params.turn_id);
+      if (!turnId) {
+        return;
+      }
+
+      this.#applyTurnUsage(turnId, usageEvent.usage, usageEvent.cumulativeTotalTokens);
+      return;
+    }
+
     if (method === "turn/completed") {
       const turnId = (params.turn?.id ?? params.turnId) as string | undefined;
       if (!turnId) {
@@ -1027,6 +1042,37 @@ function normalizeAgentTurnUsageFromTokenCountEvent(params: Record<string, any>)
           isRecord(params.total_token_usage) ? params.total_token_usage :
             isRecord(params.totalTokenUsage) ? params.totalTokenUsage :
               undefined;
+
+  return {
+    usage,
+    cumulativeTotalTokens: totalUsage ? readTokenNumber(totalUsage, ["total_tokens", "totalTokens"]) : undefined
+  };
+}
+
+function normalizeAgentTurnUsageFromThreadTokenUsageUpdated(params: Record<string, any>): CodexTokenCountUsageEvent | undefined {
+  const tokenUsage =
+    isRecord(params.tokenUsage) ? params.tokenUsage :
+      isRecord(params.token_usage) ? params.token_usage :
+        undefined;
+  if (!tokenUsage) {
+    return undefined;
+  }
+
+  const lastUsage =
+    isRecord(tokenUsage.last) ? tokenUsage.last :
+      isRecord(tokenUsage.last_token_usage) ? tokenUsage.last_token_usage :
+        isRecord(tokenUsage.lastTokenUsage) ? tokenUsage.lastTokenUsage :
+          tokenUsage;
+  const usage = normalizeAgentTurnTokenUsage(lastUsage);
+  if (!usage) {
+    return undefined;
+  }
+
+  const totalUsage =
+    isRecord(tokenUsage.total) ? tokenUsage.total :
+      isRecord(tokenUsage.total_token_usage) ? tokenUsage.total_token_usage :
+        isRecord(tokenUsage.totalTokenUsage) ? tokenUsage.totalTokenUsage :
+          undefined;
 
   return {
     usage,

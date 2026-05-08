@@ -1061,6 +1061,9 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(reminder).toBeTruthy();
     expect(collectTextInput(reminder!.input)).toContain("If yes, send a short Slack update. If not, keep working.");
     await waitForSessionIdle(tempRoot, "C123:444.220");
+    expect(mockCodex.steers.filter((steer) =>
+      collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
+    )).toHaveLength(1);
   }, 60_000);
 
   it("delivers idle input, active follow-up input, and progress reminders through one broker agent input contract", async () => {

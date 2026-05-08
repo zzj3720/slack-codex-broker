@@ -36,6 +36,7 @@ import {
   isRecoverableAgentTurnFailure,
   parseActiveTurnMismatch,
   isMissingActiveTurnInputError,
+  isUnexpectedTurnStopMessage,
   isSlackMessageAfterCursor,
   shouldResetConflictingActiveTurnMismatch,
   shouldForceResetStaleIdleRuntime,
@@ -96,6 +97,7 @@ export class SlackConversationService {
   #activeTurnReconcileTimer: NodeJS.Timeout | undefined;
   #catchUpPromise: Promise<void> | undefined;
   #lastMissedThreadRecoveryAtMs = 0;
+  readonly #progressReminderIssuedForTurn = new Set<string>();
 
   constructor(options: {
     readonly config: AppConfig;
@@ -768,6 +770,22 @@ export class SlackConversationService {
     if (!session.activeTurnId || !session.agentSessionId || !session.activeTurnStartedAt) {
       return;
     }
+    const activeBatchMessages = this.#sessions.listInboundMessages({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      batchId: session.activeTurnId,
+      status: "inflight"
+    });
+    if (
+      activeBatchMessages.length > 0 &&
+      activeBatchMessages.every((message) => isUnexpectedTurnStopMessage(message))
+    ) {
+      return;
+    }
+    const reminderKey = `${session.key}:${session.activeTurnId}`;
+    if (this.#progressReminderIssuedForTurn.has(reminderKey)) {
+      return;
+    }
 
     const nowMs = Date.now();
     const turnStartedAtMs = Date.parse(session.activeTurnStartedAt);
@@ -787,12 +805,21 @@ export class SlackConversationService {
 
     if (session.lastProgressReminderAt) {
       const lastReminderAtMs = Date.parse(session.lastProgressReminderAt);
+      if (Number.isFinite(lastReminderAtMs) && lastReminderAtMs >= silenceAnchorMs) {
+        return;
+      }
       if (Number.isFinite(lastReminderAtMs) && nowMs - lastReminderAtMs < this.#config.slackProgressReminderRepeatMs) {
         return;
       }
     }
 
+    this.#progressReminderIssuedForTurn.add(reminderKey);
     try {
+      await this.#sessions.setLastProgressReminderAt(
+        session.channelId,
+        session.rootThreadTs,
+        new Date().toISOString()
+      );
       await this.#turnRunner.submitRuntimeReminder(
         session,
         [
@@ -809,11 +836,6 @@ export class SlackConversationService {
       }
       throw error;
     }
-    await this.#sessions.setLastProgressReminderAt(
-      session.channelId,
-      session.rootThreadTs,
-      new Date().toISOString()
-    );
   }
 
   async #dispatchPersistedMessage(session: SlackSessionRecord, messageTs: string): Promise<void> {

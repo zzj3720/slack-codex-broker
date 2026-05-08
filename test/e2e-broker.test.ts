@@ -1001,72 +1001,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(deliveredTexts.some((text) => text.includes("\"job_kind\": \"watch_ci\""))).toBe(true);
   }, 60_000);
 
-  it("nudges long-running turns to consider a Slack progress update", async () => {
-    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
-    cleanups.push(async () => {
-      await removeTempRoot(tempRoot);
-    });
-
-    const mockSlack = new MockSlackServer("UBOT", {
-      botId: "BBOT",
-      appId: "AAPP"
-    });
-    const mockCodex = new MockCodexAppServer({
-      onTurnStart: async (context) => {
-        await delay(900);
-        context.complete("");
-      }
-    });
-    const slackPort = await mockSlack.start();
-    const codexUrl = await mockCodex.start();
-    cleanups.push(async () => {
-      await mockCodex.stop();
-      await mockSlack.stop();
-    });
-
-    const broker = await startBrokerProcess({
-      port: await getFreePort(),
-      slackPort,
-      codexUrl,
-      tempRoot,
-      extraEnv: {
-        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100",
-        SLACK_PROGRESS_REMINDER_AFTER_MS: "200",
-        SLACK_PROGRESS_REMINDER_REPEAT_MS: "200"
-      }
-    });
-    cleanups.push(() => broker.stop());
-
-    await mockSlack.sendEvent("evt-session", {
-      type: "app_mention",
-      user: "U123",
-      channel: "C123",
-      thread_ts: "444.220",
-      ts: "444.221",
-      text: "<@UBOT> 花点时间调研一下"
-    });
-
-    await waitFor(() => mockCodex.turnsStarted.length >= 1, "initial long-running turn");
-    await waitFor(
-      () =>
-        mockCodex.steers.some((steer) =>
-          collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
-        ),
-      "progress reminder input"
-    );
-
-    const reminder = mockCodex.steers.find((steer) =>
-      collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
-    );
-    expect(reminder).toBeTruthy();
-    expect(collectTextInput(reminder!.input)).toContain("If yes, send a short Slack update. If not, keep working.");
-    await waitForSessionIdle(tempRoot, "C123:444.220");
-    expect(mockCodex.steers.filter((steer) =>
-      collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
-    )).toHaveLength(1);
-  }, 60_000);
-
-  it("delivers idle input, active follow-up input, and progress reminders through one broker agent input contract", async () => {
+  it("delivers idle input and active follow-up input through one broker agent input contract", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {
       await removeTempRoot(tempRoot);
@@ -1098,9 +1033,7 @@ describe.sequential("slack-codex-broker e2e", () => {
       codexUrl,
       tempRoot,
       extraEnv: {
-        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100",
-        SLACK_PROGRESS_REMINDER_AFTER_MS: "200",
-        SLACK_PROGRESS_REMINDER_REPEAT_MS: "200"
+        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100"
       }
     });
     cleanups.push(() => broker.stop());
@@ -1130,12 +1063,6 @@ describe.sequential("slack-codex-broker e2e", () => {
       () => mockCodex.steers.some((steer) => collectTextInput(steer.input).includes("FOLLOW_UP_ACTIVE_INPUT")),
       "active follow-up delivered immediately"
     );
-    await waitFor(
-      () => mockCodex.steers.some((steer) =>
-        collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
-      ),
-      "active progress reminder delivered immediately"
-    );
 
     expect(mockCodex.turnsStarted).toHaveLength(1);
     expect(mockCodex.interrupts).toHaveLength(0);
@@ -1161,7 +1088,7 @@ describe.sequential("slack-codex-broker e2e", () => {
         })
       })
     ]));
-    expect(deliveredEvents.filter((event) => event.status === "joined_active_turn")).toHaveLength(2);
+    expect(deliveredEvents.filter((event) => event.status === "joined_active_turn")).toHaveLength(1);
     expect(traceEvents.map((event) => event.type)).toEqual(expect.arrayContaining([
       "agent_input_received",
       "agent_input_delivered",

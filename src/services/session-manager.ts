@@ -156,8 +156,7 @@ export class SessionManager {
     const now = new Date().toISOString();
     return await this.#patchSession(channelId, rootThreadTs, {
       activeTurnId,
-      activeTurnStartedAt: activeTurnId ? now : undefined,
-      lastProgressReminderAt: undefined
+      activeTurnStartedAt: activeTurnId ? now : undefined
     });
   }
 
@@ -188,16 +187,6 @@ export class SessionManager {
   ): Promise<SlackSessionRecord> {
     return await this.#patchSession(channelId, rootThreadTs, {
       lastSlackReplyAt
-    });
-  }
-
-  async setLastProgressReminderAt(
-    channelId: string,
-    rootThreadTs: string,
-    lastProgressReminderAt: string | undefined
-  ): Promise<SlackSessionRecord> {
-    return await this.#patchSession(channelId, rootThreadTs, {
-      lastProgressReminderAt
     });
   }
 

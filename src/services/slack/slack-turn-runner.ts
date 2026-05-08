@@ -50,18 +50,6 @@ export class SlackTurnRunner {
     }
   }
 
-  async submitRuntimeReminder(session: SlackSessionRecord, text: string): Promise<void> {
-    const result = await this.#agentRuntime.submitInput({
-      session,
-      input: [createTextInputItem(text)],
-      inputId: inputIdForSessionInput(session, session.activeTurnId ?? "active", "runtime-reminder"),
-      source: "runtime_reminder"
-    });
-    if (result.receipt.delivery !== "joined_active_turn") {
-      throw new Error(`Expected active reminder delivery for ${session.key}, got ${result.receipt.delivery}`);
-    }
-  }
-
   async buildTurnInput(message: SlackInputMessage): Promise<readonly AgentInputItem[]> {
     const enrichedMessage = await this.#enrichMentionedUsers(message);
     const sender = enrichedMessage.source !== "background_job_event" && enrichedMessage.source !== "recovered_thread_batch" && enrichedMessage.senderKind === "user"

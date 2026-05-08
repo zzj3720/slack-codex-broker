@@ -266,10 +266,9 @@ Codex app-server snapshots for timeline rendering.
 5. Idle input produces `agent.input.delivered` with `delivery=started_turn`.
 6. Active user input produces `agent.input.delivered` with
    `delivery=joined_active_turn`.
-7. Active progress reminders also produce `delivery=joined_active_turn`.
-8. Active input must not wait for turn completion, interrupt/cancel the turn,
+7. Active input must not wait for turn completion, interrupt/cancel the turn,
    start a new runtime session, or remain pending.
-9. Admin timeline reads DB data only and does not display JSONL, rollout paths,
+8. Admin timeline reads DB data only and does not display JSONL, rollout paths,
    workspace paths, or internal identifiers.
-10. Validation must include `pnpm build`, `pnpm test`, and browser verification of
+9. Validation must include `pnpm build`, `pnpm test`, and browser verification of
     the admin timeline.

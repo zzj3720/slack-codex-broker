@@ -10,8 +10,6 @@ export interface AppConfig {
   readonly slackHistoryApiMaxLimit: number;
   readonly slackActiveTurnReconcileIntervalMs: number;
   readonly slackMissedThreadRecoveryIntervalMs: number;
-  readonly slackProgressReminderAfterMs: number;
-  readonly slackProgressReminderRepeatMs: number;
   readonly stateDir: string;
   readonly jobsRoot: string;
   readonly sessionsRoot: string;
@@ -181,8 +179,6 @@ export function loadConfig(env = process.env): AppConfig {
       "SLACK_MISSED_THREAD_RECOVERY_INTERVAL_MS",
       15_000
     ),
-    slackProgressReminderAfterMs: getNumber(env, "SLACK_PROGRESS_REMINDER_AFTER_MS", 120_000),
-    slackProgressReminderRepeatMs: getNumber(env, "SLACK_PROGRESS_REMINDER_REPEAT_MS", 120_000),
     stateDir,
     jobsRoot,
     sessionsRoot,

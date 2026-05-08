@@ -65,7 +65,6 @@ describe("SessionManager", () => {
     expect(updated.agentSessionId).toBe("thread-1");
     expect(updated.activeTurnId).toBe("turn-1");
     expect(updated.activeTurnStartedAt).toBeTruthy();
-    expect(updated.lastProgressReminderAt).toBeUndefined();
 
     const cleared = await manager.setActiveTurnId("C123", "111.222", undefined);
     expect(cleared.activeTurnId).toBeUndefined();

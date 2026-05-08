@@ -444,7 +444,6 @@ function sessionFromRow(row) {
     lastObservedMessageTs: row.last_observed_message_ts ?? undefined,
     lastDeliveredMessageTs: row.last_delivered_message_ts ?? undefined,
     lastSlackReplyAt: row.last_slack_reply_at ?? undefined,
-    lastProgressReminderAt: row.last_progress_reminder_at ?? undefined,
     lastTurnSignalTurnId: row.last_turn_signal_turn_id ?? undefined,
     lastTurnSignalKind: row.last_turn_signal_kind ?? undefined,
     lastTurnSignalReason: row.last_turn_signal_reason ?? undefined,

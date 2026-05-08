@@ -282,7 +282,6 @@ function getLastUserVisibleActivityMs(
     session.createdAt,
     session.activeTurnStartedAt,
     session.lastSlackReplyAt,
-    session.lastProgressReminderAt,
     session.lastTurnSignalAt,
     ...inbound.flatMap((message) => [message.createdAt, message.updatedAt])
   ]

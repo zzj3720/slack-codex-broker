@@ -287,8 +287,12 @@ describe("StateStore", () => {
           name: "admin_realtime_events"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 10,
           name: "session_page_link_announcement"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "session_auth_profile_binding"
         }
       ]);
     } finally {

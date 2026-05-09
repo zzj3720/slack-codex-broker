@@ -3,6 +3,7 @@ import http from "node:http";
 import { loadConfig } from "./config.js";
 import { createHttpHandler } from "./http/router.js";
 import { logger } from "./logger.js";
+import { AuthProfileService } from "./services/auth-profile-service.js";
 import {
   configureServiceLogger,
   createAgentRuntime,
@@ -23,10 +24,15 @@ export async function startWorkerService(): Promise<{
 
   const { sessions: sessionManager } = createSessionServices(config);
   const githubAuthorMappings = await createGitHubAuthorMappings(config);
+  const authProfiles = new AuthProfileService({
+    config
+  });
   const codexBroker = createCodexBroker(config);
   const agentRuntime = createAgentRuntime({
+    config,
     codex: codexBroker,
-    sessions: sessionManager
+    sessions: sessionManager,
+    authProfiles
   });
   const bridge = createSlackBridge({
     config,

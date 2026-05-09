@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { createHttpHandler } from "../src/http/router.js";
 import { AdminService } from "../src/services/admin-service.js";
+import type { AuthProfilesStatus } from "../src/services/auth-profile-service.js";
 import { SessionManager } from "../src/services/session-manager.js";
 import { StateStore } from "../src/store/state-store.js";
 import type { AppConfig } from "../src/config.js";
@@ -180,6 +181,73 @@ describe("admin control plane e2e", () => {
     );
   });
 
+  it("switches a blocked session auth profile and asks the worker to resume pending dispatch", async () => {
+    const workerResumePaths: string[] = [];
+    const worker = http.createServer((request, response) => {
+      workerResumePaths.push(request.url ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, resumedCount: 1 }));
+    });
+    await new Promise<void>((resolve) => worker.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+      await new Promise<void>((resolve, reject) => {
+        worker.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    });
+    const address = worker.address();
+    if (!address || typeof address === "string") {
+      throw new Error("failed to start worker fixture");
+    }
+
+    const { baseUrl, sessions } = await startAdminFixture({
+      workerBaseUrl: `http://127.0.0.1:${address.port}`,
+      authProfilesStatus: authProfilesStatusFixture()
+    });
+    let session = await sessions.ensureSession("C123", "111.222");
+    session = await sessions.setAgentSessionId(session.channelId, session.rootThreadTs, "old-thread");
+    session = await sessions.setActiveTurnId(session.channelId, session.rootThreadTs, "old-turn");
+    session = await sessions.setSessionAuthProfile(session.key, "empty-profile", {
+      boundAt: "2026-05-09T00:00:00.000Z"
+    });
+    await sessions.markSessionAuthBlocked(session.key, {
+      reason: "primary_quota_exhausted",
+      blockedAt: "2026-05-09T01:00:00.000Z"
+    });
+
+    const result = await postJson(
+      `${baseUrl}/admin/api/sessions/${encodeURIComponent(session.key)}/auth-profile`,
+      { name: "usable-profile" }
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      workerResume: {
+        ok: true,
+        resumedCount: 1
+      },
+      session: {
+        key: session.key,
+        authProfileName: "usable-profile",
+        authBlockedAt: null,
+        agentSessionId: null,
+        activeTurnId: null
+      }
+    });
+    expect(workerResumePaths).toEqual([
+      `/slack/sessions/${encodeURIComponent(session.key)}/resume-pending`
+    ]);
+    expect(sessions.getSessionByKey(session.key)).toMatchObject({
+      authProfileName: "usable-profile",
+      authBlockedAt: undefined,
+      authBlockReason: undefined,
+      agentSessionId: undefined,
+      activeTurnId: undefined
+    });
+  });
+
   it("records deploy requests as durable admin operations with audit events", async () => {
     const { baseUrl, deploymentCalls } = await startAdminFixture();
 
@@ -288,7 +356,10 @@ describe("admin control plane e2e", () => {
     });
   });
 
-  async function startAdminFixture(): Promise<{
+  async function startAdminFixture(options?: {
+    readonly authProfilesStatus?: AuthProfilesStatus | undefined;
+    readonly workerBaseUrl?: string | undefined;
+  }): Promise<{
     readonly baseUrl: string;
     readonly config: AppConfig;
     readonly sessions: SessionManager;
@@ -307,7 +378,8 @@ describe("admin control plane e2e", () => {
       ADMIN_LAUNCHD_LABEL: "admin.test",
       WORKER_LAUNCHD_LABEL: "worker.test",
       ADMIN_PLIST_PATH: path.join(dataRoot, "admin.plist"),
-      WORKER_PLIST_PATH: path.join(dataRoot, "worker.plist")
+      WORKER_PLIST_PATH: path.join(dataRoot, "worker.plist"),
+      ...(options?.workerBaseUrl ? { WORKER_BASE_URL: options.workerBaseUrl } : {})
     } as NodeJS.ProcessEnv);
     await fs.mkdir(config.codexHome, { recursive: true });
     await fs.mkdir(config.logDir, { recursive: true });
@@ -328,7 +400,7 @@ describe("admin control plane e2e", () => {
       sessions,
       startedAt: new Date("2026-03-19T00:00:00.000Z"),
       authProfiles: {
-        listProfilesStatus: async () => ({
+        listProfilesStatus: async () => options?.authProfilesStatus ?? ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
           activeProfile: null,
@@ -668,6 +740,58 @@ function deploymentStatus(config: AppConfig): Record<string, unknown> {
       readyOk: true,
       healthBody: "{\"ok\":true}",
       readyError: null
+    }
+  };
+}
+
+function authProfilesStatusFixture(): AuthProfilesStatus {
+  return {
+    managedRoot: "/tmp/auth-profiles",
+    profilesRoot: "/tmp/auth-profiles/docker/profiles",
+    activeProfile: "empty-profile",
+    activeAuthPath: "/tmp/codex-home/auth.json",
+    profiles: [
+      authProfileFixture("empty-profile", 100, 20),
+      authProfileFixture("usable-profile", 10, 15)
+    ]
+  };
+}
+
+function authProfileFixture(name: string, primaryUsed: number, secondaryUsed: number): AuthProfilesStatus["profiles"][number] {
+  return {
+    name,
+    path: `/tmp/auth-profiles/docker/profiles/${name}.json`,
+    active: name === "empty-profile",
+    source: "probe",
+    checkedAt: "2026-05-09T00:00:00.000Z",
+    account: {
+      ok: true,
+      account: {
+        email: `${name}@example.com`,
+        type: "chatgpt",
+        planType: "pro"
+      },
+      requiresOpenaiAuth: false
+    },
+    rateLimits: {
+      ok: true,
+      rateLimits: {
+        limitId: "codex",
+        limitName: "Codex",
+        primary: {
+          usedPercent: primaryUsed,
+          windowDurationMins: 300,
+          resetsAt: 1_779_000_000
+        },
+        secondary: {
+          usedPercent: secondaryUsed,
+          windowDurationMins: 10_080,
+          resetsAt: 1_780_000_000
+        },
+        credits: null,
+        planType: "pro"
+      },
+      rateLimitsByLimitId: {}
     }
   };
 }

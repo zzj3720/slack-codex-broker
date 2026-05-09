@@ -20,6 +20,11 @@ import type { SessionManager } from "./session-manager.js";
 import type { AuthProfileService } from "./auth-profile-service.js";
 import type { GitHubAuthorMappingService } from "./github-author-mapping-service.js";
 import type { RuntimeControl } from "./runtime-control.js";
+import {
+  authProfileReasonLabel,
+  evaluateAuthProfile,
+  findAuthProfile
+} from "./session-auth-profile-selector.js";
 import type {
   DeployReleaseOptions,
   RollbackReleaseOptions,
@@ -411,6 +416,46 @@ export class AdminService {
         return {
           ok: true,
           activatedProfile: activated.name
+        };
+      }
+    );
+  }
+
+  async switchSessionAuthProfile(options: {
+    readonly sessionKey: string;
+    readonly name: string;
+  }): Promise<Record<string, unknown>> {
+    return await this.#runTrackedOperation(
+      "session_auth_profile_switch",
+      {
+        sessionKey: options.sessionKey,
+        name: options.name
+      },
+      async () => {
+        const session = this.options.sessions.getSessionByKey(options.sessionKey);
+        if (!session) {
+          throw new Error(`Session not found: ${options.sessionKey}`);
+        }
+
+        const status = await this.options.authProfiles.listProfilesStatus();
+        const profile = findAuthProfile(status, options.name);
+        if (!profile) {
+          throw new Error(`Auth profile not found: ${options.name}`);
+        }
+
+        const evaluation = evaluateAuthProfile(profile);
+        if (!evaluation.usable) {
+          throw new Error(`Auth profile is not usable: ${authProfileReasonLabel(evaluation.reason)}`);
+        }
+
+        await this.options.sessions.resetInflightMessages(session.channelId, session.rootThreadTs);
+        const switched = await this.options.sessions.switchSessionAuthProfileAndClearBlock(session.key, profile.name);
+        await this.#appendSessionAuthProfileSwitchTrace(switched, profile.name);
+        const workerResume = await this.#resumeWorkerPendingSession(switched.key);
+        return {
+          ok: true,
+          session: this.#summarizeSessionByKey(switched.key),
+          workerResume
         };
       }
     );
@@ -1026,6 +1071,12 @@ export class AdminService {
       lastTurnSignalAt: session.lastTurnSignalAt ?? null,
       lastSlackReplyAt: session.lastSlackReplyAt ?? null,
       sessionPageLinkPostedAt: session.sessionPageLinkPostedAt ?? null,
+      authProfileName: session.authProfileName ?? null,
+      authProfileBoundAt: session.authProfileBoundAt ?? null,
+      authBlockedAt: session.authBlockedAt ?? null,
+      authBlockReason: session.authBlockReason ?? null,
+      authBlockReasonLabel: authProfileReasonLabel(session.authBlockReason),
+      authBlockedNoticePostedAt: session.authBlockedNoticePostedAt ?? null,
       lastObservedMessageTs: session.lastObservedMessageTs ?? null,
       lastDeliveredMessageTs: session.lastDeliveredMessageTs ?? null,
       openInboundCount: related.openInbound.length,
@@ -1038,6 +1089,46 @@ export class AdminService {
       backgroundJobs: related.jobs.slice(0, 5).map((job) => this.#summarizeJob(job)),
       usage: related.usage ?? emptySessionUsageSummary(session)
     };
+  }
+
+  async #appendSessionAuthProfileSwitchTrace(
+    session: SlackSessionRecord,
+    profileName: string
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const sequence = this.options.sessions.listAgentTraceEvents(session.key, 10_000).length + 1;
+    await this.options.sessions.upsertAgentTraceEvent({
+      id: randomUUID(),
+      sessionKey: session.key,
+      source: "broker",
+      type: "agent_runtime_instruction",
+      at: now,
+      sequence,
+      title: "Auth Profile 已切换",
+      summary: `人工切换到 ${profileName}，继续处理待处理消息`,
+      detail: JSON.stringify({ profileName }, null, 2),
+      status: "completed",
+      metadata: {
+        profileName
+      },
+      createdAt: now,
+      updatedAt: now
+    });
+  }
+
+  async #resumeWorkerPendingSession(sessionKey: string): Promise<Record<string, unknown>> {
+    const url = new URL(
+      `/slack/sessions/${encodeURIComponent(sessionKey)}/resume-pending`,
+      this.options.config.workerBaseUrl
+    );
+    const response = await fetch(url, {
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok || payload.ok === false) {
+      throw new Error(String(payload.error || response.statusText || "worker_resume_failed"));
+    }
+    return payload;
   }
 }
 

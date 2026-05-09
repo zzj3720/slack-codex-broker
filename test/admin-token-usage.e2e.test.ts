@@ -76,8 +76,18 @@ describe("admin token usage e2e", () => {
 
     const codex = createCodexBroker(config);
     const agentRuntime = createAgentRuntime({
+      config,
       codex,
-      sessions
+      sessions,
+      authProfiles: {
+        listProfilesStatus: async () => ({
+          managedRoot: path.join(dataRoot, "auth-profiles"),
+          profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
+          activeProfile: null,
+          activeAuthPath: path.join(config.codexHome, "auth.json"),
+          profiles: []
+        })
+      } as never
     });
     await agentRuntime.start();
     cleanups.push(async () => {

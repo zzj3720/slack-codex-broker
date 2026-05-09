@@ -201,6 +201,60 @@ export class SessionManager {
     });
   }
 
+  async setSessionAuthProfile(
+    sessionKey: string,
+    profileName: string,
+    options?: {
+      readonly boundAt?: string | undefined;
+    }
+  ): Promise<SlackSessionRecord> {
+    return await this.#stateStore.patchSession(sessionKey, {
+      authProfileName: profileName,
+      authProfileBoundAt: options?.boundAt ?? new Date().toISOString()
+    });
+  }
+
+  async markSessionAuthBlocked(
+    sessionKey: string,
+    options: {
+      readonly reason: string;
+      readonly blockedAt?: string | undefined;
+    }
+  ): Promise<SlackSessionRecord> {
+    return await this.#stateStore.patchSession(sessionKey, {
+      authBlockedAt: options.blockedAt ?? new Date().toISOString(),
+      authBlockReason: options.reason
+    });
+  }
+
+  async setSessionAuthBlockedNoticePostedAt(
+    sessionKey: string,
+    postedAt: string
+  ): Promise<SlackSessionRecord> {
+    return await this.#stateStore.patchSession(sessionKey, {
+      authBlockedNoticePostedAt: postedAt
+    });
+  }
+
+  async switchSessionAuthProfileAndClearBlock(
+    sessionKey: string,
+    profileName: string,
+    options?: {
+      readonly boundAt?: string | undefined;
+    }
+  ): Promise<SlackSessionRecord> {
+    return await this.#stateStore.patchSession(sessionKey, {
+      authProfileName: profileName,
+      authProfileBoundAt: options?.boundAt ?? new Date().toISOString(),
+      authBlockedAt: undefined,
+      authBlockReason: undefined,
+      authBlockedNoticePostedAt: undefined,
+      agentSessionId: undefined,
+      activeTurnId: undefined,
+      activeTurnStartedAt: undefined
+    });
+  }
+
   async recordTurnSignal(
     channelId: string,
     rootThreadTs: string,

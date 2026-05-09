@@ -26,10 +26,15 @@ export async function startService(): Promise<{
   configureServiceLogger(config);
   const { sessions: sessionManager } = createSessionServices(config);
   const githubAuthorMappings = await createGitHubAuthorMappings(config);
+  const authProfiles = new AuthProfileService({
+    config
+  });
   const codexBroker = createCodexBroker(config);
   const agentRuntime = createAgentRuntime({
+    config,
     codex: codexBroker,
-    sessions: sessionManager
+    sessions: sessionManager,
+    authProfiles
   });
   const bridge = createSlackBridge({
     config,
@@ -47,9 +52,6 @@ export async function startService(): Promise<{
     config,
     sessions: sessionManager,
     jobManager
-  });
-  const authProfiles = new AuthProfileService({
-    config
   });
   const adminService = new AdminService({
     config,

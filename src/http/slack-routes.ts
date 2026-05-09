@@ -32,6 +32,12 @@ export async function handleSlackRequest(
     return true;
   }
 
+  const matchedResumeSession = matchResumeSessionPath(url.pathname);
+  if (method === "POST" && matchedResumeSession) {
+    await handleSlackResumePendingSessionRequest(response, options, matchedResumeSession.sessionKey);
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/slack/post-message") {
     await handleSlackPostMessageRequest(request, response, options);
     return true;
@@ -63,6 +69,28 @@ export async function handleSlackRequest(
   }
 
   return false;
+}
+
+async function handleSlackResumePendingSessionRequest(
+  response: http.ServerResponse,
+  options: {
+    readonly bridge: SlackAgentBridge;
+  },
+  sessionKey: string
+): Promise<void> {
+  try {
+    const resumedCount = await options.bridge.resumePendingSession(sessionKey);
+    respondJson(response, 200, {
+      ok: true,
+      sessionKey,
+      resumedCount
+    });
+  } catch (error) {
+    respondJson(response, 500, {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 async function handleSlackThreadHistoryRequest(
@@ -543,6 +571,23 @@ function normalizeStringArray(value: unknown): string[] | undefined {
     .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
     .filter(Boolean);
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function matchResumeSessionPath(pathname: string): { readonly sessionKey: string } | null {
+  const prefix = "/slack/sessions/";
+  const suffix = "/resume-pending";
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) {
+    return null;
+  }
+
+  const encodedKey = pathname.slice(prefix.length, -suffix.length);
+  if (!encodedKey) {
+    return null;
+  }
+
+  return {
+    sessionKey: decodeURIComponent(encodedKey)
+  };
 }
 
 function normalizeMappings(value: unknown):

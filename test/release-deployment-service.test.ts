@@ -325,8 +325,8 @@ describe("ReleaseDeploymentService", () => {
     await fs.writeFile(workerPlistPath, "<plist/>", "utf8");
 
     let workerLoaded = false;
-    let adminLoaded = false;
     const scheduledAdminRestarts: Array<() => Promise<void>> = [];
+    const detachedCommands: string[] = [];
     const commands: string[] = [];
 
     vi.stubGlobal("fetch", vi.fn(async () => ({
@@ -375,7 +375,9 @@ describe("ReleaseDeploymentService", () => {
         const releaseRoot = String(args[5]);
         const revision = String(args[6]);
         await fs.mkdir(path.join(releaseRoot, ".git"), { recursive: true });
+        await fs.mkdir(path.join(releaseRoot, "scripts", "ops"), { recursive: true });
         await fs.writeFile(path.join(releaseRoot, ".revision"), `${revision}\n`, "utf8");
+        await fs.writeFile(path.join(releaseRoot, "scripts", "ops", "macos-launchd-restart.mjs"), "", "utf8");
         return { stdout: "", stderr: "" };
       }
       if (command === "corepack") {
@@ -385,17 +387,11 @@ describe("ReleaseDeploymentService", () => {
         if (args[2] === workerPlistPath) {
           workerLoaded = false;
         }
-        if (args[2] === adminPlistPath) {
-          adminLoaded = false;
-        }
         return { stdout: "", stderr: "" };
       }
       if (command === "launchctl" && args[0] === "bootstrap") {
         if (args[2] === workerPlistPath) {
           workerLoaded = true;
-        }
-        if (args[2] === adminPlistPath) {
-          adminLoaded = true;
         }
         return { stdout: "", stderr: "" };
       }
@@ -405,9 +401,6 @@ describe("ReleaseDeploymentService", () => {
       if (command === "launchctl" && args[0] === "print") {
         const domain = String(args[1]);
         if (domain.endsWith("/test.worker") && workerLoaded) {
-          return { stdout: "loaded\n", stderr: "" };
-        }
-        if (domain.endsWith("/test.admin") && adminLoaded) {
           return { stdout: "loaded\n", stderr: "" };
         }
         throw new Error("not loaded");
@@ -433,6 +426,9 @@ describe("ReleaseDeploymentService", () => {
       scheduleAdminRestart: (restart) => {
         scheduledAdminRestarts.push(restart);
       },
+      spawnDetached: (command, args) => {
+        detachedCommands.push(`${command} ${args.join(" ")}`);
+      },
       exec
     });
 
@@ -443,11 +439,11 @@ describe("ReleaseDeploymentService", () => {
     expect(commands.some((command) => command.includes(`${currentReleasePath}`))).toBe(false);
 
     await scheduledAdminRestarts[0]!();
-    expect(adminLoaded).toBe(true);
-    expect(commands).toEqual(expect.arrayContaining([
-      expect.stringContaining(`launchctl bootstrap gui/`),
-      expect.stringContaining(adminPlistPath),
-      expect.stringContaining("test.admin")
-    ]));
+    expect(commands.some((command) => command.includes(adminPlistPath))).toBe(false);
+    expect(detachedCommands).toHaveLength(1);
+    expect(detachedCommands[0]).toContain("macos-launchd-restart.mjs");
+    expect(detachedCommands[0]).toContain("--plist " + adminPlistPath);
+    expect(detachedCommands[0]).toContain("--label test.admin");
+    expect(detachedCommands[0]).toContain("--domain gui/");
   });
 });

@@ -231,6 +231,8 @@ function SessionRow({ session, selected, onSelect }: {
 function SessionDetail({ session }: {
   readonly session: SessionRecord;
 }): React.JSX.Element {
+  const snapshot = useSyncExternalStore(subscribeAdminStatus, getAdminStatusSnapshot, getAdminStatusSnapshot);
+  const authProfiles = (((snapshot.status || {}) as Record<string, any>).authProfiles?.profiles || []) as SessionRecord[];
   const usage = session.usage || {};
   const state = sessionQueueState(session);
   const activityAt = sessionActivityAt(session);
@@ -260,6 +262,12 @@ function SessionDetail({ session }: {
           <Kpi label="Token / 轮次" value={fmtTokens(usage.totalTokens || 0) + " / " + (usage.turnCount || 0)} />
         </div>
         <div className="session-inspector">
+          <div className="mini-panel">
+            <div className="mini-title">Auth Profile</div>
+            <div className="mini-body">
+              <AuthProfilePanel session={session} profiles={authProfiles} />
+            </div>
+          </div>
           <div className="mini-panel trace-panel">
             <div className="mini-title">Agent 活动时间线</div>
             <div className="mini-body">
@@ -316,6 +324,80 @@ function SessionTimeline({ session }: {
   if (error) return <div className="summary-detail">{error}</div>;
   if (!payload) return <Timeline events={[{ at: session.createdAt, type: "session", title: "已创建" }]} />;
   return <TimelinePayloadView payload={payload} />;
+}
+
+function AuthProfilePanel({ session, profiles }: {
+  readonly session: SessionRecord;
+  readonly profiles: readonly SessionRecord[];
+}): React.JSX.Element {
+  const [selected, setSelected] = useState(String(session.authProfileName || ""));
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const currentProfile = profiles.find((profile) => profile.name === session.authProfileName);
+  const blocked = Boolean(session.authBlockedAt);
+
+  useEffect(() => {
+    setSelected(String(session.authProfileName || ""));
+    setMessage(null);
+  }, [session.key, session.authProfileName, session.authBlockedAt]);
+
+  async function switchProfile(): Promise<void> {
+    if (!selected || selected === session.authProfileName) {
+      return;
+    }
+
+    setBusy(true);
+    setMessage(null);
+    try {
+      await requestJson("/admin/api/sessions/" + encodeURIComponent(String(session.key || "")) + "/auth-profile", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: selected })
+      });
+      const timelinePayload = await requestJson(sessionTimelineApiPath(String(session.key || "")));
+      publishTimelinePayload(String(session.key || ""), timelinePayload as TimelinePayload);
+      setMessage("已切换，正在恢复待处理消息");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="auth-profile-panel">
+      <div className="auth-profile-current">
+        <span>当前</span>
+        <strong>{session.authProfileName || "未绑定"}</strong>
+        {currentProfile ? <span>{profileQuotaLabel(currentProfile)}</span> : null}
+      </div>
+      {blocked ? (
+        <div className="auth-profile-blocked">
+          <Badge label="等待手动切换" tone="danger" />
+          <span>{session.authBlockReasonLabel || session.authBlockReason || "账号不可用"}</span>
+        </div>
+      ) : null}
+      <div className="auth-profile-switcher">
+        <select value={selected} onChange={(event) => setSelected(event.target.value)}>
+          <option value="">选择账号</option>
+          {profiles.map((profile) => (
+            <option key={profile.name} value={profile.name}>
+              {profile.name} · {profileQuotaLabel(profile)}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="link-button"
+          disabled={busy || !selected || selected === session.authProfileName}
+          onClick={() => { void switchProfile(); }}
+        >
+          切换并继续处理
+        </button>
+      </div>
+      {message ? <div className="summary-detail">{message}</div> : null}
+    </div>
+  );
 }
 
 function TimelinePayloadView({ payload }: { readonly payload: TimelinePayload }): React.JSX.Element {
@@ -500,7 +582,7 @@ function sessionMatchesFilter(session: SessionRecord, mode: string, query: strin
   if (mode === "active" && !session.activeTurnId) return false;
   if (mode === "inbound" && !session.openInboundCount) return false;
   if (mode === "jobs" && !session.runningBackgroundJobCount) return false;
-  if (mode === "issues" && !session.failedBackgroundJobCount) return false;
+  if (mode === "issues" && !session.failedBackgroundJobCount && !session.authBlockedAt) return false;
   if (mode === "usage" && !session.usage?.turnCount) return false;
   if (!query) return true;
   return [session.key, session.channelId, session.channelLabel, session.workspacePath, sessionPrimaryText(session), sessionFirstText(session)]
@@ -519,6 +601,8 @@ function renderSessionMeta(session: SessionRecord): Array<{ key: string; label: 
     : "";
   return [
     { key: "channel", label: session.channelLabel || session.channelId || "未知频道", tone: "info", title: session.key },
+    session.authBlockedAt ? { key: "auth-blocked", label: "账号待切换", tone: "danger", title: session.authBlockReasonLabel || session.authBlockReason } : null,
+    session.authProfileName ? { key: "auth-profile", label: "Auth " + session.authProfileName, tone: "info" } : null,
     pendingDetail ? { key: "pending", label: pendingDetail, tone: Number(session.openHumanInboundCount || 0) ? "warn" : "" } : null,
     { key: "jobs", label: "Jobs " + (session.backgroundJobCount || 0), tone: Number(session.failedBackgroundJobCount || 0) ? "danger" : (Number(session.runningBackgroundJobCount || 0) ? "good" : "") },
     Number(session.failedBackgroundJobCount || 0) ? { key: "failed", label: "失败 " + session.failedBackgroundJobCount, tone: "danger" } : null,
@@ -558,6 +642,9 @@ function summarizeSessionLead(session: SessionRecord): string {
 }
 
 function sessionQueueState(session: SessionRecord): { label: string; tone: string; rank: number; detail: string } {
+  if (session.authBlockedAt) {
+    return { label: "账号待切换", tone: "danger", rank: 70, detail: session.authBlockReasonLabel || session.authBlockReason || "账号不可用" };
+  }
   if (Number(session.failedBackgroundJobCount || 0) > 0) {
     return { label: "异常", tone: "danger", rank: 60, detail: session.failedBackgroundJobCount + " 个失败任务" };
   }
@@ -577,6 +664,29 @@ function sessionQueueState(session: SessionRecord): { label: string; tone: strin
     return { label: "有记录", tone: "info", rank: 10, detail: fmtTokens(session.usage?.totalTokens || 0) };
   }
   return { label: "空闲", tone: "", rank: 0, detail: "" };
+}
+
+function profileQuotaLabel(profile: SessionRecord): string {
+  const rateLimits = profile.rateLimits || {};
+  if (rateLimits.ok === false) {
+    return "不可用";
+  }
+
+  const limits = rateLimits.rateLimits || {};
+  const primary = remainingPercent(limits.primary?.usedPercent);
+  const secondary = remainingPercent(limits.secondary?.usedPercent);
+  const parts = [];
+  if (primary !== null) parts.push("短窗 " + Math.round(primary) + "%");
+  if (secondary !== null) parts.push("周 " + Math.round(secondary) + "%");
+  return parts.length ? parts.join(" / ") : "额度未知";
+}
+
+function remainingPercent(usedPercent: unknown): number | null {
+  const used = Number(usedPercent);
+  if (!Number.isFinite(used)) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, 100 - used));
 }
 
 function compareSessionsForMode(mode: string, left: SessionRecord, right: SessionRecord): number {
@@ -613,8 +723,8 @@ function sessionActivityMs(session: SessionRecord): number {
   return timestampMs(sessionActivityAt(session));
 }
 
-async function requestJson(path: string): Promise<unknown> {
-  const response = await fetch(path);
+async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
+  const response = await fetch(path, init);
   const payload = await response.json().catch(() => ({})) as Record<string, any>;
   if (!response.ok || payload.ok === false) throw new Error(payload.error || response.statusText || "请求失败");
   return payload;
@@ -685,7 +795,7 @@ function statusTone(status: unknown): string {
   const value = String(status || "").toLowerCase();
   if (["succeeded", "running", "active", "ok", "completed", "done"].includes(value)) return "good";
   if (["pending", "inflight", "registered", "starting", "idle", "started", "wait"].includes(value)) return "warn";
-  if (["failed", "error", "stopped", "cancelled"].includes(value)) return "danger";
+  if (["failed", "error", "stopped", "cancelled", "blocked"].includes(value)) return "danger";
   if (["agent_system_prompt", "agent_memory", "agent_runtime_instruction"].includes(value)) return "purple";
   if (["agent_user_message", "agent_assistant_message", "agent_tool_result", "agent_token_count"].includes(value)) return "good";
   if (["agent_runtime_reminder", "agent_tool_call", "agent_turn_started"].includes(value)) return "warn";

@@ -133,6 +133,10 @@ export class SlackAgentBridge {
     return await this.#conversations.replayThreadMessage(options);
   }
 
+  async resumePendingSession(sessionKey: string): Promise<number> {
+    return await this.#conversations.resumePendingSession(sessionKey);
+  }
+
   async acceptBackgroundJobEvent(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;

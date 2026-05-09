@@ -185,12 +185,16 @@ export class AppServerProcess {
   async #bootstrapAuth(): Promise<void> {
     const authTarget = path.join(this.#codexHome, "auth.json");
 
+    if (this.#authJsonPath && await fileExists(this.#authJsonPath)) {
+      await pointSymlink(authTarget, this.#authJsonPath);
+      return;
+    }
+
     if (await fileExists(authTarget)) {
       return;
     }
 
     const candidatePaths = [
-      this.#authJsonPath,
       path.join(os.homedir(), ".codex", "auth.json")
     ].filter((value): value is string => Boolean(value));
 
@@ -504,6 +508,25 @@ async function waitForAppServerListen(
 function formatStartupDetails(stdoutTail: string, stderrTail: string): string {
   const details = (stderrTail || stdoutTail).trim();
   return details ? `: ${details}` : "";
+}
+
+async function pointSymlink(linkPath: string, targetPath: string): Promise<void> {
+  const desiredTarget = path.relative(path.dirname(linkPath), targetPath);
+  try {
+    const currentTarget = await fs.readlink(linkPath);
+    const resolvedCurrent = path.resolve(path.dirname(linkPath), currentTarget);
+    if (path.resolve(resolvedCurrent) === path.resolve(targetPath)) {
+      return;
+    }
+  } catch (error) {
+    if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT") &&
+        !(error && typeof error === "object" && "code" in error && error.code === "EINVAL")) {
+      throw error;
+    }
+  }
+
+  await fs.rm(linkPath, { force: true });
+  await fs.symlink(desiredTarget, linkPath);
 }
 
 function isAddressInUseStartupError(error: unknown): boolean {

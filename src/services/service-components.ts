@@ -3,6 +3,8 @@ import { configureLogger } from "../logger.js";
 import { StateStore } from "../store/state-store.js";
 import type { AgentRuntime } from "./agent-runtime/types.js";
 import { CodexAppServerRuntime } from "./agent-runtime/codex-app-server-runtime.js";
+import { SessionAuthProfileRuntime } from "./agent-runtime/session-auth-profile-runtime.js";
+import type { AuthProfileService } from "./auth-profile-service.js";
 import { CodexBroker } from "./codex/codex-broker.js";
 import { IsolatedMcpService } from "./codex/isolated-mcp-service.js";
 import { DiskPressureCleanupService } from "./disk-pressure-cleanup-service.js";
@@ -67,12 +69,22 @@ export function createCodexBroker(config: AppConfig): CodexBroker {
 }
 
 export function createAgentRuntime(options: {
+  readonly config: AppConfig;
   readonly codex: CodexBroker;
   readonly sessions: SessionManager;
+  readonly authProfiles: AuthProfileService;
 }): AgentRuntime {
-  return new CodexAppServerRuntime({
-    codex: options.codex,
-    sessions: options.sessions
+  const legacyRuntime = options.config.codexAppServerUrl
+    ? new CodexAppServerRuntime({
+        codex: options.codex,
+        sessions: options.sessions
+      })
+    : undefined;
+  return new SessionAuthProfileRuntime({
+    config: options.config,
+    sessions: options.sessions,
+    authProfiles: options.authProfiles,
+    legacyRuntime
   });
 }
 

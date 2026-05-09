@@ -109,6 +109,12 @@
     .mini-panel { border: 1px solid var(--line); }
     .mini-title { padding: 3px 6px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; text-transform: uppercase; }
     .mini-body { padding: 4px 6px; }
+    .auth-profile-panel { display: grid; gap: 6px; min-width: 0; }
+    .auth-profile-current { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; color: var(--muted); font-size: 10px; }
+    .auth-profile-current strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .auth-profile-blocked { display: flex; gap: 6px; align-items: center; min-width: 0; color: var(--red); font-size: 10px; }
+    .auth-profile-blocked span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .auth-profile-switcher { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
 
     .timeline { display: grid; gap: 0; max-height: min(420px, 52vh); overflow: auto; border: 1px solid var(--line); }
     .timeline-event { display: grid; grid-template-columns: 72px 90px minmax(0, 1fr); gap: 6px; align-items: start; padding: 4px 6px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }

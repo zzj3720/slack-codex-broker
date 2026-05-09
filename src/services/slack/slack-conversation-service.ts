@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -15,6 +16,10 @@ import type {
   SlackTurnSignalKind
 } from "../../types.js";
 import type { AgentRuntime, AgentRuntimeEvent } from "../agent-runtime/types.js";
+import {
+  isAuthProfileUnavailableError,
+  type AuthProfileUnavailableError
+} from "../agent-runtime/session-auth-profile-runtime.js";
 import { AgentTraceRecorder } from "../agent-runtime/agent-trace-recorder.js";
 import {
   SlackApi,
@@ -262,6 +267,17 @@ export class SlackConversationService {
 
     await this.acceptInboundMessage(session, input);
     return input;
+  }
+
+  async resumePendingSession(sessionKey: string): Promise<number> {
+    const session = this.#findSessionByKey(sessionKey);
+    if (session.authBlockedAt) {
+      throw new Error(`Session auth is still blocked: ${sessionKey}`);
+    }
+
+    return await this.#resumePendingDispatch(sessionKey, {
+      forceReset: true
+    });
   }
 
   async acceptBackgroundJobEvent(options: {
@@ -1132,6 +1148,11 @@ export class SlackConversationService {
           return;
         }
 
+        if (isAuthProfileUnavailableError(error)) {
+          await this.#handleAuthProfileUnavailable(session, error, runtime);
+          break;
+        }
+
         logger.error("Slack conversation turn dispatch failed", {
           sessionKey,
           channelId: session.channelId,
@@ -1310,6 +1331,9 @@ export class SlackConversationService {
       if (refreshedSession.activeTurnId) {
         continue;
       }
+      if (refreshedSession.authBlockedAt) {
+        continue;
+      }
 
       const resumedCount = await this.#resumePendingDispatch(refreshedSession.key);
 
@@ -1375,6 +1399,9 @@ export class SlackConversationService {
       if (runtime.processing) {
         continue;
       }
+      if (session.authBlockedAt) {
+        continue;
+      }
 
       const reconciled = await this.#inboundStore.reconcileOrphanedInflightMessages(session);
       if (reconciled.markedDoneCount > 0 || reconciled.resetToPendingCount > 0) {
@@ -1399,6 +1426,9 @@ export class SlackConversationService {
       .sort((left, right) => compareIsoTimestamp(right.updatedAt, left.updatedAt));
 
     for (const session of sessions) {
+      if (session.authBlockedAt) {
+        continue;
+      }
       const pendingSyntheticMessages = this.#sessions.listInboundMessages({
         channelId: session.channelId,
         rootThreadTs: session.rootThreadTs,
@@ -1503,5 +1533,86 @@ export class SlackConversationService {
       default:
         return;
     }
+  }
+
+  async #handleAuthProfileUnavailable(
+    session: SlackSessionRecord,
+    error: AuthProfileUnavailableError,
+    runtime: RuntimeSessionState
+  ): Promise<void> {
+    logger.warn("Pausing Slack session until a human switches auth profile", {
+      sessionKey: session.key,
+      profileName: error.profileName ?? null,
+      reason: error.reason
+    });
+
+    runtime.blockedUntilMs = Number.MAX_SAFE_INTEGER;
+    runtime.blockedFailureFingerprint = `auth:${error.profileName ?? "none"}:${error.reason}`;
+    const alreadyBlocked = Boolean(session.authBlockedAt);
+    const blockedAt = new Date().toISOString();
+    let blockedSession = await this.#sessions.markSessionAuthBlocked(session.key, {
+      reason: error.reason,
+      blockedAt
+    });
+    blockedSession = await this.#sessions.setActiveTurnId(
+      blockedSession.channelId,
+      blockedSession.rootThreadTs,
+      undefined
+    );
+    if (!alreadyBlocked) {
+      await this.#recordAuthBlockedTrace(blockedSession, error, blockedAt);
+    }
+
+    if (!blockedSession.authBlockedNoticePostedAt) {
+      const url = buildAdminSessionUrl(this.#config.adminBaseUrl, blockedSession.key);
+      const postedAt = new Date().toISOString();
+      await this.#postBotThreadMessage(
+        blockedSession.channelId,
+        blockedSession.rootThreadTs,
+        [
+          `当前会话绑定的账号额度不可用：${error.userMessage}`,
+          `<${url}|打开 Session 页面手动切换账号并继续处理>`
+        ].join("\n"),
+        {
+          alreadyFormatted: true,
+          turnSignal: {
+            kind: "block",
+            reason: error.reason
+          }
+        }
+      );
+      await this.#sessions.setSessionAuthBlockedNoticePostedAt(blockedSession.key, postedAt);
+    }
+
+    this.#clearAssistantStatus(blockedSession.channelId, blockedSession.rootThreadTs);
+  }
+
+  async #recordAuthBlockedTrace(
+    session: SlackSessionRecord,
+    error: AuthProfileUnavailableError,
+    at: string
+  ): Promise<void> {
+    const existingCount = this.#sessions.listAgentTraceEvents(session.key, 10_000).length;
+    await this.#sessions.upsertAgentTraceEvent({
+      id: randomUUID(),
+      sessionKey: session.key,
+      source: "broker",
+      type: "agent_runtime_error",
+      at,
+      sequence: existingCount + 1,
+      title: "Auth 不可用",
+      summary: `等待人工切换账号：${error.userMessage}`,
+      detail: JSON.stringify({
+        profileName: error.profileName ?? null,
+        reason: error.reason
+      }, null, 2),
+      status: "blocked",
+      metadata: {
+        profileName: error.profileName ?? null,
+        reason: error.reason
+      },
+      createdAt: at,
+      updatedAt: at
+    });
   }
 }

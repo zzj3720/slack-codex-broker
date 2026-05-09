@@ -14,6 +14,11 @@ export interface SlackSessionRecord {
   readonly lastDeliveredMessageTs?: string | undefined;
   readonly lastSlackReplyAt?: string | undefined;
   readonly sessionPageLinkPostedAt?: string | undefined;
+  readonly authProfileName?: string | undefined;
+  readonly authProfileBoundAt?: string | undefined;
+  readonly authBlockedAt?: string | undefined;
+  readonly authBlockReason?: string | undefined;
+  readonly authBlockedNoticePostedAt?: string | undefined;
   readonly lastTurnSignalTurnId?: string | undefined;
   readonly lastTurnSignalKind?: SlackTurnSignalKind | undefined;
   readonly lastTurnSignalReason?: string | undefined;
@@ -137,6 +142,7 @@ export type AdminOperationKind =
   | "auth_profile_add"
   | "auth_profile_delete"
   | "auth_profile_activate"
+  | "session_auth_profile_switch"
   | "github_author_upsert"
   | "github_author_delete";
 

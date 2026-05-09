@@ -19,7 +19,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 10;
+export const CURRENT_STATE_SCHEMA_VERSION = 11;
 const ADMIN_EVENT_RETENTION_LIMIT = 20_000;
 
 type SqlValue = string | number | bigint | null;
@@ -53,6 +53,11 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
           last_delivered_message_ts TEXT,
           last_slack_reply_at TEXT,
           session_page_link_posted_at TEXT,
+          auth_profile_name TEXT,
+          auth_profile_bound_at TEXT,
+          auth_blocked_at TEXT,
+          auth_block_reason TEXT,
+          auth_blocked_notice_posted_at TEXT,
           last_turn_signal_turn_id TEXT,
           last_turn_signal_kind TEXT,
           last_turn_signal_reason TEXT,
@@ -283,6 +288,13 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
     up(database) {
       repairSessionPageLinkAnnouncementSchema(database);
     }
+  },
+  {
+    version: 11,
+    name: "session_auth_profile_binding",
+    up(database) {
+      repairSessionAuthProfileSchema(database);
+    }
   }
 ];
 
@@ -336,6 +348,29 @@ function repairSessionPageLinkAnnouncementSchema(database: DatabaseSync): void {
   const columns = tableColumns(database, "sessions");
   if (!columns.has("session_page_link_posted_at")) {
     database.exec("ALTER TABLE sessions ADD COLUMN session_page_link_posted_at TEXT");
+  }
+}
+
+function repairSessionAuthProfileSchema(database: DatabaseSync): void {
+  if (!tableExists(database, "sessions")) {
+    return;
+  }
+
+  const columns = tableColumns(database, "sessions");
+  if (!columns.has("auth_profile_name")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN auth_profile_name TEXT");
+  }
+  if (!columns.has("auth_profile_bound_at")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN auth_profile_bound_at TEXT");
+  }
+  if (!columns.has("auth_blocked_at")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN auth_blocked_at TEXT");
+  }
+  if (!columns.has("auth_block_reason")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN auth_block_reason TEXT");
+  }
+  if (!columns.has("auth_blocked_notice_posted_at")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN auth_blocked_notice_posted_at TEXT");
   }
 }
 
@@ -999,11 +1034,12 @@ export class StateStore {
         key, channel_id, channel_name, channel_type, root_thread_ts, workspace_path, created_at, updated_at,
         agent_session_id, active_turn_id, active_turn_started_at,
         last_observed_message_ts, last_delivered_message_ts, last_slack_reply_at, session_page_link_posted_at,
+        auth_profile_name, auth_profile_bound_at, auth_blocked_at, auth_block_reason, auth_blocked_notice_posted_at,
         last_turn_signal_turn_id, last_turn_signal_kind, last_turn_signal_reason, last_turn_signal_at,
         co_author_candidate_user_ids, co_author_candidate_revision,
         co_author_confirmed_user_ids, co_author_confirmed_revision,
         co_author_ignore_missing_revision, co_author_prompt_revision, co_author_prompted_at
-      ) VALUES (${placeholders(26)})
+      ) VALUES (${placeholders(31)})
       ON CONFLICT(key) DO UPDATE SET
         channel_id = excluded.channel_id,
         channel_name = excluded.channel_name,
@@ -1019,6 +1055,11 @@ export class StateStore {
         last_delivered_message_ts = excluded.last_delivered_message_ts,
         last_slack_reply_at = excluded.last_slack_reply_at,
         session_page_link_posted_at = excluded.session_page_link_posted_at,
+        auth_profile_name = excluded.auth_profile_name,
+        auth_profile_bound_at = excluded.auth_profile_bound_at,
+        auth_blocked_at = excluded.auth_blocked_at,
+        auth_block_reason = excluded.auth_block_reason,
+        auth_blocked_notice_posted_at = excluded.auth_blocked_notice_posted_at,
         last_turn_signal_turn_id = excluded.last_turn_signal_turn_id,
         last_turn_signal_kind = excluded.last_turn_signal_kind,
         last_turn_signal_reason = excluded.last_turn_signal_reason,
@@ -1046,6 +1087,11 @@ export class StateStore {
       record.lastDeliveredMessageTs ?? null,
       record.lastSlackReplyAt ?? null,
       record.sessionPageLinkPostedAt ?? null,
+      record.authProfileName ?? null,
+      record.authProfileBoundAt ?? null,
+      record.authBlockedAt ?? null,
+      record.authBlockReason ?? null,
+      record.authBlockedNoticePostedAt ?? null,
       record.lastTurnSignalTurnId ?? null,
       record.lastTurnSignalKind ?? null,
       record.lastTurnSignalReason ?? null,
@@ -1372,6 +1418,11 @@ export class StateStore {
       lastDeliveredMessageTs: optionalStringColumn(row, "last_delivered_message_ts"),
       lastSlackReplyAt: optionalStringColumn(row, "last_slack_reply_at"),
       sessionPageLinkPostedAt: optionalStringColumn(row, "session_page_link_posted_at"),
+      authProfileName: optionalStringColumn(row, "auth_profile_name"),
+      authProfileBoundAt: optionalStringColumn(row, "auth_profile_bound_at"),
+      authBlockedAt: optionalStringColumn(row, "auth_blocked_at"),
+      authBlockReason: optionalStringColumn(row, "auth_block_reason"),
+      authBlockedNoticePostedAt: optionalStringColumn(row, "auth_blocked_notice_posted_at"),
       lastTurnSignalTurnId: optionalStringColumn(row, "last_turn_signal_turn_id"),
       lastTurnSignalKind: optionalStringColumn(row, "last_turn_signal_kind") as SlackSessionRecord["lastTurnSignalKind"],
       lastTurnSignalReason: optionalStringColumn(row, "last_turn_signal_reason"),
@@ -1564,6 +1615,11 @@ export class StateStore {
       lastDeliveredMessageTs: session.lastDeliveredMessageTs,
       lastSlackReplyAt: session.lastSlackReplyAt,
       sessionPageLinkPostedAt: session.sessionPageLinkPostedAt,
+      authProfileName: optionalNonEmptyString(session.authProfileName),
+      authProfileBoundAt: session.authProfileBoundAt,
+      authBlockedAt: session.authBlockedAt,
+      authBlockReason: optionalNonEmptyString(session.authBlockReason),
+      authBlockedNoticePostedAt: session.authBlockedNoticePostedAt,
       lastTurnSignalTurnId: session.lastTurnSignalTurnId,
       lastTurnSignalKind: session.lastTurnSignalKind,
       lastTurnSignalReason: session.lastTurnSignalReason,

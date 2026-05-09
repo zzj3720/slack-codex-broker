@@ -65,6 +65,39 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "POST" && url.pathname.startsWith("/admin/api/sessions/") && url.pathname.endsWith("/auth-profile")) {
+    const sessionKey = decodeURIComponent(url.pathname.slice(
+      "/admin/api/sessions/".length,
+      -"/auth-profile".length
+    ));
+    if (!sessionKey || sessionKey.includes("/")) {
+      return false;
+    }
+
+    const body = await readAdminBody(request, response);
+    if (!body) {
+      return true;
+    }
+
+    const name = readString(body.name);
+    if (!name) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["name"]
+      });
+      return true;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.switchSessionAuthProfile({
+        sessionKey,
+        name
+      })
+    );
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/admin/api/preflight") {
     respondJson(response, 200, await options.adminService.getOperationPreflight({
       operation: readString(url.searchParams.get("operation")) ?? "unknown"

@@ -71,6 +71,56 @@ describe("SessionManager", () => {
     expect(cleared.activeTurnStartedAt).toBeUndefined();
   });
 
+  it("persists auth profile binding and blocked state", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));
+    const store = new StateStore(stateDir, sessionsRoot);
+    const manager = new SessionManager({
+      stateStore: store,
+      sessionsRoot
+    });
+
+    await manager.load();
+    const session = await manager.ensureSession("C123", "111.222");
+    await manager.setSessionAuthProfile(session.key, "profile-a", {
+      boundAt: "2026-05-09T00:00:00.000Z"
+    });
+    await manager.markSessionAuthBlocked(session.key, {
+      reason: "primary_quota_exhausted",
+      blockedAt: "2026-05-09T01:00:00.000Z"
+    });
+    await manager.setSessionAuthBlockedNoticePostedAt(session.key, "2026-05-09T01:00:05.000Z");
+
+    const reloadedStore = new StateStore(stateDir, sessionsRoot);
+    const reloadedManager = new SessionManager({
+      stateStore: reloadedStore,
+      sessionsRoot
+    });
+    await reloadedManager.load();
+
+    expect(reloadedManager.getSession("C123", "111.222")).toMatchObject({
+      authProfileName: "profile-a",
+      authProfileBoundAt: "2026-05-09T00:00:00.000Z",
+      authBlockedAt: "2026-05-09T01:00:00.000Z",
+      authBlockReason: "primary_quota_exhausted",
+      authBlockedNoticePostedAt: "2026-05-09T01:00:05.000Z"
+    });
+
+    const switched = await reloadedManager.switchSessionAuthProfileAndClearBlock(session.key, "profile-b", {
+      boundAt: "2026-05-09T02:00:00.000Z"
+    });
+
+    expect(switched).toMatchObject({
+      authProfileName: "profile-b",
+      authProfileBoundAt: "2026-05-09T02:00:00.000Z",
+      authBlockedAt: undefined,
+      authBlockReason: undefined,
+      authBlockedNoticePostedAt: undefined,
+      agentSessionId: undefined,
+      activeTurnId: undefined
+    });
+  });
+
   it("persists observed and delivered cursors plus inbound queue state", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
     const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));

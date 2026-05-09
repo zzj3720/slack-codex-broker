@@ -716,10 +716,13 @@ export function initAdminPage(options = {}) {
       return '<div class="timeline"><div class="timeline-event"><span>' + esc(fmtTime(session.createdAt)) + '</span>' + renderBadge("session", "info") + '<div class="timeline-main"><strong>已创建</strong></div></div></div>';
     }
     function renderTimelineEvents(payload) {
-      const events = Array.isArray(payload) ? payload : (payload?.events || []);
+      const events = (Array.isArray(payload) ? payload : (payload?.events || [])).filter(isVisibleTimelineEvent);
       const trace = Array.isArray(payload) ? null : payload?.trace;
       if (!events?.length) return '<div class="summary-detail">暂无时间线事件</div>';
       return renderTraceSummary(trace) + '<div class="timeline">' + events.map(renderTimelineEvent).join("") + '</div>';
+    }
+    function isVisibleTimelineEvent(event) {
+      return String(event?.type || "").toLowerCase() !== "agent_token_count";
     }
     function renderTraceSummary(trace) {
       if (!trace) return "";

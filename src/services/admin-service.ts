@@ -292,7 +292,9 @@ export class AdminService {
       });
     }
 
-    const agentEvents = this.options.sessions.listAgentTraceEvents(session.key, 1000);
+    const agentEvents = this.options.sessions
+      .listAgentTraceEvents(session.key, 1000)
+      .filter(isVisibleTimelineTraceEvent);
 
     return {
       ok: true,
@@ -1128,6 +1130,10 @@ function summarizeAgentTrace(events: readonly PersistedAgentTraceEvent[]): Recor
     categories,
     sources
   };
+}
+
+function isVisibleTimelineTraceEvent(event: PersistedAgentTraceEvent): boolean {
+  return event.type !== "agent_token_count";
 }
 
 function agentTraceEventToTimelineEvent(event: PersistedAgentTraceEvent): Record<string, JsonLike> {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getTimelineEventDisplay } from "../src/admin-ui/timeline-display.js";
+import { getTimelineEventDisplay, isTimelineEventVisible } from "../src/admin-ui/timeline-display.js";
 
 describe("admin session timeline display", () => {
   it("uses category badges instead of duplicating the event title", () => {
@@ -11,16 +11,6 @@ describe("admin session timeline display", () => {
     })).toEqual({
       badgeLabel: "回合",
       title: "开始处理输入",
-      summary: ""
-    });
-
-    expect(getTimelineEventDisplay({
-      type: "agent_token_count",
-      title: "Token 用量",
-      summary: "14784 tokens"
-    })).toEqual({
-      badgeLabel: "Token",
-      title: "14784 tokens",
       summary: ""
     });
 
@@ -56,5 +46,19 @@ describe("admin session timeline display", () => {
       title: "exec_command",
       summary: ""
     });
+  });
+
+  it("does not treat token usage records as visible timeline activity", () => {
+    expect(isTimelineEventVisible({
+      type: "agent_token_count",
+      title: "Token 用量",
+      summary: "14784 tokens"
+    })).toBe(false);
+
+    expect(isTimelineEventVisible({
+      type: "agent_tool_call",
+      title: "工具调用",
+      summary: "exec_command"
+    })).toBe(true);
   });
 });

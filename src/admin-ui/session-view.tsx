@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } fro
 
 import { getAdminStatusSnapshot, subscribeAdminStatus } from "./admin-status-store";
 import { stableSessionOrder } from "./session-order";
-import { getTimelineEventDisplay, statusLabel, type TimelineEvent } from "./timeline-display";
+import { getTimelineEventDisplay, isTimelineEventVisible, statusLabel, type TimelineEvent } from "./timeline-display";
 
 type UiState = {
   readonly adminView: string;
@@ -249,7 +249,7 @@ function SessionTimeline({ session, refreshVersion }: {
 }
 
 function TimelinePayloadView({ payload }: { readonly payload: TimelinePayload }): React.JSX.Element {
-  const events = Array.isArray(payload) ? payload : (payload.events || []);
+  const events = (Array.isArray(payload) ? payload : (payload.events || [])).filter(isTimelineEventVisible);
   const trace = Array.isArray(payload) ? null : payload.trace;
   if (!events.length) return <div className="summary-detail">暂无时间线事件</div>;
   return (

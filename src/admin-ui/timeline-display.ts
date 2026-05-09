@@ -6,6 +6,10 @@ export type TimelineEventDisplay = {
   readonly summary: string;
 };
 
+export function isTimelineEventVisible(event: TimelineEvent): boolean {
+  return String(event.type || "").toLowerCase() !== "agent_token_count";
+}
+
 export function getTimelineEventDisplay(event: TimelineEvent): TimelineEventDisplay {
   const type = String(event.type || "").toLowerCase();
   const rawTitle = nonEmptyString(event.title) || statusLabel(type || event.status || "event");
@@ -16,7 +20,6 @@ export function getTimelineEventDisplay(event: TimelineEvent): TimelineEventDisp
     case "agent_input_delivered":
     case "agent_turn_started":
     case "agent_turn_completed":
-    case "agent_token_count":
     case "inbound_message":
     case "turn_signal":
       if (rawSummary) return { badgeLabel, title: rawSummary, summary: "" };
@@ -44,7 +47,6 @@ function timelineCategoryLabel(type: string, event: TimelineEvent): string {
     agent_input_delivered: "输入",
     agent_turn_started: "回合",
     agent_turn_completed: "回合",
-    agent_token_count: "Token",
     inbound_message: "Slack",
     agent_assistant_message: "Assistant",
     agent_user_message: "用户",

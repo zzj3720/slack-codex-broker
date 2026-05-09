@@ -87,7 +87,11 @@ describe("admin control plane e2e", () => {
     });
     expect(timeline.trace).not.toHaveProperty("rolloutPath");
     expect(JSON.stringify(timeline)).not.toContain(".jsonl");
+    const trace = timeline.trace as { readonly categories?: Record<string, unknown> };
     const eventTypes = (timeline.events as Array<{ type: string; summary?: string }>).map((event) => event.type);
+    expect(eventTypes).not.toContain("agent_token_count");
+    expect(trace.categories).not.toHaveProperty("agent_token_count");
+    expect(JSON.stringify(timeline.events)).not.toContain("tokenUsage");
     expect(eventTypes).toEqual(expect.arrayContaining([
       "session_created",
       "inbound_message",
@@ -492,6 +496,37 @@ async function seedAgentTraceFixture(sessions: SessionManager, sessionKey: strin
       toolName: "exec_command",
       callId: "call-1",
       turnId: "turn-1"
+    },
+    {
+      id: `${sessionKey}:runtime:token-count`,
+      source: "agent_runtime",
+      type: "agent_token_count",
+      at: "2026-03-19T00:00:04.500Z",
+      sequence: 4500,
+      title: "Token 用量",
+      summary: "180704 tokens",
+      detail: JSON.stringify({
+        tokenUsage: {
+          last: {
+            totalTokens: 180704,
+            inputTokens: 180698,
+            cachedInputTokens: 180096,
+            outputTokens: 6
+          },
+          total: {
+            totalTokens: 16720576
+          }
+        }
+      }),
+      status: "completed",
+      turnId: "turn-1",
+      metadata: {
+        totalTokens: 180704,
+        inputTokens: 180698,
+        outputTokens: 6,
+        reasoningTokens: 0,
+        source: "exact"
+      }
     },
     {
       id: `${sessionKey}:runtime:tool-result`,

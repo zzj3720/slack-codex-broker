@@ -259,6 +259,32 @@ function codexNotificationToAgentEvents(
 
   const at = notificationAt(params);
   const turnId = normalizeCodexTurnId(params) ?? session.activeTurnId ?? "";
+  const item = asRecord(params.item);
+  if (method === "item/started" && turnId && item?.type === "commandExecution") {
+    return [{
+      type: "agent.tool.started",
+      agentSessionId,
+      turnId,
+      brokerSessionKey: session.key,
+      callId: normalizeNonEmptyString(item.id) ?? `${turnId}:command:${at}`,
+      name: "exec_command",
+      input: commandExecutionTracePayload(item),
+      at
+    }];
+  }
+  if (method === "item/completed" && turnId && item?.type === "commandExecution") {
+    return [{
+      type: "agent.tool.completed",
+      agentSessionId,
+      turnId,
+      brokerSessionKey: session.key,
+      callId: normalizeNonEmptyString(item.id) ?? `${turnId}:command:${at}`,
+      name: "exec_command",
+      output: commandExecutionTracePayload(item),
+      status: commandExecutionFailed(item) ? "failed" : "completed",
+      at
+    }];
+  }
   if ((method === "tool_start" || method === "codex/event/tool_start") && turnId) {
     return [{
       type: "agent.tool.started",
@@ -627,6 +653,34 @@ function collectInputText(input: readonly AgentInputItem[]): string {
 
 function summarizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+function commandExecutionTracePayload(item: Record<string, unknown>): Record<string, unknown> {
+  return compactRecord({
+    type: item.type,
+    id: item.id,
+    command: item.command,
+    cwd: item.cwd,
+    source: item.source,
+    processId: item.processId,
+    status: item.status,
+    exitCode: item.exitCode,
+    durationMs: item.durationMs,
+    commandActions: item.commandActions,
+    aggregatedOutput: item.aggregatedOutput,
+    error: item.error
+  });
+}
+
+function commandExecutionFailed(item: Record<string, unknown>): boolean {
+  const exitCode = normalizeFiniteNumber(item.exitCode);
+  return toolFailed(item) || (exitCode !== undefined && exitCode !== 0);
+}
+
+function compactRecord(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined && value !== null)
+  );
 }
 
 function toolFailed(params: Record<string, unknown>): boolean {

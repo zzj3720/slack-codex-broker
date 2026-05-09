@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { AppConfig } from "../config.js";
-import { getBrokerLogDirectory } from "../logger.js";
+import { getBrokerLogDirectory, logger } from "../logger.js";
 import type {
   AdminOperationKind,
   JsonLike,
@@ -72,6 +72,14 @@ interface RuntimeStatus {
   };
 }
 
+interface SlackConversationLookup {
+  getConversationInfo(channelId: string): Promise<{
+    readonly channelId: string;
+    readonly name?: string | undefined;
+    readonly channelType?: string | undefined;
+  } | null>;
+}
+
 interface OperationPreflight {
   readonly operation: string;
   readonly safe: boolean;
@@ -126,6 +134,8 @@ interface SessionUsageSummary {
 type MutableSessionUsageSummary = { -readonly [Key in keyof SessionUsageSummary]: SessionUsageSummary[Key] };
 
 export class AdminService {
+  readonly #channelLabelCache = new Map<string, string | null>();
+
   constructor(
     private readonly options: {
       readonly config: AppConfig;
@@ -135,6 +145,7 @@ export class AdminService {
       readonly githubAuthorMappings: GitHubAuthorMappingService;
       readonly startedAt: Date;
       readonly deployment?: ReleaseDeploymentService | undefined;
+      readonly slackConversations?: SlackConversationLookup | undefined;
     }
   ) {}
 
@@ -152,7 +163,7 @@ export class AdminService {
     const snapshot = await this.#readSessionSnapshot();
     const runtime = await this.#readRuntimeStatus();
     const usage = this.#readUsageOverview();
-    const channelLabels = buildChannelLabelLookup(snapshot.allSessions, snapshot.inboundBySession);
+    const channelLabels = await this.#buildChannelLabelLookup(snapshot.allSessions, snapshot.inboundBySession);
     const sessionSummaries = snapshot.allSessions.slice(0, 50).map((session) =>
       this.#summarizeSession(session, {
         inbound: snapshot.inboundBySession.get(session.key) ?? [],
@@ -220,7 +231,7 @@ export class AdminService {
 
   async listSessionSummaries(): Promise<Record<string, unknown>> {
     const snapshot = await this.#readSessionSnapshot();
-    const channelLabels = buildChannelLabelLookup(snapshot.allSessions, snapshot.inboundBySession);
+    const channelLabels = await this.#buildChannelLabelLookup(snapshot.allSessions, snapshot.inboundBySession);
     return {
       ok: true,
       realtime: this.#realtimeInfo(),
@@ -316,7 +327,7 @@ export class AdminService {
         openInbound,
         jobs,
         usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key),
-        channelLabels: buildChannelLabelLookup([session], new Map([[session.key, inbound]]))
+        channelLabels: await this.#buildChannelLabelLookup([session], new Map([[session.key, inbound]]))
       }),
       trace: summarizeAgentTrace(agentEvents),
       events: [...events, ...agentEvents.map(agentTraceEventToTimelineEvent)].sort(compareTimelineEvents)
@@ -730,7 +741,7 @@ export class AdminService {
       rootThreadTs: session.rootThreadTs
     });
 
-    const channelLabels = buildChannelLabelLookup(
+    const channelLabels = this.#knownChannelLabelLookup(
       this.options.sessions.listSessions(),
       groupBySession(this.options.sessions.listInboundMessages())
     );
@@ -741,6 +752,66 @@ export class AdminService {
       usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key),
       channelLabels
     });
+  }
+
+  async #buildChannelLabelLookup(
+    sessions: readonly SlackSessionRecord[],
+    inboundBySession: ReadonlyMap<string, readonly PersistedInboundMessage[]>
+  ): Promise<ReadonlyMap<string, string>> {
+    const labels = this.#knownChannelLabelLookup(sessions, inboundBySession);
+    const missingChannelIds = uniqueChannelIds(sessions)
+      .filter((channelId) => !labels.has(channelId) && looksLikeSlackConversationId(channelId));
+
+    if (!missingChannelIds.length || !this.options.slackConversations) {
+      return labels;
+    }
+
+    await Promise.all(missingChannelIds.map(async (channelId) => {
+      const label = await this.#resolveSlackChannelLabel(channelId);
+      if (label) {
+        labels.set(channelId, label);
+      }
+    }));
+    return labels;
+  }
+
+  #knownChannelLabelLookup(
+    sessions: readonly SlackSessionRecord[],
+    inboundBySession: ReadonlyMap<string, readonly PersistedInboundMessage[]>
+  ): Map<string, string> {
+    const labels = buildChannelLabelLookup(sessions, inboundBySession);
+    for (const session of sessions) {
+      const cached = this.#channelLabelCache.get(session.channelId);
+      if (cached) {
+        labels.set(session.channelId, cached);
+      }
+    }
+    return labels;
+  }
+
+  async #resolveSlackChannelLabel(channelId: string): Promise<string | undefined> {
+    if (this.#channelLabelCache.has(channelId)) {
+      return this.#channelLabelCache.get(channelId) ?? undefined;
+    }
+
+    const lookup = this.options.slackConversations;
+    if (!lookup) {
+      return undefined;
+    }
+
+    try {
+      const info = await lookup.getConversationInfo(channelId);
+      const label = channelLabelForConversationInfo(info);
+      this.#channelLabelCache.set(channelId, label ?? null);
+      return label;
+    } catch (error) {
+      logger.warn("Failed to resolve Slack channel label for admin", {
+        channelId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      this.#channelLabelCache.set(channelId, null);
+      return undefined;
+    }
   }
 
   #serviceInfo(): Record<string, unknown> {
@@ -1470,10 +1541,36 @@ function channelLabelForSession(
     ?? session.channelId;
 }
 
+function channelLabelForConversationInfo(
+  info: Awaited<ReturnType<SlackConversationLookup["getConversationInfo"]>>
+): string | undefined {
+  if (!info) {
+    return undefined;
+  }
+  if (info.name) {
+    return formatSlackChannelName(info.name);
+  }
+  if (info.channelType === "im") {
+    return "私信";
+  }
+  if (info.channelType === "mpim") {
+    return "群聊";
+  }
+  return undefined;
+}
+
+function uniqueChannelIds(sessions: readonly SlackSessionRecord[]): string[] {
+  return [...new Set(sessions.map((session) => session.channelId).filter((channelId) => channelId))];
+}
+
+function looksLikeSlackConversationId(channelId: string): boolean {
+  return /^[CDG][A-Z0-9]+$/.test(channelId);
+}
+
 function buildChannelLabelLookup(
   sessions: readonly SlackSessionRecord[],
   inboundBySession: ReadonlyMap<string, readonly PersistedInboundMessage[]>
-): ReadonlyMap<string, string> {
+): Map<string, string> {
   const labels = new Map<string, string>();
   for (const session of sessions) {
     const label = channelHumanLabelForSession(session, inboundBySession.get(session.key) ?? []);

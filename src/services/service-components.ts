@@ -11,6 +11,7 @@ import { DiskPressureCleanupService } from "./disk-pressure-cleanup-service.js";
 import { GitHubAuthorMappingService } from "./github-author-mapping-service.js";
 import { JobManager } from "./job-manager.js";
 import { SessionManager } from "./session-manager.js";
+import { SlackApi } from "./slack/slack-api.js";
 import { SlackAgentBridge } from "./slack/slack-agent-bridge.js";
 
 export function configureServiceLogger(config: AppConfig): void {
@@ -38,6 +39,14 @@ export function createSessionServices(config: AppConfig): {
     stateStore,
     sessions
   };
+}
+
+export function createSlackApi(config: AppConfig): SlackApi {
+  return new SlackApi({
+    baseUrl: config.slackApiBaseUrl,
+    appToken: config.slackAppToken,
+    botToken: config.slackBotToken
+  });
 }
 
 export async function createGitHubAuthorMappings(config: AppConfig): Promise<GitHubAuthorMappingService> {

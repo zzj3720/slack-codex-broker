@@ -11,7 +11,8 @@ import { ReleaseDeploymentService } from "./services/deploy/release-deployment-s
 import {
   configureServiceLogger,
   createGitHubAuthorMappings,
-  createSessionServices
+  createSessionServices,
+  createSlackApi
 } from "./services/service-components.js";
 
 export async function startAdminService(): Promise<{
@@ -43,7 +44,8 @@ export async function startAdminService(): Promise<{
     authProfiles,
     githubAuthorMappings,
     startedAt,
-    deployment
+    deployment,
+    slackConversations: createSlackApi(config)
   });
   const server = http.createServer(
     createHttpHandler({

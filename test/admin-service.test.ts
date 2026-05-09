@@ -359,6 +359,104 @@ describe("AdminService", () => {
     });
   });
 
+  it("resolves legacy channel labels from Slack when persisted metadata is missing", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-channel-lookup-"));
+    tempDirs.push(dataRoot);
+
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      DATA_ROOT: dataRoot
+    } as NodeJS.ProcessEnv);
+
+    await fs.mkdir(config.codexHome, { recursive: true });
+    await fs.mkdir(config.logDir, { recursive: true });
+
+    const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot: config.sessionsRoot
+    });
+    await sessions.load();
+    await sessions.ensureSession("C123", "111.222");
+    await sessions.ensureSession("C123", "222.333");
+
+    const lookupCalls: string[] = [];
+    const service = new AdminService({
+      config,
+      startedAt: new Date("2026-03-19T00:00:00.000Z"),
+      sessions,
+      authProfiles: {
+        listProfilesStatus: async () => ({
+          managedRoot: path.join(dataRoot, "auth-profiles"),
+          profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
+          activeProfile: null,
+          activeAuthPath: path.join(config.codexHome, "auth.json"),
+          profiles: []
+        })
+      } as never,
+      githubAuthorMappings: {
+        load: async () => {},
+        listMappings: () => []
+      } as never,
+      runtime: {
+        restartRuntime: async () => {},
+        readAccountSummary: async () => ({
+          account: null,
+          requiresOpenaiAuth: true
+        }),
+        readAccountRateLimits: async () => ({
+          rateLimits: null,
+          rateLimitsByLimitId: {}
+        })
+      } as never,
+      slackConversations: {
+        getConversationInfo: async (channelId) => {
+          lookupCalls.push(channelId);
+          return {
+            channelId,
+            name: "ops",
+            channelType: "channel"
+          };
+        }
+      }
+    });
+
+    const timeline = await service.getSessionTimeline("C123:111.222");
+    expect((timeline as Record<string, any>).session).toMatchObject({
+      key: "C123:111.222",
+      channelName: null,
+      channelLabel: "#ops"
+    });
+
+    const status = await service.getStatus();
+    expect((status as Record<string, any>).state.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "C123:111.222",
+          channelName: null,
+          channelLabel: "#ops"
+        }),
+        expect.objectContaining({
+          key: "C123:222.333",
+          channelName: null,
+          channelLabel: "#ops"
+        })
+      ])
+    );
+
+    const summaries = await service.listSessionSummaries();
+    expect((summaries as Record<string, any>).sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "C123:111.222",
+          channelLabel: "#ops"
+        })
+      ])
+    );
+    expect(lookupCalls).toEqual(["C123"]);
+  });
+
   it("splits open inbound counts into human and system messages", async () => {
     const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-open-inbound-"));
     tempDirs.push(dataRoot);

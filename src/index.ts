@@ -15,6 +15,7 @@ import {
   createIsolatedMcpService,
   createJobManager,
   createSessionServices,
+  createSlackApi,
   createSlackBridge
 } from "./services/service-components.js";
 
@@ -59,7 +60,8 @@ export async function startService(): Promise<{
     runtime: new CodexRuntimeControl(codexBroker),
     authProfiles,
     githubAuthorMappings,
-    startedAt
+    startedAt,
+    slackConversations: createSlackApi(config)
   });
   const server = http.createServer(
     createHttpHandler({

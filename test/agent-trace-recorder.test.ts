@@ -135,4 +135,74 @@ describe("AgentTraceRecorder", () => {
       recursive: true
     });
   });
+
+  it("records Slack input trace events with the user message instead of the broker wrapper", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-trace-recorder-input-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const stateStore = new StateStore(stateDir, sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot
+    });
+
+    await sessions.load();
+    let session = await sessions.ensureSession("C123", "111.222");
+    session = await sessions.setAgentSessionId(session.channelId, session.rootThreadTs, "thread-1");
+    session = await sessions.setActiveTurnId(session.channelId, session.rootThreadTs, "turn-1");
+
+    const recorder = new AgentTraceRecorder({
+      sessions
+    });
+    await recorder.record({
+      type: "agent.input.received",
+      inputId: "input-1",
+      agentSessionId: "thread-1",
+      brokerSessionKey: session.key,
+      source: "slack_user",
+      textPreview: "A newer Slack message arrived while the current turn is still active. Treat it as the latest instruction...",
+      text: [
+        "A newer Slack message arrived while the current turn is still active.",
+        "Treat it as the latest instruction and adjust the ongoing work accordingly.",
+        "",
+        "A new message arrived in the active Slack thread. Carefully judge whether it requires a reply or action from you.",
+        "structured_message_json:",
+        "```json",
+        JSON.stringify({
+          source: "app_mention",
+          message_ts: "1778316208.809479",
+          sender: {
+            kind: "user",
+            user_id: "U123",
+            mention: "<@U123>",
+            display_name: "Jc"
+          },
+          text: "<@U0ALY77RMJL> 结合 willow repo，分析图中问题",
+          text_with_resolved_mentions: "@codex-3720 结合 willow repo，分析图中问题",
+          images: []
+        }, null, 2),
+        "```"
+      ].join("\n"),
+      at: "2026-03-19T00:00:03.000Z"
+    });
+
+    expect(sessions.listAgentTraceEvents(session.key)).toEqual([
+      expect.objectContaining({
+        type: "agent_input_received",
+        title: "@codex-3720 结合 willow repo，分析图中问题",
+        summary: "Jc · 提及",
+        metadata: expect.objectContaining({
+          inputId: "input-1",
+          source: "app_mention",
+          sender: "Jc",
+          messageTs: "1778316208.809479"
+        })
+      })
+    ]);
+
+    stateStore.close();
+    await fs.rm(stateDir, {
+      force: true,
+      recursive: true
+    });
+  });
 });

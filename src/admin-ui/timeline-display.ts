@@ -1,3 +1,4 @@
+import { summarizeInputTraceDisplay } from "../input-trace-summary.js";
 import {
   mergeToolTracePayloads,
   parseToolTraceDetail,
@@ -13,7 +14,14 @@ export type TimelineEventDisplay = {
 };
 
 export function isTimelineEventVisible(event: TimelineEvent): boolean {
-  return String(event.type || "").toLowerCase() !== "agent_token_count";
+  const type = String(event.type || "").toLowerCase();
+  if (type === "agent_token_count") {
+    return false;
+  }
+  if (type === "agent_input_delivered" && String(event.status || "").toLowerCase() === "joined_active_turn") {
+    return false;
+  }
+  return true;
 }
 
 export function getTimelineEventDisplay(event: TimelineEvent): TimelineEventDisplay {
@@ -23,6 +31,22 @@ export function getTimelineEventDisplay(event: TimelineEvent): TimelineEventDisp
   const badgeLabel = timelineCategoryLabel(type, event);
 
   switch (type) {
+    case "agent_input_received": {
+      const inputDisplay = summarizeInputTraceDisplay({
+        source: nonEmptyString(event.metadata?.source) || nonEmptyString(event.source),
+        text: event.detail,
+        fallbackTitle: rawTitle,
+        fallbackSummary: rawSummary
+      });
+      if (inputDisplay) {
+        return {
+          badgeLabel: inputDisplay.badgeLabel || badgeLabel,
+          title: inputDisplay.title,
+          summary: inputDisplay.summary
+        };
+      }
+      break;
+    }
     case "agent_input_delivered":
     case "agent_turn_started":
     case "agent_turn_completed":

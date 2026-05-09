@@ -59,6 +59,120 @@ describe("admin session timeline display", () => {
     });
   });
 
+  it("shows the Slack payload instead of the broker input wrapper", () => {
+    expect(getTimelineEventDisplay({
+      type: "agent_input_received",
+      title: "用户消息",
+      summary: "A newer Slack message arrived while the current turn is still active. Treat it as the latest instruction...",
+      metadata: {
+        source: "slack_user"
+      },
+      detail: [
+        "A newer Slack message arrived while the current turn is still active.",
+        "Treat it as the latest instruction and adjust the ongoing work accordingly.",
+        "",
+        "Current Slack message requiring a response:",
+        "A new message arrived in the active Slack thread. Carefully judge whether it requires a reply or action from you.",
+        "structured_message_json:",
+        "```json",
+        JSON.stringify({
+          source: "app_mention",
+          message_ts: "1778316208.809479",
+          sender: {
+            kind: "user",
+            user_id: "U123",
+            mention: "<@U123>",
+            display_name: "Jc"
+          },
+          text: "<@U0ALY77RMJL> 结合 willow repo，分析图中问题",
+          text_with_resolved_mentions: "@codex-3720 结合 willow repo，分析图中问题",
+          images: []
+        }, null, 2),
+        "```"
+      ].join("\n")
+    })).toEqual({
+      badgeLabel: "Slack",
+      title: "@codex-3720 结合 willow repo，分析图中问题",
+      summary: "Jc · 提及"
+    });
+  });
+
+  it("hides joined-active-turn input delivery rows because they duplicate the input row", () => {
+    expect(isTimelineEventVisible({
+      type: "agent_input_delivered",
+      status: "joined_active_turn",
+      title: "输入已送达",
+      summary: "进入当前回合"
+    })).toBe(false);
+
+    expect(isTimelineEventVisible({
+      type: "agent_input_delivered",
+      status: "started_turn",
+      title: "输入已送达",
+      summary: "启动新回合"
+    })).toBe(true);
+  });
+
+  it("summarizes broker-managed background job input events", () => {
+    expect(getTimelineEventDisplay({
+      type: "agent_input_received",
+      title: "后台任务事件",
+      summary: "A broker-managed background job reported a new asynchronous event for this session.",
+      metadata: {
+        source: "background_job"
+      },
+      detail: [
+        "A broker-managed background job reported a new asynchronous event for this session.",
+        "background_job_event_json:",
+        "```json",
+        JSON.stringify({
+          source: "background_job_event",
+          message_ts: "1778316208.809479",
+          job: {
+            job_id: "job-1",
+            job_kind: "watch_ci",
+            event_kind: "state_changed"
+          },
+          summary: "CI turned green."
+        }, null, 2),
+        "```"
+      ].join("\n")
+    })).toEqual({
+      badgeLabel: "后台任务",
+      title: "CI turned green.",
+      summary: "watch_ci · state_changed · Job job-1"
+    });
+  });
+
+  it("summarizes unexpected turn stop reminders instead of broker instructions", () => {
+    expect(getTimelineEventDisplay({
+      type: "agent_input_received",
+      title: "Runtime 提醒",
+      summary: "The previous run for this Slack thread appears to have stopped unexpectedly.",
+      metadata: {
+        source: "runtime_reminder"
+      },
+      detail: [
+        "The previous run for this Slack thread appears to have stopped unexpectedly.",
+        "unexpected_turn_stop_json:",
+        "```json",
+        JSON.stringify({
+          source: "unexpected_turn_stop",
+          message_ts: "1778316208.809479",
+          previous_turn: {
+            turn_id: "turn-1"
+          },
+          reason: "The previous run ended without an explicit final, block, or wait state."
+        }, null, 2),
+        "```"
+      ].join("\n")
+    })).toEqual({
+      badgeLabel: "提醒",
+      title: "回合异常停止",
+      summary: "The previous run ended without an explicit final, block, or wait state."
+    });
+  });
+
   it("shows command result output instead of repeating exec_command", () => {
     expect(getTimelineEventDisplay({
       type: "agent_tool_result",

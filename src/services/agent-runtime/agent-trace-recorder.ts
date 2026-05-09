@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { summarizeInputTraceDisplay } from "../../input-trace-summary.js";
 import { logger } from "../../logger.js";
 import { summarizeToolTraceDisplay } from "../../tool-trace-summary.js";
 import type {
@@ -97,18 +98,27 @@ export class AgentTraceRecorder {
           status: "completed"
         }, now)];
       case "agent.input.received":
-        return [this.#trace(session, event, {
-          type: "agent_input_received",
-          title: inputTitle(event.source),
-          summary: event.textPreview,
-          detail: event.text,
-          status: "received",
-          role: event.source === "runtime_reminder" ? "system" : "user",
-          metadata: {
-            inputId: event.inputId,
-            source: event.source
-          }
-        }, now)];
+        {
+          const inputSummary = summarizeInputTraceDisplay({
+            source: event.source,
+            text: event.text,
+            fallbackTitle: inputTitle(event.source),
+            fallbackSummary: event.textPreview
+          });
+          return [this.#trace(session, event, {
+            type: "agent_input_received",
+            title: inputSummary?.title ?? inputTitle(event.source),
+            summary: inputSummary?.summary ?? event.textPreview,
+            detail: event.text,
+            status: "received",
+            role: event.source === "runtime_reminder" ? "system" : "user",
+            metadata: {
+              inputId: event.inputId,
+              source: event.source,
+              ...(inputSummary?.metadata ?? {})
+            }
+          }, now)];
+        }
       case "agent.input.delivered":
         return [this.#trace(session, event, {
           type: "agent_input_delivered",

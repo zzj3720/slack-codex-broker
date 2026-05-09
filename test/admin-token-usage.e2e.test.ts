@@ -267,7 +267,8 @@ describe("admin token usage e2e", () => {
     expect(shell).toContain("session-react-root");
     expect(sessionViewSource).toContain("会话详情");
     expect(sessionViewSource).toContain("Token 消耗");
-    expect(sessionViewSource).toContain("Token / 轮次");
+    expect(sessionViewSource).toContain('<Kpi label="Token"');
+    expect(sessionViewSource).not.toContain("Token / 轮次");
   });
 });
 

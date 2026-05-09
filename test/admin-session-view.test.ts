@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  renderSessionMeta,
+  shouldShowSessionState
+} from "../src/admin-ui/session-row-display.js";
 import { getTimelineEventDisplay, isTimelineEventVisible } from "../src/admin-ui/timeline-display.js";
 
 describe("admin session timeline display", () => {
@@ -254,5 +258,59 @@ describe("admin session timeline display", () => {
       title: "工具调用",
       summary: "exec_command"
     })).toBe(true);
+  });
+});
+
+describe("admin session row display", () => {
+  it("keeps common session list metadata out of the row", () => {
+    const meta = renderSessionMeta({
+      key: "C123:111.222",
+      channelId: "C123",
+      channelLabel: "C123",
+      firstUserMessage: {
+        textPreview: "@codex-3720 你好"
+      },
+      lastUserMessage: {
+        textPreview: "后面 GPT 改了点"
+      },
+      usage: {
+        turnCount: 3,
+        totalTokens: 5120
+      },
+      backgroundJobCount: 0,
+      updatedAt: new Date().toISOString()
+    }, new Map(), new Map([["C123", "#ops"]]));
+    const labels = meta.map((item) => item.label);
+
+    expect(labels).toEqual(["#ops", "Token 5.1K"]);
+    expect(shouldShowSessionState({ rank: 10 })).toBe(false);
+  });
+
+  it("only shows job count when jobs exist and keeps distinct states visible", () => {
+    const meta = renderSessionMeta({
+      key: "C123:111.222",
+      channelId: "C123",
+      channelName: "deep-review",
+      firstUserMessage: {
+        textPreview: "看一下"
+      },
+      lastUserMessage: {
+        textPreview: "看一下"
+      },
+      openHumanInboundCount: 1,
+      openInboundCount: 1,
+      usage: {
+        turnCount: 1,
+        totalTokens: 1725
+      },
+      backgroundJobCount: 2,
+      runningBackgroundJobCount: 1,
+      updatedAt: new Date().toISOString()
+    }, new Map());
+    const labels = meta.map((item) => item.label);
+
+    expect(labels).toContain("#deep-review");
+    expect(labels).toContain("Jobs 2");
+    expect(shouldShowSessionState({ rank: 50 })).toBe(true);
   });
 });

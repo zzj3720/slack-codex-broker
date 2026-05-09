@@ -152,12 +152,14 @@ export class AdminService {
     const snapshot = await this.#readSessionSnapshot();
     const runtime = await this.#readRuntimeStatus();
     const usage = this.#readUsageOverview();
+    const channelLabels = buildChannelLabelLookup(snapshot.allSessions, snapshot.inboundBySession);
     const sessionSummaries = snapshot.allSessions.slice(0, 50).map((session) =>
       this.#summarizeSession(session, {
         inbound: snapshot.inboundBySession.get(session.key) ?? [],
         openInbound: snapshot.openInboundBySession.get(session.key) ?? [],
         jobs: snapshot.jobsBySession.get(session.key) ?? [],
-        usage: snapshot.usageBySession.get(session.key)
+        usage: snapshot.usageBySession.get(session.key),
+        channelLabels
       })
     );
     const stateCounts = this.#summarizeStateCounts(snapshot);
@@ -218,6 +220,7 @@ export class AdminService {
 
   async listSessionSummaries(): Promise<Record<string, unknown>> {
     const snapshot = await this.#readSessionSnapshot();
+    const channelLabels = buildChannelLabelLookup(snapshot.allSessions, snapshot.inboundBySession);
     return {
       ok: true,
       realtime: this.#realtimeInfo(),
@@ -226,7 +229,8 @@ export class AdminService {
           inbound: snapshot.inboundBySession.get(session.key) ?? [],
           openInbound: snapshot.openInboundBySession.get(session.key) ?? [],
           jobs: snapshot.jobsBySession.get(session.key) ?? [],
-          usage: snapshot.usageBySession.get(session.key)
+          usage: snapshot.usageBySession.get(session.key),
+          channelLabels
         })
       )
     };
@@ -311,7 +315,8 @@ export class AdminService {
         inbound,
         openInbound,
         jobs,
-        usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key)
+        usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key),
+        channelLabels: buildChannelLabelLookup([session], new Map([[session.key, inbound]]))
       }),
       trace: summarizeAgentTrace(agentEvents),
       events: [...events, ...agentEvents.map(agentTraceEventToTimelineEvent)].sort(compareTimelineEvents)
@@ -725,11 +730,16 @@ export class AdminService {
       rootThreadTs: session.rootThreadTs
     });
 
+    const channelLabels = buildChannelLabelLookup(
+      this.options.sessions.listSessions(),
+      groupBySession(this.options.sessions.listInboundMessages())
+    );
     return this.#summarizeSession(session, {
       inbound,
       openInbound,
       jobs,
-      usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key)
+      usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key),
+      channelLabels
     });
   }
 
@@ -1041,6 +1051,7 @@ export class AdminService {
       readonly openInbound: readonly PersistedInboundMessage[];
       readonly jobs: readonly PersistedBackgroundJob[];
       readonly usage?: SessionUsageSummary | undefined;
+      readonly channelLabels?: ReadonlyMap<string, string> | undefined;
     }
   ): Record<string, unknown> {
     const runningBackgroundJobCount = related.jobs.filter((job) => job.status === "running").length;
@@ -1053,7 +1064,7 @@ export class AdminService {
     return {
       key: session.key,
       channelId: session.channelId,
-      channelLabel: channelLabelForSession(session, related.inbound),
+      channelLabel: channelLabelForSession(session, related.inbound, related.channelLabels),
       channelName: session.channelName ?? null,
       channelType: session.channelType ?? related.inbound.find((message) => message.channelType)?.channelType ?? null,
       rootThreadTs: session.rootThreadTs,
@@ -1451,8 +1462,32 @@ function isUserInboundMessage(message: PersistedInboundMessage): boolean {
 
 function channelLabelForSession(
   session: SlackSessionRecord,
-  inbound: readonly PersistedInboundMessage[]
+  inbound: readonly PersistedInboundMessage[],
+  channelLabels?: ReadonlyMap<string, string> | undefined
 ): string {
+  return channelHumanLabelForSession(session, inbound)
+    ?? channelLabels?.get(session.channelId)
+    ?? session.channelId;
+}
+
+function buildChannelLabelLookup(
+  sessions: readonly SlackSessionRecord[],
+  inboundBySession: ReadonlyMap<string, readonly PersistedInboundMessage[]>
+): ReadonlyMap<string, string> {
+  const labels = new Map<string, string>();
+  for (const session of sessions) {
+    const label = channelHumanLabelForSession(session, inboundBySession.get(session.key) ?? []);
+    if (label) {
+      labels.set(session.channelId, label);
+    }
+  }
+  return labels;
+}
+
+function channelHumanLabelForSession(
+  session: SlackSessionRecord,
+  inbound: readonly PersistedInboundMessage[]
+): string | undefined {
   if (session.channelName) {
     return formatSlackChannelName(session.channelName);
   }
@@ -1471,7 +1506,7 @@ function channelLabelForSession(
   if (channelType === "mpim") {
     return "群聊";
   }
-  return session.channelId;
+  return undefined;
 }
 
 function formatSlackChannelName(channelName: string): string {

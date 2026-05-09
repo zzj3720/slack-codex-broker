@@ -15,6 +15,12 @@ import {
   subscribeTimeline
 } from "./admin-status-store";
 import { stableSessionOrder } from "./session-order";
+import {
+  buildChannelLabelById,
+  renderSessionMeta,
+  resolveSessionChannelLabel,
+  shouldShowSessionState
+} from "./session-row-display";
 import { getTimelineEventDisplay, isTimelineEventVisible, statusLabel, type TimelineEvent } from "./timeline-display";
 
 type UiState = {
@@ -48,6 +54,7 @@ export function AdminSessionsView(): React.JSX.Element {
     () => new Map(authProfiles.map((profile) => [String(profile.name), profile])),
     [authProfiles]
   );
+  const channelLabelById = useMemo(() => buildChannelLabelById(sessions), [sessions]);
   const [uiState, setUiState] = useState(loadUiState);
   const query = uiState.sessionSearch.trim().toLowerCase();
   const mode = uiState.sessionFilter;
@@ -126,6 +133,7 @@ export function AdminSessionsView(): React.JSX.Element {
                 session={session}
                 selected={selectedSession?.key === session.key}
                 authProfileByName={authProfileByName}
+                channelLabelById={channelLabelById}
                 onSelect={() => updateSessionUiState({ selectedSessionKey: session.key })}
               />
             ))
@@ -196,7 +204,7 @@ function SessionPermalinkView({ sessionKey }: { readonly sessionKey: string }): 
           {error ? (
             <div className="empty-state">{error}</div>
           ) : session ? (
-            <SessionDetail key={session.key} session={session} />
+            <SessionDetail key={session.key} session={session} isPermalink />
           ) : (
             <div className="empty-state">正在加载会话</div>
           )}
@@ -206,16 +214,18 @@ function SessionPermalinkView({ sessionKey }: { readonly sessionKey: string }): 
   );
 }
 
-function SessionRow({ session, selected, authProfileByName, onSelect }: {
+function SessionRow({ session, selected, authProfileByName, channelLabelById, onSelect }: {
   readonly session: SessionRecord;
   readonly selected: boolean;
   readonly authProfileByName: ReadonlyMap<string, SessionRecord>;
+  readonly channelLabelById?: ReadonlyMap<string, string>;
   readonly onSelect: () => void;
 }): React.JSX.Element {
   const state = sessionQueueState(session);
   const activityAt = sessionActivityAt(session);
   const primary = sessionPrimaryText(session);
   const first = sessionFirstText(session);
+  const stateBadge = shouldShowSessionState(state) ? <Badge label={state.label} tone={state.tone} /> : null;
   return (
     <button
       type="button"
@@ -226,12 +236,12 @@ function SessionRow({ session, selected, authProfileByName, onSelect }: {
       <div className="session-summary">
         <div className="session-line">
           <div className="session-lead" title={primary}>{primary}</div>
-          <Badge label={state.label} tone={state.tone} />
-          <div className="session-time" title={fmtDateTime(activityAt)}>更新 {fmtRelativeTime(activityAt)}</div>
+          {stateBadge}
+          <div className="session-time" title={fmtDateTime(activityAt)}>{fmtRelativeTime(activityAt)}</div>
         </div>
-        <div className="session-channel" title={first}>起始：{first}</div>
+        <div className="session-channel" title={first}>{first}</div>
         <div className="session-meta-line">
-          {renderSessionMeta(session, authProfileByName).map((pill) => (
+          {renderSessionMeta(session, authProfileByName, channelLabelById).map((pill) => (
             <span key={pill.key} className={"session-meta-pill " + classSafeValue(pill.tone, "")} title={pill.title}>
               {pill.label}
             </span>
@@ -242,11 +252,15 @@ function SessionRow({ session, selected, authProfileByName, onSelect }: {
   );
 }
 
-function SessionDetail({ session }: {
+function SessionDetail({ session, isPermalink = false }: {
   readonly session: SessionRecord;
+  readonly isPermalink?: boolean;
 }): React.JSX.Element {
   const snapshot = useSyncExternalStore(subscribeAdminStatus, getAdminStatusSnapshot, getAdminStatusSnapshot);
   const authProfiles = (((snapshot.status || {}) as Record<string, any>).authProfiles?.profiles || []) as SessionRecord[];
+  const sessions = (((snapshot.status || {}) as Record<string, any>).state?.sessions || []) as SessionRecord[];
+  const channelLabelById = buildChannelLabelById([...sessions, session]);
+  const channelLabel = resolveSessionChannelLabel(session, channelLabelById);
   const usage = session.usage || {};
   const state = sessionQueueState(session);
   const activityAt = sessionActivityAt(session);
@@ -254,35 +268,25 @@ function SessionDetail({ session }: {
   const first = sessionFirstText(session);
   return (
     <>
-      <div className="selected-session-head">
-        <div className="selected-session-title">
-          <div className="session-detail-title" title={primary}>{primary}</div>
-          <div className="session-detail-subtitle" title={first}>起始：{first}</div>
-        </div>
+      <div className="selected-session-head session-action-head">
         <div className="session-detail-actions">
-          <Badge label={state.label} tone={state.tone} />
-          <a className="link-button" href={adminSessionPath(String(session.key || ""))}>打开 Session 页面</a>
+          {!isPermalink ? (
+            <a className="link-button" href={adminSessionPath(String(session.key || ""))}>打开 Session 页面</a>
+          ) : null}
           {session.threadUrl ? (
             <a className="link-button" href={session.threadUrl} target="_blank" rel="noreferrer">打开 Slack Thread</a>
           ) : null}
         </div>
       </div>
       <div className="session-body">
-        <div className="session-detail-summary">
-          <Kpi label="频道" value={session.channelLabel || session.channelId || "--"} title={session.channelId} />
-          <Kpi label="最近活动" value={fmtRelativeTime(activityAt)} title={fmtDateTime(activityAt)} />
-          <Kpi label="待处理" value={(session.openInboundCount || 0) + " 条"} />
-          <Kpi label="Jobs" value={(session.backgroundJobCount || 0) + " / 运行 " + (session.runningBackgroundJobCount || 0)} />
-          <Kpi label="Token / 轮次" value={fmtTokens(usage.totalTokens || 0) + " / " + (usage.turnCount || 0)} />
-        </div>
         <div className="session-inspector">
-          <div className="mini-panel">
-            <div className="mini-title">Auth Profile</div>
+          <div className="mini-panel session-action-panel">
+            <div className="mini-title">操作</div>
             <div className="mini-body">
               <AuthProfilePanel session={session} profiles={authProfiles} />
             </div>
           </div>
-          <div className="mini-panel trace-panel">
+          <div className="mini-panel trace-panel session-timeline-panel">
             <div className="mini-title">Agent 活动时间线</div>
             <div className="mini-body">
               <SessionTimeline session={session} />
@@ -299,6 +303,26 @@ function SessionDetail({ session }: {
             <div className="mini-body">
               <InboundTable items={session.openInbound || []} />
               <JobsTable jobs={session.backgroundJobs || []} />
+            </div>
+          </div>
+          <div className="mini-panel session-meta-panel">
+            <div className="mini-title">会话信息</div>
+            <div className="mini-body">
+              <div className="selected-session-title session-meta-title">
+                <div className="session-detail-title" title={primary}>{primary}</div>
+                <div className="session-detail-subtitle" title={first}>{first}</div>
+                <div className="session-compact-meta">
+                  {shouldShowSessionState(state) ? <Badge label={state.label} tone={state.tone} /> : null}
+                  <span>{fmtRelativeTime(activityAt)}</span>
+                </div>
+              </div>
+              <div className="session-detail-summary">
+                <Kpi label="频道" value={channelLabel} title={session.channelId} />
+                <Kpi label="最近活动" value={fmtRelativeTime(activityAt)} title={fmtDateTime(activityAt)} />
+                <Kpi label="待处理" value={(session.openInboundCount || 0) + " 条"} />
+                <Kpi label="Jobs" value={(session.backgroundJobCount || 0) + " / 运行 " + (session.runningBackgroundJobCount || 0)} />
+                <Kpi label="Token" value={fmtTokens(usage.totalTokens || 0)} />
+              </div>
             </div>
           </div>
         </div>
@@ -456,7 +480,7 @@ function TraceSummary({ trace }: { readonly trace: Record<string, any> }): React
 
 function Timeline({ events }: { readonly events: readonly TimelineEvent[] }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
-  const shouldFollowRef = useRef(false);
+  const shouldFollowRef = useRef(true);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -611,32 +635,6 @@ function sessionMatchesFilter(session: SessionRecord, mode: string, query: strin
 function resolveSelectedSession(sessions: readonly SessionRecord[], selectedSessionKey: string | null): SessionRecord | null {
   if (!sessions.length) return null;
   return sessions.find((session) => session.key === selectedSessionKey) || sessions[0] || null;
-}
-
-function renderSessionMeta(
-  session: SessionRecord,
-  authProfileByName: ReadonlyMap<string, SessionRecord>
-): Array<{ key: string; label: string; tone: string; title?: string }> {
-  const usage = session.usage || {};
-  const pendingDetail = Number(session.openInboundCount || 0)
-    ? "待处理 " + (session.openInboundCount || 0) + "（人 " + (session.openHumanInboundCount || 0) + " / 系统 " + (session.openSystemInboundCount || 0) + "）"
-    : "";
-  const authProfile = session.authProfileName ? authProfileByName.get(String(session.authProfileName)) : null;
-  return [
-    { key: "channel", label: session.channelLabel || session.channelId || "未知频道", tone: "info", title: session.key },
-    session.authBlockedAt ? { key: "auth-blocked", label: "账号待切换", tone: "danger", title: session.authBlockReasonLabel || session.authBlockReason } : null,
-    session.authProfileName ? {
-      key: "auth-profile",
-      label: authProfile ? "账号 " + profileDisplayLabel(authProfile) : "账号已绑定",
-      tone: "info",
-      title: authProfile ? profileTitle(authProfile) : String(session.authProfileName)
-    } : null,
-    pendingDetail ? { key: "pending", label: pendingDetail, tone: Number(session.openHumanInboundCount || 0) ? "warn" : "" } : null,
-    { key: "jobs", label: "Jobs " + (session.backgroundJobCount || 0), tone: Number(session.failedBackgroundJobCount || 0) ? "danger" : (Number(session.runningBackgroundJobCount || 0) ? "good" : "") },
-    Number(session.failedBackgroundJobCount || 0) ? { key: "failed", label: "失败 " + session.failedBackgroundJobCount, tone: "danger" } : null,
-    { key: "turns", label: "轮次 " + (usage.turnCount || 0), tone: "" },
-    { key: "tokens", label: "Token " + fmtTokens(usage.totalTokens || 0), tone: "info" }
-  ].filter((item): item is { key: string; label: string; tone: string; title?: string } => Boolean(item));
 }
 
 function sessionPrimaryText(session: SessionRecord): string {

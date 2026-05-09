@@ -346,6 +346,17 @@ describe("AdminService", () => {
         ]
       }
     });
+
+    await writerSessions.ensureSession("C123", "222.333");
+
+    status = await service.getStatus();
+    const legacySession = ((status as Record<string, any>).state.sessions as Record<string, any>[])
+      .find((session) => session.key === "C123:222.333");
+    expect(legacySession).toMatchObject({
+      channelId: "C123",
+      channelName: null,
+      channelLabel: "#deep-review"
+    });
   });
 
   it("splits open inbound counts into human and system messages", async () => {

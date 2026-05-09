@@ -84,7 +84,7 @@ async function main(): Promise<void> {
     console.log("Sent evt-1");
 
     await mockSlack.waitForPostedMessage((message) =>
-      message.text.includes("I've joined this thread and I'm checking the context now.")
+      message.text.includes("查看会话活动时间线")
     );
     const firstReply = await mockSlack.waitForPostedMessage((message) => message.text.includes("ROOT_CONTEXT_ABC"));
     console.log("First reply:", firstReply.text);
@@ -137,7 +137,7 @@ async function main(): Promise<void> {
     await mockSlack.waitForPostedMessage(
       (message) =>
         message.channel === "D123" &&
-        message.text.includes("I've joined this thread and I'm checking the context now.")
+        message.text.includes("查看会话活动时间线")
     );
     const dmReply = await mockSlack.waitForPostedMessage((message) => message.channel === "D123" && message.text.includes("U234"));
     console.log("DM reply:", dmReply.text);

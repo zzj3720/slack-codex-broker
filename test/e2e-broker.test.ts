@@ -166,7 +166,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     await waitFor(
       () => mockSlack.postedMessages.some((message) =>
         message.threadTs === "991.220" &&
-          message.text.includes("查看 Bot 行为时间线") &&
+          message.text.includes("查看会话活动时间线") &&
           message.text.includes("https://admin.example.test/admin/sessions/C123%3A991.220")
       ),
       "session permalink startup message"
@@ -177,6 +177,11 @@ describe.sequential("slack-codex-broker e2e", () => {
       message.threadTs === "991.220" && message.text.includes("/admin/sessions/C123%3A991.220")
     );
     expect(postedLinks).toHaveLength(1);
+    expect(postedLinks[0]!.text).toBe("<https://admin.example.test/admin/sessions/C123%3A991.220|查看会话活动时间线>");
+    expect(postedLinks[0]!.text).not.toContain("已开始处理");
+    expect(postedLinks[0]!.text).not.toContain("Bot");
+    const startupMessages = mockSlack.postedMessages.filter((message) => message.threadTs === "991.220");
+    expect(startupMessages).toEqual([postedLinks[0]]);
     await expect(readSessionRecord(tempRoot, "C123:991.220")).resolves.toMatchObject({
       sessionPageLinkPostedAt: expect.any(String)
     });

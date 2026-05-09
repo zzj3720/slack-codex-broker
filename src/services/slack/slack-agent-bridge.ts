@@ -578,14 +578,6 @@ export class SlackAgentBridge {
       return;
     }
 
-    if (!existing) {
-      await this.#conversations.postSlackMessage({
-        channelId: parsed.channelId,
-        rootThreadTs: parsed.rootThreadTs,
-        text: "I've joined this thread and I'm checking the context now. I'll be with you shortly."
-      });
-    }
-
     session = await this.#conversations.ensureAgentSession(session);
 
     if (isSlackMessageEffectivelyEmpty(parsed.input.text, parsed.input.images, parsed.input.slackMessage)) {

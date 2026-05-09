@@ -748,7 +748,7 @@ export class SlackConversationService {
       await this.#postBotThreadMessage(
         session.channelId,
         session.rootThreadTs,
-        `已开始处理。<${url}|查看 Bot 行为时间线>`,
+        `<${url}|查看会话活动时间线>`,
         { alreadyFormatted: true }
       );
       return await this.#sessions.setSessionPageLinkPostedAt(

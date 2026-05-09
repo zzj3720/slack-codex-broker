@@ -7,7 +7,7 @@ export function renderAdminShellHtml(serviceName: string): string {
       </nav>
       <div class="topbar-center" id="topbar-quota"></div>
       <div class="top-actions">
-        <span class="pill">刷新：10 秒</span>
+        <span class="pill">实时</span>
         <span class="pill" id="last-refresh">就绪</span>
         <button id="refresh-button" class="secondary">刷新</button>
       </div>

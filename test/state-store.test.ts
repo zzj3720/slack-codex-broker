@@ -279,8 +279,12 @@ describe("StateStore", () => {
           name: "session_channel_metadata"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 8,
           name: "inbound_mentioned_users"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "admin_realtime_events"
         }
       ]);
     } finally {

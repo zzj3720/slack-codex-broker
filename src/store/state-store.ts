@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type {
   PersistedAdminAuditEvent,
+  PersistedAdminEvent,
   PersistedAdminOperation,
   PersistedAgentTraceEvent,
   JsonLike,
@@ -18,7 +19,8 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 8;
+export const CURRENT_STATE_SCHEMA_VERSION = 9;
+const ADMIN_EVENT_RETENTION_LIMIT = 20_000;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -266,8 +268,32 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
     up(database) {
       repairInboundMentionedUsersSchema(database);
     }
+  },
+  {
+    version: 9,
+    name: "admin_realtime_events",
+    up(database) {
+      createAdminEventsSchema(database);
+    }
   }
 ];
+
+function createAdminEventsSchema(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS admin_events (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      session_key TEXT,
+      entity_id TEXT,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_admin_events_sequence ON admin_events(sequence);
+    CREATE INDEX IF NOT EXISTS idx_admin_events_session_sequence ON admin_events(session_key, sequence);
+  `);
+}
 
 function repairInboundMentionedUsersSchema(database: DatabaseSync): void {
   if (!tableExists(database, "inbound_messages")) {
@@ -395,6 +421,14 @@ export class StateStore {
     const normalized = this.#normalizeSession(record);
     this.#transaction(() => {
       this.#upsertSession(normalized);
+      this.#appendAdminEvent({
+        kind: "session.upsert",
+        scope: "session",
+        sessionKey: normalized.key,
+        entityId: normalized.key,
+        payload: normalized,
+        createdAt: normalized.updatedAt
+      });
     });
   }
 
@@ -408,6 +442,14 @@ export class StateStore {
       }
 
       this.#databaseRequired().prepare("DELETE FROM sessions WHERE key = ?").run(key);
+      this.#appendAdminEvent({
+        kind: "session.delete",
+        scope: "session",
+        sessionKey: key,
+        entityId: key,
+        payload: { key },
+        createdAt: new Date().toISOString()
+      });
       return true;
     });
   }
@@ -436,6 +478,14 @@ export class StateStore {
       });
 
       this.#upsertSession(updated);
+      this.#appendAdminEvent({
+        kind: "session.upsert",
+        scope: "session",
+        sessionKey: updated.key,
+        entityId: updated.key,
+        payload: updated,
+        createdAt: updated.updatedAt
+      });
       return updated;
     });
   }
@@ -564,6 +614,14 @@ export class StateStore {
     }
     this.#transaction(() => {
       this.#upsertInboundMessage(normalized);
+      this.#appendAdminEvent({
+        kind: "inbound.upsert",
+        scope: "session",
+        sessionKey: normalized.sessionKey,
+        entityId: normalized.key,
+        payload: normalized,
+        createdAt: normalized.updatedAt
+      });
     });
   }
 
@@ -588,6 +646,14 @@ export class StateStore {
         updatedAt: new Date().toISOString()
       };
       this.#upsertInboundMessage(updated);
+      this.#appendAdminEvent({
+        kind: "inbound.upsert",
+        scope: "session",
+        sessionKey: updated.sessionKey,
+        entityId: updated.key,
+        payload: updated,
+        createdAt: updated.updatedAt
+      });
       return updated;
     });
   }
@@ -616,6 +682,14 @@ export class StateStore {
           updatedAt
         };
         this.#upsertInboundMessage(nextMessage);
+        this.#appendAdminEvent({
+          kind: "inbound.upsert",
+          scope: "session",
+          sessionKey: nextMessage.sessionKey,
+          entityId: nextMessage.key,
+          payload: nextMessage,
+          createdAt: nextMessage.updatedAt
+        });
         updated.push(nextMessage);
       }
 
@@ -681,6 +755,14 @@ export class StateStore {
     }
     this.#transaction(() => {
       this.#upsertBackgroundJob(normalized);
+      this.#appendAdminEvent({
+        kind: "job.upsert",
+        scope: "session",
+        sessionKey: normalized.sessionKey,
+        entityId: normalized.id,
+        payload: normalized,
+        createdAt: normalized.updatedAt
+      });
     });
   }
 
@@ -706,6 +788,13 @@ export class StateStore {
     const normalized = this.#normalizeAdminOperation(record);
     this.#transaction(() => {
       this.#upsertAdminOperation(normalized);
+      this.#appendAdminEvent({
+        kind: "operation.upsert",
+        scope: "global",
+        entityId: normalized.id,
+        payload: normalized,
+        createdAt: normalized.updatedAt
+      });
     });
   }
 
@@ -750,6 +839,13 @@ export class StateStore {
         normalized.actor ?? null,
         normalized.createdAt
       );
+      this.#appendAdminEvent({
+        kind: "audit.append",
+        scope: "global",
+        entityId: normalized.id,
+        payload: normalized,
+        createdAt: normalized.createdAt
+      });
     });
   }
 
@@ -768,6 +864,14 @@ export class StateStore {
     const normalized = this.#normalizeAgentTurnUsage(record);
     this.#transaction(() => {
       this.#upsertAgentTurnUsage(normalized);
+      this.#appendAdminEvent({
+        kind: "usage.update",
+        scope: "session",
+        sessionKey: normalized.sessionKey,
+        entityId: normalized.turnId,
+        payload: normalized,
+        createdAt: normalized.updatedAt
+      });
     });
   }
 
@@ -787,7 +891,48 @@ export class StateStore {
     const normalized = this.#normalizeAgentTraceEvent(record);
     this.#transaction(() => {
       this.#upsertAgentTraceEvent(normalized);
+      this.#appendAdminEvent({
+        kind: "trace.append",
+        scope: "session",
+        sessionKey: normalized.sessionKey,
+        entityId: normalized.id,
+        payload: normalized,
+        createdAt: normalized.updatedAt
+      });
     });
+  }
+
+  listAdminEvents(options?: {
+    readonly afterSequence?: number | undefined;
+    readonly sessionKey?: string | undefined;
+    readonly limit?: number | undefined;
+  }): PersistedAdminEvent[] {
+    const afterSequence = Number(options?.afterSequence ?? 0);
+    const limit = Number(options?.limit ?? 100);
+    const where: string[] = ["sequence > ?"];
+    const params: SqlValue[] = [Number.isFinite(afterSequence) ? Math.max(0, Math.floor(afterSequence)) : 0];
+    if (options?.sessionKey) {
+      where.push("session_key = ?");
+      params.push(options.sessionKey);
+    }
+    params.push(Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.floor(limit))) : 100);
+
+    return this.#databaseRequired()
+      .prepare(`
+        SELECT * FROM admin_events
+        WHERE ${where.join(" AND ")}
+        ORDER BY sequence ASC
+        LIMIT ?
+      `)
+      .all(...params)
+      .map((row) => this.#rowToAdminEvent(row as SqlRow));
+  }
+
+  getLatestAdminEventSequence(): number {
+    const row = this.#databaseRequired()
+      .prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM admin_events")
+      .get() as { sequence?: number | bigint | null } | undefined;
+    return Number(row?.sequence ?? 0);
   }
 
   #openDatabase(): void {
@@ -1141,6 +1286,29 @@ export class StateStore {
     );
   }
 
+  #appendAdminEvent(event: Omit<PersistedAdminEvent, "sequence" | "payload"> & {
+    readonly payload: unknown;
+  }): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO admin_events (
+        kind, scope, session_key, entity_id, payload, created_at
+      ) VALUES (${placeholders(6)})
+    `).run(
+      event.kind,
+      event.scope,
+      event.sessionKey ?? null,
+      event.entityId ?? null,
+      JSON.stringify(event.payload),
+      event.createdAt
+    );
+    this.#databaseRequired().prepare(`
+      DELETE FROM admin_events
+      WHERE sequence NOT IN (
+        SELECT sequence FROM admin_events ORDER BY sequence DESC LIMIT ?
+      )
+    `).run(ADMIN_EVENT_RETENTION_LIMIT);
+  }
+
   #markProcessedEvent(eventId: string): void {
     this.#databaseRequired()
       .prepare("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)")
@@ -1288,6 +1456,18 @@ export class StateStore {
       actor: optionalStringColumn(row, "actor"),
       createdAt: stringColumn(row, "created_at")
     });
+  }
+
+  #rowToAdminEvent(row: SqlRow): PersistedAdminEvent {
+    return {
+      sequence: Number(row.sequence),
+      kind: stringColumn(row, "kind"),
+      scope: stringColumn(row, "scope") === "session" ? "session" : "global",
+      sessionKey: optionalStringColumn(row, "session_key"),
+      entityId: optionalStringColumn(row, "entity_id"),
+      payload: readJsonColumn<JsonLike>(row, "payload", {}),
+      createdAt: stringColumn(row, "created_at")
+    };
   }
 
   #rowToAgentTurnUsage(row: SqlRow): PersistedAgentTurnUsage {

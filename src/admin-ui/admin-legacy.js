@@ -1,3 +1,5 @@
+import { applyAdminRealtimeEventToStatus, publishTimelineRealtimeEvent } from "./admin-status-store";
+
 export function initAdminPage(options = {}) {
     const useReactSessions = options.useReactSessions === true;
     const refreshButton = document.getElementById("refresh-button");
@@ -17,6 +19,7 @@ export function initAdminPage(options = {}) {
     let latestStatus = null;
     let uiState = loadUiState();
     let uiStatePersistTimer = null;
+    let realtimeSource = null;
 
     async function requestJson(path, init = {}) {
       const response = await fetch(path, Object.assign({}, init, { headers: authHeaders(init.headers) }));
@@ -857,12 +860,36 @@ export function initAdminPage(options = {}) {
           sessions: sessionsPayload.sessions || []
         });
         render(status);
+        startRealtime();
         lastRefresh.textContent = "已同步：" + fmtTime(new Date());
       } catch (error) {
         lastRefresh.textContent = "错误：" + (error instanceof Error ? error.message : String(error));
       } finally {
         refreshButton.disabled = false;
       }
+    }
+    function startRealtime() {
+      if (realtimeSource || typeof window.EventSource === "undefined") return;
+      const cursor = Number(latestStatus?.realtime?.cursor || 0);
+      const source = new window.EventSource("/admin/api/events?after=" + encodeURIComponent(String(cursor)));
+      realtimeSource = source;
+      source.addEventListener("admin-event", (message) => {
+        try {
+          const payload = JSON.parse(message.data);
+          if (!payload?.event) return;
+          latestStatus = applyAdminRealtimeEventToStatus(latestStatus, payload.event);
+          publishTimelineRealtimeEvent(payload.event);
+          render(latestStatus);
+          lastRefresh.textContent = "实时同步：" + fmtTime(new Date());
+        } catch (error) {
+          lastRefresh.textContent = "实时事件错误：" + (error instanceof Error ? error.message : String(error));
+        }
+      });
+      source.addEventListener("error", () => {
+        if (source.readyState === window.EventSource.CLOSED && realtimeSource === source) {
+          realtimeSource = null;
+        }
+      });
     }
     async function activateProfile(name, allowActive) {
       replaceStatus.textContent = "正在切换认证档案...";
@@ -1030,6 +1057,5 @@ export function initAdminPage(options = {}) {
     addProfileDialog.onclick = (event) => { if (event.target === addProfileDialog) addProfileDialog.close(); };
     githubAuthorDialog.onclick = (event) => { if (event.target === githubAuthorDialog) githubAuthorDialog.close(); };
     refresh();
-    window.setInterval(refresh, 10000);
 
 }

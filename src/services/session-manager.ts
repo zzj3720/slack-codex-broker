@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   JsonLike,
   PersistedAdminAuditEvent,
+  PersistedAdminEvent,
   PersistedAdminOperation,
   PersistedAgentTraceEvent,
   PersistedBackgroundJob,
@@ -400,6 +401,18 @@ export class SessionManager {
 
   async upsertAgentTraceEvent(record: PersistedAgentTraceEvent): Promise<void> {
     await this.#stateStore.upsertAgentTraceEvent(record);
+  }
+
+  listAdminEvents(options?: {
+    readonly afterSequence?: number | undefined;
+    readonly sessionKey?: string | undefined;
+    readonly limit?: number | undefined;
+  }): PersistedAdminEvent[] {
+    return this.#stateStore.listAdminEvents(options);
+  }
+
+  getLatestAdminEventSequence(): number {
+    return this.#stateStore.getLatestAdminEventSequence();
   }
 
   #requireSession(channelId: string, rootThreadTs: string): SlackSessionRecord {

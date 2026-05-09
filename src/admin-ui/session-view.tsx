@@ -1,6 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { getAdminStatusSnapshot, subscribeAdminStatus } from "./admin-status-store";
+import {
+  getAdminStatusSnapshot,
+  getTimelineSnapshot,
+  publishTimelinePayload,
+  subscribeAdminStatus,
+  subscribeTimeline
+} from "./admin-status-store";
 import { stableSessionOrder } from "./session-order";
 import { getTimelineEventDisplay, isTimelineEventVisible, statusLabel, type TimelineEvent } from "./timeline-display";
 
@@ -14,7 +20,6 @@ type UiState = {
 type SessionRecord = Record<string, any>;
 type TimelinePayload = { readonly events?: TimelineEvent[]; readonly trace?: Record<string, any> } | TimelineEvent[];
 
-const timelineCache = new Map<string, TimelinePayload>();
 const sessionFilters = ["ongoing", "all", "active", "inbound", "jobs", "issues", "usage"];
 
 export function AdminSessionsView(): React.JSX.Element {
@@ -114,7 +119,7 @@ export function AdminSessionsView(): React.JSX.Element {
         </div>
         <div id="session-detail-panel" className="panel-body">
           {selectedSession ? (
-            <SessionDetail key={selectedSession.key} session={selectedSession} refreshVersion={snapshot.version} />
+            <SessionDetail key={selectedSession.key} session={selectedSession} />
           ) : (
             <div className="empty-state">没有可检查的 session</div>
           )}
@@ -159,9 +164,8 @@ function SessionRow({ session, selected, onSelect }: {
   );
 }
 
-function SessionDetail({ session, refreshVersion }: {
+function SessionDetail({ session }: {
   readonly session: SessionRecord;
-  readonly refreshVersion: number;
 }): React.JSX.Element {
   const usage = session.usage || {};
   const state = sessionQueueState(session);
@@ -194,7 +198,7 @@ function SessionDetail({ session, refreshVersion }: {
           <div className="mini-panel trace-panel">
             <div className="mini-title">Agent 活动时间线</div>
             <div className="mini-body">
-              <SessionTimeline session={session} refreshVersion={refreshVersion} />
+              <SessionTimeline session={session} />
             </div>
           </div>
           <div className="mini-panel">
@@ -216,24 +220,25 @@ function SessionDetail({ session, refreshVersion }: {
   );
 }
 
-function SessionTimeline({ session, refreshVersion }: {
+function SessionTimeline({ session }: {
   readonly session: SessionRecord;
-  readonly refreshVersion: number;
 }): React.JSX.Element {
   const sessionKey = String(session.key || "");
-  const [payload, setPayload] = useState<TimelinePayload | null>(() => timelineCache.get(sessionKey) || null);
+  const timelineSnapshot = useSyncExternalStore(
+    (listener) => subscribeTimeline(sessionKey, listener),
+    () => getTimelineSnapshot(sessionKey),
+    () => getTimelineSnapshot(sessionKey)
+  );
+  const payload = timelineSnapshot.payload as TimelinePayload | null;
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const cached = timelineCache.get(sessionKey) || null;
-    setPayload(cached);
     setError(null);
     void requestJson("/admin/api/sessions/" + encodeURIComponent(sessionKey) + "/timeline")
       .then((nextPayload) => {
         if (cancelled) return;
-        timelineCache.set(sessionKey, nextPayload as TimelinePayload);
-        setPayload(nextPayload as TimelinePayload);
+        publishTimelinePayload(sessionKey, nextPayload as TimelinePayload);
       })
       .catch((nextError: unknown) => {
         if (!cancelled) setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -241,7 +246,7 @@ function SessionTimeline({ session, refreshVersion }: {
     return () => {
       cancelled = true;
     };
-  }, [sessionKey, refreshVersion]);
+  }, [sessionKey]);
 
   if (error) return <div className="summary-detail">{error}</div>;
   if (!payload) return <Timeline events={[{ at: session.createdAt, type: "session", title: "已创建" }]} />;
@@ -284,8 +289,29 @@ function TraceSummary({ trace }: { readonly trace: Record<string, any> }): React
 }
 
 function Timeline({ events }: { readonly events: readonly TimelineEvent[] }): React.JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const shouldFollowRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || !shouldFollowRef.current) {
+      updateFollowState();
+      return;
+    }
+    container.scrollTop = container.scrollHeight;
+    updateFollowState();
+  }, [events.length]);
+
+  function updateFollowState(): void {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    shouldFollowRef.current = container.scrollHeight - container.scrollTop - container.clientHeight < 24;
+  }
+
   return (
-    <div className="timeline">
+    <div className="timeline" ref={containerRef} onScroll={updateFollowState} onMouseEnter={updateFollowState}>
       {events.map((event, index) => (
         <TimelineRow key={timelineEventKey(event, index)} event={event} />
       ))}

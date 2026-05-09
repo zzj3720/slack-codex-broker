@@ -8,6 +8,7 @@ import type {
   AdminOperationKind,
   JsonLike,
   PersistedAdminAuditEvent,
+  PersistedAdminEvent,
   PersistedAdminOperation,
   PersistedAgentTraceEvent,
   PersistedBackgroundJob,
@@ -168,6 +169,7 @@ export class AdminService {
       account: runtime.account,
       rateLimits: runtime.rateLimits,
       deployment: runtime.deployment,
+      realtime: this.#realtimeInfo(),
       usage,
       operations: this.#listAdminOperations(10),
       auditEvents: this.#listAdminAuditEvents({ limit: 10 }),
@@ -193,6 +195,7 @@ export class AdminService {
       account: runtime.account,
       rateLimits: runtime.rateLimits,
       deployment: runtime.deployment,
+      realtime: this.#realtimeInfo(),
       usage,
       operations: this.#listAdminOperations(10),
       auditEvents: this.#listAdminAuditEvents({ limit: 10 }),
@@ -212,6 +215,7 @@ export class AdminService {
     const snapshot = await this.#readSessionSnapshot();
     return {
       ok: true,
+      realtime: this.#realtimeInfo(),
       sessions: snapshot.allSessions.slice(0, 500).map((session) =>
         this.#summarizeSession(session, {
           inbound: snapshot.inboundBySession.get(session.key) ?? [],
@@ -334,6 +338,21 @@ export class AdminService {
         operationId: options?.operationId,
         limit: 50
       })
+    };
+  }
+
+  async listRealtimeEvents(options: {
+    readonly afterSequence: number;
+    readonly limit?: number | undefined;
+  }): Promise<Record<string, unknown>> {
+    const events = this.options.sessions.listAdminEvents({
+      afterSequence: options.afterSequence,
+      limit: options.limit ?? 100
+    });
+    return {
+      ok: true,
+      cursor: events.at(-1)?.sequence ?? this.#latestRealtimeSequence(),
+      events: events.map((event) => this.#serializeRealtimeEvent(event))
     };
   }
 
@@ -588,6 +607,85 @@ export class AdminService {
         .map(summarizeUsageRecord),
       bySession: summarizeUsageBySession(records, 25)
     };
+  }
+
+  #realtimeInfo(): Record<string, unknown> {
+    return {
+      cursor: this.#latestRealtimeSequence()
+    };
+  }
+
+  #latestRealtimeSequence(): number {
+    const getLatest = (this.options.sessions as {
+      readonly getLatestAdminEventSequence?: (() => number) | undefined;
+    }).getLatestAdminEventSequence;
+    return typeof getLatest === "function" ? getLatest.call(this.options.sessions) : 0;
+  }
+
+  #serializeRealtimeEvent(event: PersistedAdminEvent): Record<string, unknown> {
+    const serialized: Record<string, unknown> = {
+      sequence: event.sequence,
+      kind: event.kind,
+      scope: event.scope,
+      sessionKey: event.sessionKey ?? null,
+      entityId: event.entityId ?? null,
+      payload: event.payload,
+      createdAt: event.createdAt
+    };
+
+    if (event.sessionKey) {
+      serialized.session = this.#summarizeSessionByKey(event.sessionKey) ?? null;
+    }
+
+    if (event.kind === "trace.append") {
+      const traceEvent = event.payload as unknown as PersistedAgentTraceEvent;
+      if (isVisibleTimelineTraceEvent(traceEvent)) {
+        serialized.timelineEvent = agentTraceEventToTimelineEvent(traceEvent);
+      }
+      if (event.sessionKey) {
+        const traceEvents = this.options.sessions
+          .listAgentTraceEvents(event.sessionKey, 1000)
+          .filter(isVisibleTimelineTraceEvent);
+        serialized.trace = summarizeAgentTrace(traceEvents);
+      }
+    }
+
+    if (event.kind === "operation.upsert") {
+      serialized.operation = event.payload;
+    }
+    if (event.kind === "audit.append") {
+      serialized.auditEvent = event.payload;
+    }
+
+    return serialized;
+  }
+
+  #summarizeSessionByKey(sessionKey: string): Record<string, unknown> | null {
+    const session = this.options.sessions.getSessionByKey(sessionKey);
+    if (!session) {
+      return null;
+    }
+
+    const inbound = this.options.sessions.listInboundMessages({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs
+    });
+    const openInbound = this.options.sessions.listInboundMessages({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      status: ["pending", "inflight"]
+    });
+    const jobs = this.options.sessions.listBackgroundJobs({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs
+    });
+
+    return this.#summarizeSession(session, {
+      inbound,
+      openInbound,
+      jobs,
+      usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key)
+    });
   }
 
   #serviceInfo(): Record<string, unknown> {

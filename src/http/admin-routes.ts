@@ -89,6 +89,11 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "GET" && url.pathname === "/admin/api/events") {
+    streamAdminEvents(request, response, options.adminService, url);
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/admin/api/status") {
     respondJson(response, 200, await options.adminService.getStatus());
     return true;
@@ -307,6 +312,79 @@ async function runAdminOperation(
       error: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+function streamAdminEvents(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  adminService: AdminService,
+  url: URL
+): void {
+  let cursor = readEventCursor(url, request);
+  let closed = false;
+  let draining = false;
+
+  response.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-store, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no"
+  });
+  response.flushHeaders?.();
+
+  const interval = setInterval(() => {
+    void drain();
+  }, 500);
+
+  request.on("close", () => {
+    closed = true;
+    clearInterval(interval);
+  });
+
+  void drain();
+
+  async function drain(): Promise<void> {
+    if (closed || draining) {
+      return;
+    }
+    draining = true;
+    try {
+      const payload = await adminService.listRealtimeEvents({
+        afterSequence: cursor,
+        limit: 100
+      });
+      const events = Array.isArray(payload.events) ? payload.events as Array<Record<string, unknown>> : [];
+      for (const event of events) {
+        const sequence = Number(event.sequence);
+        if (!Number.isFinite(sequence)) {
+          continue;
+        }
+        cursor = Math.max(cursor, sequence);
+        response.write(`id: ${sequence}\n`);
+        response.write("event: admin-event\n");
+        response.write(`data: ${JSON.stringify({ ok: true, event })}\n\n`);
+      }
+    } catch (error) {
+      response.write("event: admin-error\n");
+      response.write(`data: ${JSON.stringify({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      })}\n\n`);
+    } finally {
+      draining = false;
+    }
+  }
+}
+
+function readEventCursor(url: URL, request: http.IncomingMessage): number {
+  const fromQuery = Number(url.searchParams.get("after") ?? "");
+  if (Number.isFinite(fromQuery) && fromQuery >= 0) {
+    return Math.floor(fromQuery);
+  }
+  const fromHeader = request.headers["last-event-id"];
+  const value = Array.isArray(fromHeader) ? fromHeader.at(-1) : fromHeader;
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
 }
 
 function isAuthorizedAdminRequest(request: http.IncomingMessage, config: AppConfig): boolean {

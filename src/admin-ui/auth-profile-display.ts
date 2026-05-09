@@ -1,4 +1,9 @@
+import { formatWeeklyQuotaDisplay } from "../auth-profile-quota.js";
+
 type AuthProfileRecord = Record<string, any>;
+interface QuotaLabelOptions {
+  readonly now?: Date | number | string | undefined;
+}
 
 export function profileAccountLabel(profile: AuthProfileRecord): string {
   const accountStatus = profile.account || {};
@@ -37,15 +42,15 @@ export function profileDisplayLabel(profile: AuthProfileRecord): string {
     .join(" · ");
 }
 
-export function profileOptionLabel(profile: AuthProfileRecord): string {
-  return [profileDisplayLabel(profile), profileQuotaLabel(profile)]
+export function profileOptionLabel(profile: AuthProfileRecord, options: QuotaLabelOptions = {}): string {
+  return [profileDisplayLabel(profile), profileQuotaLabel(profile, options)]
     .filter(Boolean)
     .join(" · ");
 }
 
-export function profileTitle(profile: AuthProfileRecord): string {
+export function profileTitle(profile: AuthProfileRecord, options: QuotaLabelOptions = {}): string {
   const internalName = readString(profile.name);
-  return [profileOptionLabel(profile), internalName ? `内部标识 ${internalName}` : ""]
+  return [profileOptionLabel(profile, options), internalName ? `内部标识 ${internalName}` : ""]
     .filter(Boolean)
     .join(" · ");
 }
@@ -54,38 +59,33 @@ export function profileIsSelectable(profile: AuthProfileRecord): boolean {
   return profile.account?.ok !== false && profile.rateLimits?.ok !== false;
 }
 
-export function profileQuotaLabel(profile: AuthProfileRecord): string {
+export function profileQuotaLabel(profile: AuthProfileRecord, options: QuotaLabelOptions = {}): string {
   const rateLimits = profile.rateLimits || {};
   if (rateLimits.ok === false) {
     return "不可用";
   }
 
   const limits = rateLimits.rateLimits || {};
-  const primary = remainingPercent(limits.primary?.usedPercent);
-  const secondary = remainingPercent(limits.secondary?.usedPercent);
-  const parts = [];
-  if (primary !== null) parts.push("短窗 " + Math.round(primary) + "%");
-  if (secondary !== null) parts.push("周 " + Math.round(secondary) + "%");
-  return parts.length ? parts.join(" / ") : "额度未知";
+  const label = formatWeeklyQuotaDisplay({
+    usedPercent: limits.secondary?.usedPercent,
+    resetsAt: limits.secondary?.resetsAt,
+    now: options.now
+  });
+  return label ?? "周额度未知";
 }
 
-export function profileWeeklyQuotaLabel(profile: AuthProfileRecord): string {
+export function profileWeeklyQuotaLabel(profile: AuthProfileRecord, options: QuotaLabelOptions = {}): string {
   const rateLimits = profile.rateLimits || {};
   if (rateLimits.ok === false) {
     return "不可用";
   }
 
   const limits = rateLimits.rateLimits || {};
-  const secondary = remainingPercent(limits.secondary?.usedPercent);
-  return secondary !== null ? "周 " + Math.round(secondary) + "%" : "周额度未知";
-}
-
-function remainingPercent(usedPercent: unknown): number | null {
-  const used = Number(usedPercent);
-  if (!Number.isFinite(used)) {
-    return null;
-  }
-  return Math.max(0, Math.min(100, 100 - used));
+  return formatWeeklyQuotaDisplay({
+    usedPercent: limits.secondary?.usedPercent,
+    resetsAt: limits.secondary?.resetsAt,
+    now: options.now
+  }) ?? "周额度未知";
 }
 
 function readString(value: unknown): string | null {

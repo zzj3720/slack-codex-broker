@@ -153,8 +153,29 @@ export function initAdminPage(options = {}) {
       if (n >= 1000) return (n / 1000).toFixed(1).replace(/\\.0$/, "") + "K";
       return String(Math.round(n));
     }
-    function clampPercent(value) {
-      return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    function remainingPercent(value) {
+      const used = Number(value);
+      if (!Number.isFinite(used)) return null;
+      return Math.max(0, Math.min(100, 100 - used));
+    }
+    function daysUntilReset(resetsAt) {
+      const seconds = Number(resetsAt);
+      if (!Number.isFinite(seconds)) return null;
+      return Math.max(((seconds * 1000) - Date.now()) / 86400000, 1 / (24 * 60));
+    }
+    function weightedWeeklyQuotaScore(remaining, refreshDays) {
+      if (remaining == null) return null;
+      return (remaining / 100) / ((refreshDays || 7) / 7);
+    }
+    function formatWeightedWeeklyQuotaScore(score) {
+      if (!Number.isFinite(Number(score))) return "0";
+      return Number(score).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+    }
+    function weeklyQuotaDisplay(limit) {
+      const remaining = remainingPercent(limit?.usedPercent);
+      if (remaining == null) return null;
+      const score = weightedWeeklyQuotaScore(remaining, daysUntilReset(limit?.resetsAt));
+      return Math.round(remaining) + "% | " + formatWeightedWeeklyQuotaScore(score);
     }
     function statusTone(status) {
       const v = String(status || "").toLowerCase();
@@ -270,20 +291,17 @@ export function initAdminPage(options = {}) {
       const activeProfile = (authProfiles.profiles || []).find((p) => p.active);
       const rateLimits = activeProfile?.rateLimits;
       const snapshot = rateLimits?.rateLimits || {};
-      const primary = snapshot.primary;
       const secondary = snapshot.secondary;
       const topbarQuota = document.getElementById("topbar-quota");
       const accountChip = renderAccountChip(a);
-      if (rateLimits?.ok && primary) {
-        const weeklyRemaining = secondary ? (100 - clampPercent(secondary.usedPercent)) : null;
+      if (rateLimits?.ok && secondary) {
+        const weeklyRemaining = remainingPercent(secondary.usedPercent);
         const weeklyTone = weeklyRemaining != null ? (weeklyRemaining < 10 ? "danger" : (weeklyRemaining < 30 ? "warn" : "")) : "";
-        const hourlyRemaining = 100 - clampPercent(primary.usedPercent);
-        const hourlyTone = hourlyRemaining < 10 ? "danger" : (hourlyRemaining < 30 ? "warn" : "");
+        const weeklyLabel = weeklyQuotaDisplay(secondary);
         topbarQuota.innerHTML =
           accountChip +
-          (weeklyRemaining != null ? '<span class="quota-pill ' + weeklyTone + '">周 <strong>' + weeklyRemaining + '%</strong></span>' : '') +
-          '<span class="quota-pill ' + hourlyTone + '">5h <strong>' + hourlyRemaining + '%</strong></span>' +
-          '<span class="quota-pill">重置 ' + esc(formatResetTime(primary.resetsAt)) + '</span>' +
+          (weeklyLabel ? '<span class="quota-pill ' + weeklyTone + '"><strong>' + esc(weeklyLabel) + '</strong></span>' : '') +
+          '<span class="quota-pill">周重置 ' + esc(formatResetTime(secondary.resetsAt)) + '</span>' +
           '<span class="quota-meta">' + (st.activeCount || 0) + " 活跃 · " + (st.openInboundCount || 0) + " 待处理 · " + (st.runningBackgroundJobCount || 0) + " 任务</span>";
       } else {
         topbarQuota.innerHTML = accountChip +
@@ -425,11 +443,10 @@ export function initAdminPage(options = {}) {
     function renderProfileQuota(rateLimits) {
       if (!rateLimits || !rateLimits.ok) return '<div class="summary-detail">' + esc(rateLimits?.error || "额度不可用") + '</div>';
       const snapshot = rateLimits.rateLimits || {};
-      const primary = snapshot.primary;
       const secondary = snapshot.secondary;
+      const weeklyLabel = weeklyQuotaDisplay(secondary);
       return '<div class="quota-grid">' +
-        '<div class="quota-line"><span>5 小时</span><strong>' + esc(primary ? "剩余 " + String(100 - clampPercent(primary.usedPercent)) + "%" : "--") + '</strong><span>' + esc(primary ? formatResetTime(primary.resetsAt) : "不可用") + '</span></div>' +
-        '<div class="quota-line"><span>每周</span><strong>' + esc(secondary ? "剩余 " + String(100 - clampPercent(secondary.usedPercent)) + "%" : "--") + '</strong><span>' + esc(secondary ? formatResetTime(secondary.resetsAt) : "不可用") + '</span></div>' +
+        '<div class="quota-line"><span>周额度</span><strong>' + esc(weeklyLabel || "--") + '</strong><span>' + esc(secondary ? formatResetTime(secondary.resetsAt) : "不可用") + '</span></div>' +
       '</div>';
     }
     function renderAuthProfiles(data) {

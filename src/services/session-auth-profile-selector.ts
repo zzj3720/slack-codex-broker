@@ -1,4 +1,10 @@
 import type { AuthProfileSummary, AuthProfilesStatus } from "./auth-profile-service.js";
+import {
+  daysUntilReset,
+  remainingPercent,
+  timestampMs,
+  weightedWeeklyQuotaScore
+} from "../auth-profile-quota.js";
 
 export type AuthProfileUnavailableReason =
   | "profile_not_found"
@@ -17,7 +23,7 @@ export interface AuthProfileEvaluation {
   readonly primaryRemainingPercent?: number | undefined;
   readonly secondaryRemainingPercent?: number | undefined;
   readonly secondaryRefreshDays?: number | undefined;
-  readonly secondaryRemainingPercentPerDay?: number | undefined;
+  readonly weightedWeeklyQuotaScore?: number | undefined;
 }
 
 export function selectBestAuthProfile(
@@ -77,7 +83,7 @@ export function evaluateAuthProfile(
   const primaryRemaining = remainingPercent(limits?.primary?.usedPercent);
   const secondaryRemaining = remainingPercent(limits?.secondary?.usedPercent);
   const secondaryRefreshDays = daysUntilReset(limits?.secondary?.resetsAt, timestampMs(options.now));
-  const secondaryRemainingPerDay = remainingPercentPerDay(secondaryRemaining, secondaryRefreshDays);
+  const weightedWeeklyQuota = weightedWeeklyQuotaScore(secondaryRemaining, secondaryRefreshDays);
   const credits = limits?.credits;
 
   if (primaryRemaining !== undefined && primaryRemaining <= 0) {
@@ -104,11 +110,15 @@ export function evaluateAuthProfile(
   return {
     profileName: profile.name,
     usable: true,
-    effectiveQuotaScore: secondaryRemainingPerDay ?? secondaryRemaining ?? primaryRemaining ?? 100,
+    effectiveQuotaScore:
+      weightedWeeklyQuota ??
+      (secondaryRemaining !== undefined ? secondaryRemaining / 100 : undefined) ??
+      (primaryRemaining !== undefined ? primaryRemaining / 100 : undefined) ??
+      1,
     primaryRemainingPercent: primaryRemaining,
     secondaryRemainingPercent: secondaryRemaining,
     secondaryRefreshDays,
-    secondaryRemainingPercentPerDay: secondaryRemainingPerDay
+    weightedWeeklyQuotaScore: weightedWeeklyQuota
   };
 }
 
@@ -121,7 +131,7 @@ export function authProfileReasonLabel(reason: string | undefined): string {
     case "rate_limits_probe_failed":
       return "额度状态读取失败";
     case "primary_quota_exhausted":
-      return "短窗口额度已耗尽";
+      return "当前额度已耗尽";
     case "secondary_quota_exhausted":
       return "周额度已耗尽";
     case "credits_exhausted":
@@ -131,53 +141,6 @@ export function authProfileReasonLabel(reason: string | undefined): string {
     default:
       return reason || "账号不可用";
   }
-}
-
-function remainingPercent(usedPercent: number | undefined): number | undefined {
-  if (!Number.isFinite(usedPercent)) {
-    return undefined;
-  }
-
-  return Math.max(0, Math.min(100, 100 - Number(usedPercent)));
-}
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const MIN_REFRESH_DAYS = 1 / (24 * 60);
-
-function remainingPercentPerDay(
-  remaining: number | undefined,
-  refreshDays: number | undefined
-): number | undefined {
-  if (remaining === undefined) {
-    return undefined;
-  }
-  if (refreshDays === undefined) {
-    return remaining;
-  }
-  return remaining / refreshDays;
-}
-
-function daysUntilReset(resetsAt: number | null | undefined, nowMs: number): number | undefined {
-  if (!Number.isFinite(resetsAt)) {
-    return undefined;
-  }
-
-  const deltaDays = (Number(resetsAt) * 1000 - nowMs) / MS_PER_DAY;
-  return Math.max(deltaDays, MIN_REFRESH_DAYS);
-}
-
-function timestampMs(value: Date | number | string | undefined): number {
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : Date.now();
-  }
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : Date.now();
-  }
-  return Date.now();
 }
 
 function unavailable(

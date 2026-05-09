@@ -65,9 +65,30 @@ describe("session auth profile selector", () => {
 
     const later = evaluateAuthProfile(status.profiles[0]!, { now });
     const sooner = evaluateAuthProfile(status.profiles[1]!, { now });
-    expect(later.secondaryRemainingPercentPerDay).toBeCloseTo(50 / 7);
-    expect(sooner.secondaryRemainingPercentPerDay).toBeCloseTo(50);
+    expect(later.weightedWeeklyQuotaScore).toBeCloseTo(0.5);
+    expect(sooner.weightedWeeklyQuotaScore).toBeCloseTo(3.5);
     expect(selectBestAuthProfile(status, { now })?.name).toBe("sooner-refresh");
+  });
+
+  it("normalizes weighted weekly quota to a full week baseline", () => {
+    const halfWeek = Math.floor((now.getTime() + 3.5 * 24 * 60 * 60 * 1000) / 1000);
+    const fullWeek = Math.floor((now.getTime() + 7 * 24 * 60 * 60 * 1000) / 1000);
+
+    expect(evaluateAuthProfile(profile("full-week", {
+      primaryUsed: 0,
+      secondaryUsed: 0,
+      secondaryResetsAt: fullWeek
+    }), { now }).weightedWeeklyQuotaScore).toBeCloseTo(1);
+    expect(evaluateAuthProfile(profile("half-quota-half-week", {
+      primaryUsed: 0,
+      secondaryUsed: 50,
+      secondaryResetsAt: halfWeek
+    }), { now }).weightedWeeklyQuotaScore).toBeCloseTo(1);
+    expect(evaluateAuthProfile(profile("full-quota-half-week", {
+      primaryUsed: 0,
+      secondaryUsed: 0,
+      secondaryResetsAt: halfWeek
+    }), { now }).weightedWeeklyQuotaScore).toBeCloseTo(2);
   });
 
   it("marks a profile unavailable when either quota window is exhausted", () => {

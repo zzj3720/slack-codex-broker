@@ -307,7 +307,7 @@ describe("admin session row display", () => {
     }, authProfiles, new Map([["C123", "#ops"]]));
     const labels = meta.map((item) => item.label);
 
-    expect(labels).toEqual(["#ops", "周 64%", "Token 5.1K"]);
+    expect(labels).toEqual(["#ops", "64% | 0.64", "Token 5.1K"]);
     expect(labels.join(" ")).not.toContain("hejiachen@toeverything.info");
     expect(labels.join(" ")).not.toContain("Pro Lite");
     expect(shouldShowSessionState({ rank: 10 })).toBe(false);

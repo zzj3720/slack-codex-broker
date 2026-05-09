@@ -113,9 +113,9 @@
     .timeline-event:last-child { border-bottom: 0; }
     .timeline-main { min-width: 0; }
     .timeline-event strong { color: var(--text); font-size: 11px; }
-    .timeline-title { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px; align-items: baseline; min-width: 0; }
-    .timeline-title strong { white-space: nowrap; }
-    .timeline-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .timeline-title { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+    .timeline-title strong { min-width: 0; max-width: min(54ch, 58%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .timeline-title span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .trace-meta { color: var(--muted); font-size: 9px; }
     .trace-details summary { cursor: pointer; color: var(--cyan); font-size: 9px; }
     .trace-details pre { margin: 4px 0 0; padding: 4px 6px; max-height: 160px; overflow: auto; white-space: pre-wrap; border: 1px solid var(--line); background: #030508; font: 10px/1.4 var(--mono); }

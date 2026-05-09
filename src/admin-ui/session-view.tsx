@@ -322,10 +322,11 @@ function Timeline({ events }: { readonly events: readonly TimelineEvent[] }): Re
 function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.Element {
   const display = getTimelineEventDisplay(event);
   const badgeTone = statusTone(event.status === "failed" || event.status === "error" ? event.status : event.type);
+  const isCommandEvent = event.toolName === "exec_command";
   const meta = [
     event.status ? ("状态 " + statusLabel(event.status)) : "",
-    event.role ? ("角色 " + event.role) : "",
-    event.toolName ? ("工具 " + event.toolName) : "",
+    !isCommandEvent && event.role ? ("角色 " + event.role) : "",
+    !isCommandEvent && event.toolName ? ("工具 " + event.toolName) : "",
     event.detailTruncated ? "内容已截断" : ""
   ].filter(Boolean).join(" · ");
   return (
@@ -333,7 +334,7 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
       <span>{fmtTime(event.at)}</span>
       <Badge label={display.badgeLabel} tone={badgeTone} />
       <div className="timeline-main">
-        <div className="timeline-title"><strong>{display.title}</strong><span>{display.summary}</span></div>
+        <div className="timeline-title"><strong title={display.title}>{display.title}</strong><span title={display.summary}>{display.summary}</span></div>
         {meta ? <div className="trace-meta">{meta}</div> : null}
         {event.detail ? (
           <details className="trace-details">

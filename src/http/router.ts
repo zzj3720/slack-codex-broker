@@ -9,6 +9,7 @@ import type { SlackAgentBridge } from "../services/slack/slack-agent-bridge.js";
 import { handleAdminRequest } from "./admin-routes.js";
 import { handleIntegrationRequest } from "./integration-routes.js";
 import { handleJobRequest } from "./job-routes.js";
+import { runWithResponseDeferredTasks } from "./response-deferred-tasks.js";
 import { handleSlackRequest } from "./slack-routes.js";
 
 export function createHttpHandler(options: {
@@ -19,7 +20,20 @@ export function createHttpHandler(options: {
   readonly config: AppConfig;
 }): (request: http.IncomingMessage, response: http.ServerResponse) => void {
   return (request, response) => {
-    void handleHttpRequest(request, response, options);
+    runWithResponseDeferredTasks(response, () => {
+      void handleHttpRequest(request, response, options).catch((error: unknown) => {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined);
+          return;
+        }
+
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        }));
+      });
+    });
   };
 }
 

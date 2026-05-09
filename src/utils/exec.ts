@@ -42,3 +42,24 @@ export function execCommand(
     });
   });
 }
+
+export function spawnDetachedCommand(
+  command: string,
+  args: readonly string[],
+  options: {
+    readonly cwd?: string;
+    readonly env?: NodeJS.ProcessEnv;
+  } = {}
+): void {
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    detached: true,
+    stdio: "ignore"
+  });
+
+  child.on("error", () => {
+    // The caller cannot observe detached child failures; the child command should log its own errors.
+  });
+  child.unref();
+}

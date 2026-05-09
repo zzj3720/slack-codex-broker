@@ -1,6 +1,7 @@
 import http from "node:http";
 
 import { loadConfig } from "./config.js";
+import { deferUntilResponseFinished } from "./http/response-deferred-tasks.js";
 import { createHttpHandler } from "./http/router.js";
 import { logger } from "./logger.js";
 import { AdminService } from "./services/admin-service.js";
@@ -107,8 +108,24 @@ function createReleaseDeploymentService(config: ReturnType<typeof loadConfig>): 
     workerLaunchdLabel: config.workerLaunchdLabel,
     workerBaseUrl: config.workerBaseUrl,
     codexAppServerPort: config.codexAppServerPort,
-    releaseRepoUrl: config.releaseRepoUrl
+    releaseRepoUrl: config.releaseRepoUrl,
+    scheduleAdminRestart: scheduleAdminRestartAfterResponse
   });
+}
+
+function scheduleAdminRestartAfterResponse(restart: () => Promise<void>): void {
+  if (deferUntilResponseFinished(restart)) {
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    void restart().catch((error: unknown) => {
+      logger.error("Scheduled admin restart failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }, 250);
+  timer.unref?.();
 }
 
 startAdminService().catch((error: unknown) => {

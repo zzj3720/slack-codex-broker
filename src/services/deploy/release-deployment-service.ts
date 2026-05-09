@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { logger } from "../../logger.js";
-import { execCommand } from "../../utils/exec.js";
+import { execCommand, spawnDetachedCommand } from "../../utils/exec.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
 
 const RELEASE_METADATA_FILENAME = ".broker-release.json";
@@ -85,6 +85,7 @@ export class ReleaseDeploymentService {
       readonly healthCheckIntervalMs?: number | undefined;
       readonly scheduleAdminRestart?: ((restart: () => Promise<void>) => void) | undefined;
       readonly exec?: typeof execCommand | undefined;
+      readonly spawnDetached?: typeof spawnDetachedCommand | undefined;
     }
   ) {}
 
@@ -314,13 +315,56 @@ export class ReleaseDeploymentService {
       return;
     }
 
-    await this.#restartLaunchdService({
-      reason,
-      plistPath: this.options.adminPlistPath,
-      launchdLabel: this.options.adminLaunchdLabel,
-      serviceName: "admin"
+    await this.#spawnDetachedAdminRestart(reason);
+  }
+
+  async #spawnDetachedAdminRestart(reason: string): Promise<void> {
+    if (!this.options.adminPlistPath || !this.options.adminLaunchdLabel) {
+      return;
+    }
+
+    if (!(await fileExists(this.options.adminPlistPath))) {
+      throw new Error(`Missing admin launchd plist: ${this.options.adminPlistPath}`);
+    }
+
+    const restartScriptPath = path.join(
+      this.options.currentReleasePath,
+      "scripts",
+      "ops",
+      "macos-launchd-restart.mjs"
+    );
+    if (!(await fileExists(restartScriptPath))) {
+      throw new Error(`Missing admin launchd restart helper: ${restartScriptPath}`);
+    }
+
+    const domain = `gui/${this.#uid}`;
+    const restartLogPath = path.join(this.options.serviceRoot, "logs", "admin-restart.log");
+    await ensureDir(path.dirname(restartLogPath));
+    this.#spawnDetached(process.execPath, [
+      restartScriptPath,
+      "--domain",
+      domain,
+      "--plist",
+      this.options.adminPlistPath,
+      "--label",
+      this.options.adminLaunchdLabel,
+      "--delay-ms",
+      "250",
+      "--log-file",
+      restartLogPath,
+      "--reason",
+      reason
+    ], {
+      cwd: this.options.serviceRoot
     });
-    await this.#assertAdminHealthy();
+
+    logger.info("Scheduled detached admin launchd restart", {
+      reason,
+      domain,
+      launchdLabel: this.options.adminLaunchdLabel,
+      plistPath: this.options.adminPlistPath,
+      helper: restartScriptPath
+    });
   }
 
   async #restartLaunchdService(options: {
@@ -604,5 +648,17 @@ export class ReleaseDeploymentService {
   ) {
     const exec = this.options.exec ?? execCommand;
     return await exec(command, args, options.cwd ? { cwd: options.cwd, env: process.env } : { env: process.env });
+  }
+
+  #spawnDetached(
+    command: string,
+    args: readonly string[],
+    options: {
+      readonly cwd?: string;
+      readonly env?: NodeJS.ProcessEnv;
+    } = {}
+  ): void {
+    const spawnDetached = this.options.spawnDetached ?? spawnDetachedCommand;
+    spawnDetached(command, args, options);
   }
 }

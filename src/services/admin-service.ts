@@ -607,10 +607,7 @@ export class AdminService {
 
   async #readSessionSnapshot(): Promise<SessionSnapshot> {
     await this.#refreshSessions();
-    const allSessions = this.options.sessions
-      .listSessions()
-      .sort((left, right) => compareSessions(left, right));
-    const activeSessions = allSessions.filter((session) => Boolean(session.activeTurnId));
+    const sessions = this.options.sessions.listSessions();
     const inbound = this.options.sessions.listInboundMessages();
     const openInbound = this.options.sessions
       .listInboundMessages({
@@ -620,7 +617,17 @@ export class AdminService {
     const backgroundJobs = this.options.sessions
       .listBackgroundJobs()
       .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
+    const inboundBySession = groupBySession(inbound);
+    const openInboundBySession = groupBySession(openInbound);
+    const jobsBySession = groupBySession(backgroundJobs);
     const usageBySession = summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000));
+    const allSessions = sessions
+      .sort((left, right) => compareSessions(left, right, {
+        inboundBySession,
+        jobsBySession,
+        usageBySession
+      }));
+    const activeSessions = allSessions.filter((session) => Boolean(session.activeTurnId));
 
     return {
       allSessions,
@@ -628,9 +635,9 @@ export class AdminService {
       inbound,
       openInbound,
       backgroundJobs,
-      inboundBySession: groupBySession(inbound),
-      openInboundBySession: groupBySession(openInbound),
-      jobsBySession: groupBySession(backgroundJobs),
+      inboundBySession,
+      openInboundBySession,
+      jobsBySession,
       usageBySession
     };
   }
@@ -1132,6 +1139,11 @@ export class AdminService {
     const userMessages = related.inbound.filter(isUserInboundMessage);
     const firstUserMessage = userMessages.at(0);
     const lastUserMessage = userMessages.at(-1);
+    const lastActivityAt = sessionLastActivityAt(session, {
+      inbound: related.inbound,
+      jobs: related.jobs,
+      usage: related.usage
+    });
     return {
       key: session.key,
       channelId: session.channelId,
@@ -1143,6 +1155,7 @@ export class AdminService {
       workspacePath: session.workspacePath,
       agentSessionId: session.agentSessionId ?? null,
       updatedAt: session.updatedAt,
+      lastActivityAt,
       createdAt: session.createdAt,
       firstUserMessage: firstUserMessage ? this.#summarizeInbound(firstUserMessage) : null,
       lastUserMessage: lastUserMessage ? this.#summarizeInbound(lastUserMessage) : null,
@@ -1364,13 +1377,77 @@ function usageTimestampMs(record: PersistedAgentTurnUsage): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function compareSessions(left: SlackSessionRecord, right: SlackSessionRecord): number {
+function compareSessions(
+  left: SlackSessionRecord,
+  right: SlackSessionRecord,
+  related: {
+    readonly inboundBySession: ReadonlyMap<string, readonly PersistedInboundMessage[]>;
+    readonly jobsBySession: ReadonlyMap<string, readonly PersistedBackgroundJob[]>;
+    readonly usageBySession: ReadonlyMap<string, SessionUsageSummary>;
+  }
+): number {
   const leftActive = left.activeTurnId ? 1 : 0;
   const rightActive = right.activeTurnId ? 1 : 0;
   if (leftActive !== rightActive) {
     return rightActive - leftActive;
   }
-  return String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""));
+  return sessionLastActivityMs(right, {
+    inbound: related.inboundBySession.get(right.key) ?? [],
+    jobs: related.jobsBySession.get(right.key) ?? [],
+    usage: related.usageBySession.get(right.key)
+  }) - sessionLastActivityMs(left, {
+    inbound: related.inboundBySession.get(left.key) ?? [],
+    jobs: related.jobsBySession.get(left.key) ?? [],
+    usage: related.usageBySession.get(left.key)
+  }) || String(left.key).localeCompare(String(right.key));
+}
+
+function sessionLastActivityAt(
+  session: SlackSessionRecord,
+  related: {
+    readonly inbound: readonly PersistedInboundMessage[];
+    readonly jobs: readonly PersistedBackgroundJob[];
+    readonly usage?: SessionUsageSummary | undefined;
+  }
+): string {
+  const candidates = [
+    session.lastTurnSignalAt,
+    session.lastSlackReplyAt,
+    session.activeTurnStartedAt,
+    related.usage?.lastTurnAt,
+    ...related.inbound.flatMap((message) => [message.updatedAt, message.createdAt]),
+    ...related.jobs.flatMap(jobActivityTimestamps)
+  ];
+  const latestMs = newestTimestamp(candidates);
+  return candidates.find((value) => timestampMs(value) === latestMs) ?? session.createdAt ?? session.updatedAt;
+}
+
+function sessionLastActivityMs(
+  session: SlackSessionRecord,
+  related: {
+    readonly inbound: readonly PersistedInboundMessage[];
+    readonly jobs: readonly PersistedBackgroundJob[];
+    readonly usage?: SessionUsageSummary | undefined;
+  }
+): number {
+  return timestampMs(sessionLastActivityAt(session, related));
+}
+
+function jobActivityTimestamps(job: PersistedBackgroundJob): Array<string | null | undefined> {
+  return [
+    job.lastEventAt,
+    job.status === "running" ? null : job.updatedAt,
+    job.createdAt
+  ];
+}
+
+function timestampMs(value: unknown): number {
+  const parsed = typeof value === "string" ? Date.parse(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function newestTimestamp(values: readonly unknown[]): number {
+  return values.reduce<number>((latest, value) => Math.max(latest, timestampMs(value)), 0);
 }
 
 function compareTimelineEvents(left: Record<string, JsonLike>, right: Record<string, JsonLike>): number {

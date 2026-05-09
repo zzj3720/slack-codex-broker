@@ -457,6 +457,96 @@ describe("AdminService", () => {
     expect(lookupCalls).toEqual(["C123"]);
   });
 
+  it("reports session activity time from real activity instead of metadata updates", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-activity-time-"));
+    tempDirs.push(dataRoot);
+
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      DATA_ROOT: dataRoot
+    } as NodeJS.ProcessEnv);
+
+    await fs.mkdir(config.codexHome, { recursive: true });
+    await fs.mkdir(config.logDir, { recursive: true });
+
+    const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot: config.sessionsRoot
+    });
+    await sessions.load();
+    await sessions.ensureSession("C123", "111.222");
+    await sessions.ensureSession("C123", "222.333");
+    await sessions.upsertInboundMessage({
+      key: "C123:111.222:111.223",
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      messageTs: "111.223",
+      source: "thread_reply",
+      userId: "U123",
+      text: "old activity",
+      status: "done",
+      createdAt: "2026-03-19T00:00:00.000Z",
+      updatedAt: "2026-03-19T00:00:00.000Z"
+    });
+    await sessions.upsertInboundMessage({
+      key: "C123:222.333:222.334",
+      sessionKey: "C123:222.333",
+      channelId: "C123",
+      rootThreadTs: "222.333",
+      messageTs: "222.334",
+      source: "thread_reply",
+      userId: "U123",
+      text: "new activity",
+      status: "done",
+      createdAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z"
+    });
+
+    const service = new AdminService({
+      config,
+      startedAt: new Date("2026-03-19T00:00:00.000Z"),
+      sessions,
+      authProfiles: {
+        listProfilesStatus: async () => ({
+          managedRoot: path.join(dataRoot, "auth-profiles"),
+          profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
+          activeProfile: null,
+          activeAuthPath: path.join(config.codexHome, "auth.json"),
+          profiles: []
+        })
+      } as never,
+      githubAuthorMappings: {
+        load: async () => {},
+        listMappings: () => []
+      } as never,
+      runtime: {
+        restartRuntime: async () => {},
+        readAccountSummary: async () => ({
+          account: null,
+          requiresOpenaiAuth: true
+        }),
+        readAccountRateLimits: async () => ({
+          rateLimits: null,
+          rateLimitsByLimitId: {}
+        })
+      } as never
+    });
+
+    const status = await service.getStatus();
+    const summaries = (status as Record<string, any>).state.sessions as Record<string, any>[];
+    expect(summaries.map((session) => session.key).slice(0, 2)).toEqual([
+      "C123:222.333",
+      "C123:111.222"
+    ]);
+    expect(summaries.find((session) => session.key === "C123:111.222")).toMatchObject({
+      updatedAt: expect.any(String),
+      lastActivityAt: "2026-03-19T00:00:00.000Z"
+    });
+  });
+
   it("splits open inbound counts into human and system messages", async () => {
     const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-open-inbound-"));
     tempDirs.push(dataRoot);

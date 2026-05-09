@@ -19,6 +19,8 @@ import {
   buildChannelLabelById,
   renderSessionMeta,
   resolveSessionChannelLabel,
+  sessionActivityAt,
+  sessionActivityMs,
   shouldShowSessionState
 } from "./session-row-display";
 import { getTimelineEventDisplay, isTimelineEventVisible, statusLabel, type TimelineEvent } from "./timeline-display";
@@ -706,24 +708,6 @@ function compareSessionsForMode(mode: string, left: SessionRecord, right: Sessio
   const activityDelta = sessionActivityMs(right) - sessionActivityMs(left);
   if (activityDelta) return activityDelta;
   return String(left.key).localeCompare(String(right.key));
-}
-
-function sessionActivityAt(session: SessionRecord): unknown {
-  const candidates = [
-    session.updatedAt,
-    session.lastTurnSignalAt,
-    session.lastSlackReplyAt,
-    session.activeTurnStartedAt,
-    session.usage?.lastTurnAt,
-    ...(session.openInbound || []).map((message: Record<string, any>) => message.updatedAt || message.createdAt),
-    ...(session.backgroundJobs || []).flatMap((job: Record<string, any>) => [job.lastEventAt, job.heartbeatAt, job.updatedAt, job.createdAt])
-  ];
-  const latestMs = newestTimestamp(candidates);
-  return candidates.find((value) => timestampMs(value) === latestMs) || session.updatedAt || session.createdAt;
-}
-
-function sessionActivityMs(session: SessionRecord): number {
-  return timestampMs(sessionActivityAt(session));
 }
 
 async function requestJson(path: string, init?: RequestInit): Promise<unknown> {

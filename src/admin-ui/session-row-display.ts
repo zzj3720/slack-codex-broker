@@ -63,6 +63,24 @@ export function renderSessionMeta(
   ].filter((item): item is SessionMetaPill => Boolean(item));
 }
 
+export function sessionActivityAt(session: SessionRecord): unknown {
+  const candidates = [
+    session.lastActivityAt,
+    session.lastTurnSignalAt,
+    session.lastSlackReplyAt,
+    session.activeTurnStartedAt,
+    session.usage?.lastTurnAt,
+    ...(session.openInbound || []).map((message: Record<string, any>) => message.updatedAt || message.createdAt),
+    ...(session.backgroundJobs || []).flatMap(jobActivityTimestamps)
+  ];
+  const latestMs = newestTimestamp(candidates);
+  return candidates.find((value) => timestampMs(value) === latestMs) || session.createdAt || session.updatedAt;
+}
+
+export function sessionActivityMs(session: SessionRecord): number {
+  return timestampMs(sessionActivityAt(session));
+}
+
 function sessionHumanChannelLabel(session: SessionRecord): string | undefined {
   const channelId = String(session.channelId || "");
   const channelName = String(session.channelName || "").trim();
@@ -98,4 +116,21 @@ function looksLikeSlackChannelId(value: string): boolean {
 function stringOrUndefined(value: unknown): string | undefined {
   const text = String(value || "");
   return text || undefined;
+}
+
+function jobActivityTimestamps(job: Record<string, any>): unknown[] {
+  return [
+    job.lastEventAt,
+    job.status === "running" ? null : job.updatedAt,
+    job.createdAt
+  ];
+}
+
+function timestampMs(value: unknown): number {
+  const parsed = typeof value === "string" ? Date.parse(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function newestTimestamp(values: readonly unknown[]): number {
+  return values.reduce<number>((latest, value) => Math.max(latest, timestampMs(value)), 0);
 }

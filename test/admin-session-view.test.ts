@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   renderSessionMeta,
+  sessionActivityAt,
   shouldShowSessionState
 } from "../src/admin-ui/session-row-display.js";
 import { getTimelineEventDisplay, isTimelineEventVisible } from "../src/admin-ui/timeline-display.js";
@@ -338,5 +339,17 @@ describe("admin session row display", () => {
     expect(labels).toContain("#deep-review");
     expect(labels).toContain("Jobs 2");
     expect(shouldShowSessionState({ rank: 50 })).toBe(true);
+  });
+
+  it("uses semantic session activity time instead of metadata updatedAt", () => {
+    expect(sessionActivityAt({
+      key: "C123:111.222",
+      createdAt: "2026-03-18T00:00:00.000Z",
+      updatedAt: "2026-05-10T00:00:00.000Z",
+      lastActivityAt: "2026-03-19T00:00:00.000Z",
+      usage: {
+        lastTurnAt: "2026-03-19T00:00:00.000Z"
+      }
+    })).toBe("2026-03-19T00:00:00.000Z");
   });
 });

@@ -1,6 +1,13 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import {
+  profileDisplayLabel,
+  profileIsSelectable,
+  profileOptionLabel,
+  profileQuotaLabel,
+  profileTitle
+} from "./auth-profile-display";
+import {
   getAdminStatusSnapshot,
   getTimelineSnapshot,
   publishTimelinePayload,
@@ -36,6 +43,11 @@ export function AdminSessionsView(): React.JSX.Element {
   const status = (snapshot.status || {}) as Record<string, any>;
   const sessions = (status.state?.sessions || []) as SessionRecord[];
   const state = status.state || {};
+  const authProfiles = (status.authProfiles?.profiles || []) as SessionRecord[];
+  const authProfileByName = useMemo(
+    () => new Map(authProfiles.map((profile) => [String(profile.name), profile])),
+    [authProfiles]
+  );
   const [uiState, setUiState] = useState(loadUiState);
   const query = uiState.sessionSearch.trim().toLowerCase();
   const mode = uiState.sessionFilter;
@@ -113,6 +125,7 @@ export function AdminSessionsView(): React.JSX.Element {
                 key={session.key}
                 session={session}
                 selected={selectedSession?.key === session.key}
+                authProfileByName={authProfileByName}
                 onSelect={() => updateSessionUiState({ selectedSessionKey: session.key })}
               />
             ))
@@ -193,9 +206,10 @@ function SessionPermalinkView({ sessionKey }: { readonly sessionKey: string }): 
   );
 }
 
-function SessionRow({ session, selected, onSelect }: {
+function SessionRow({ session, selected, authProfileByName, onSelect }: {
   readonly session: SessionRecord;
   readonly selected: boolean;
+  readonly authProfileByName: ReadonlyMap<string, SessionRecord>;
   readonly onSelect: () => void;
 }): React.JSX.Element {
   const state = sessionQueueState(session);
@@ -217,7 +231,7 @@ function SessionRow({ session, selected, onSelect }: {
         </div>
         <div className="session-channel" title={first}>起始：{first}</div>
         <div className="session-meta-line">
-          {renderSessionMeta(session).map((pill) => (
+          {renderSessionMeta(session, authProfileByName).map((pill) => (
             <span key={pill.key} className={"session-meta-pill " + classSafeValue(pill.tone, "")} title={pill.title}>
               {pill.label}
             </span>
@@ -334,6 +348,9 @@ function AuthProfilePanel({ session, profiles }: {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const currentProfile = profiles.find((profile) => profile.name === session.authProfileName);
+  const currentLabel = currentProfile
+    ? profileDisplayLabel(currentProfile)
+    : (session.authProfileName ? "账号状态加载中" : "未绑定");
   const blocked = Boolean(session.authBlockedAt);
 
   useEffect(() => {
@@ -368,7 +385,9 @@ function AuthProfilePanel({ session, profiles }: {
     <div className="auth-profile-panel">
       <div className="auth-profile-current">
         <span>当前</span>
-        <strong>{session.authProfileName || "未绑定"}</strong>
+        <strong title={currentProfile ? profileTitle(currentProfile) : String(session.authProfileName || "")}>
+          {currentLabel}
+        </strong>
         {currentProfile ? <span>{profileQuotaLabel(currentProfile)}</span> : null}
       </div>
       {blocked ? (
@@ -381,8 +400,8 @@ function AuthProfilePanel({ session, profiles }: {
         <select value={selected} onChange={(event) => setSelected(event.target.value)}>
           <option value="">选择账号</option>
           {profiles.map((profile) => (
-            <option key={profile.name} value={profile.name}>
-              {profile.name} · {profileQuotaLabel(profile)}
+            <option key={profile.name} value={profile.name} disabled={!profileIsSelectable(profile)}>
+              {profileOptionLabel(profile)}
             </option>
           ))}
         </select>
@@ -594,15 +613,24 @@ function resolveSelectedSession(sessions: readonly SessionRecord[], selectedSess
   return sessions.find((session) => session.key === selectedSessionKey) || sessions[0] || null;
 }
 
-function renderSessionMeta(session: SessionRecord): Array<{ key: string; label: string; tone: string; title?: string }> {
+function renderSessionMeta(
+  session: SessionRecord,
+  authProfileByName: ReadonlyMap<string, SessionRecord>
+): Array<{ key: string; label: string; tone: string; title?: string }> {
   const usage = session.usage || {};
   const pendingDetail = Number(session.openInboundCount || 0)
     ? "待处理 " + (session.openInboundCount || 0) + "（人 " + (session.openHumanInboundCount || 0) + " / 系统 " + (session.openSystemInboundCount || 0) + "）"
     : "";
+  const authProfile = session.authProfileName ? authProfileByName.get(String(session.authProfileName)) : null;
   return [
     { key: "channel", label: session.channelLabel || session.channelId || "未知频道", tone: "info", title: session.key },
     session.authBlockedAt ? { key: "auth-blocked", label: "账号待切换", tone: "danger", title: session.authBlockReasonLabel || session.authBlockReason } : null,
-    session.authProfileName ? { key: "auth-profile", label: "Auth " + session.authProfileName, tone: "info" } : null,
+    session.authProfileName ? {
+      key: "auth-profile",
+      label: authProfile ? "账号 " + profileDisplayLabel(authProfile) : "账号已绑定",
+      tone: "info",
+      title: authProfile ? profileTitle(authProfile) : String(session.authProfileName)
+    } : null,
     pendingDetail ? { key: "pending", label: pendingDetail, tone: Number(session.openHumanInboundCount || 0) ? "warn" : "" } : null,
     { key: "jobs", label: "Jobs " + (session.backgroundJobCount || 0), tone: Number(session.failedBackgroundJobCount || 0) ? "danger" : (Number(session.runningBackgroundJobCount || 0) ? "good" : "") },
     Number(session.failedBackgroundJobCount || 0) ? { key: "failed", label: "失败 " + session.failedBackgroundJobCount, tone: "danger" } : null,
@@ -664,29 +692,6 @@ function sessionQueueState(session: SessionRecord): { label: string; tone: strin
     return { label: "有记录", tone: "info", rank: 10, detail: fmtTokens(session.usage?.totalTokens || 0) };
   }
   return { label: "空闲", tone: "", rank: 0, detail: "" };
-}
-
-function profileQuotaLabel(profile: SessionRecord): string {
-  const rateLimits = profile.rateLimits || {};
-  if (rateLimits.ok === false) {
-    return "不可用";
-  }
-
-  const limits = rateLimits.rateLimits || {};
-  const primary = remainingPercent(limits.primary?.usedPercent);
-  const secondary = remainingPercent(limits.secondary?.usedPercent);
-  const parts = [];
-  if (primary !== null) parts.push("短窗 " + Math.round(primary) + "%");
-  if (secondary !== null) parts.push("周 " + Math.round(secondary) + "%");
-  return parts.length ? parts.join(" / ") : "额度未知";
-}
-
-function remainingPercent(usedPercent: unknown): number | null {
-  const used = Number(usedPercent);
-  if (!Number.isFinite(used)) {
-    return null;
-  }
-  return Math.max(0, Math.min(100, 100 - used));
 }
 
 function compareSessionsForMode(mode: string, left: SessionRecord, right: SessionRecord): number {

@@ -191,6 +191,16 @@ export class SessionManager {
     });
   }
 
+  async setSessionPageLinkPostedAt(
+    channelId: string,
+    rootThreadTs: string,
+    sessionPageLinkPostedAt: string
+  ): Promise<SlackSessionRecord> {
+    return await this.#patchSession(channelId, rootThreadTs, {
+      sessionPageLinkPostedAt
+    });
+  }
+
   async recordTurnSignal(
     channelId: string,
     rootThreadTs: string,

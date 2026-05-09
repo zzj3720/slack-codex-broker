@@ -18,11 +18,20 @@ type UiState = {
 };
 
 type SessionRecord = Record<string, any>;
-type TimelinePayload = { readonly events?: TimelineEvent[]; readonly trace?: Record<string, any> } | TimelineEvent[];
+type TimelinePayload = {
+  readonly events?: TimelineEvent[];
+  readonly trace?: Record<string, any>;
+  readonly session?: SessionRecord;
+} | TimelineEvent[];
 
 const sessionFilters = ["ongoing", "all", "active", "inbound", "jobs", "issues", "usage"];
 
 export function AdminSessionsView(): React.JSX.Element {
+  const permalinkSessionKey = readPermalinkSessionKey();
+  if (permalinkSessionKey) {
+    return <SessionPermalinkView sessionKey={permalinkSessionKey} />;
+  }
+
   const snapshot = useSyncExternalStore(subscribeAdminStatus, getAdminStatusSnapshot, getAdminStatusSnapshot);
   const status = (snapshot.status || {}) as Record<string, any>;
   const sessions = (status.state?.sessions || []) as SessionRecord[];
@@ -129,6 +138,61 @@ export function AdminSessionsView(): React.JSX.Element {
   );
 }
 
+function SessionPermalinkView({ sessionKey }: { readonly sessionKey: string }): React.JSX.Element {
+  const snapshot = useSyncExternalStore(subscribeAdminStatus, getAdminStatusSnapshot, getAdminStatusSnapshot);
+  const sessions = ((snapshot.status || {}) as Record<string, any>).state?.sessions || [];
+  const realtimeSession = (sessions as SessionRecord[]).find((session) => session.key === sessionKey) || null;
+  const timelineSnapshot = useSyncExternalStore(
+    (listener) => subscribeTimeline(sessionKey, listener),
+    () => getTimelineSnapshot(sessionKey),
+    () => getTimelineSnapshot(sessionKey)
+  );
+  const timelinePayload = timelineSnapshot.payload as TimelinePayload | null;
+  const [fetchedSession, setFetchedSession] = useState<SessionRecord | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const session = realtimeSession || fetchedSession || (Array.isArray(timelinePayload) ? null : timelinePayload?.session) || null;
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    void requestJson(sessionTimelineApiPath(sessionKey))
+      .then((nextPayload) => {
+        if (cancelled) return;
+        const payload = nextPayload as TimelinePayload;
+        publishTimelinePayload(sessionKey, payload);
+        if (!Array.isArray(payload) && payload.session) {
+          setFetchedSession(payload.session);
+        }
+      })
+      .catch((nextError: unknown) => {
+        if (!cancelled) setError(nextError instanceof Error ? nextError.message : String(nextError));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionKey]);
+
+  return (
+    <div className="session-permalink-layout">
+      <section className="panel session-detail-panel session-permalink-panel">
+        <div className="panel-head">
+          <div className="panel-title">会话活动</div>
+          <a className="link-button" href="/admin">返回会话索引</a>
+        </div>
+        <div className="panel-body">
+          {error ? (
+            <div className="empty-state">{error}</div>
+          ) : session ? (
+            <SessionDetail key={session.key} session={session} />
+          ) : (
+            <div className="empty-state">正在加载会话</div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function SessionRow({ session, selected, onSelect }: {
   readonly session: SessionRecord;
   readonly selected: boolean;
@@ -181,6 +245,7 @@ function SessionDetail({ session }: {
         </div>
         <div className="session-detail-actions">
           <Badge label={state.label} tone={state.tone} />
+          <a className="link-button" href={adminSessionPath(String(session.key || ""))}>打开 Session 页面</a>
           {session.threadUrl ? (
             <a className="link-button" href={session.threadUrl} target="_blank" rel="noreferrer">打开 Slack Thread</a>
           ) : null}
@@ -235,7 +300,7 @@ function SessionTimeline({ session }: {
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    void requestJson("/admin/api/sessions/" + encodeURIComponent(sessionKey) + "/timeline")
+    void requestJson(sessionTimelineApiPath(sessionKey))
       .then((nextPayload) => {
         if (cancelled) return;
         publishTimelinePayload(sessionKey, nextPayload as TimelinePayload);
@@ -550,6 +615,30 @@ async function requestJson(path: string): Promise<unknown> {
   const payload = await response.json().catch(() => ({})) as Record<string, any>;
   if (!response.ok || payload.ok === false) throw new Error(payload.error || response.statusText || "请求失败");
   return payload;
+}
+
+function sessionTimelineApiPath(sessionKey: string): string {
+  return "/admin/api/sessions/" + encodeURIComponent(sessionKey) + "/timeline";
+}
+
+function adminSessionPath(sessionKey: string): string {
+  return "/admin/sessions/" + encodeURIComponent(sessionKey);
+}
+
+function readPermalinkSessionKey(): string | null {
+  const prefix = "/admin/sessions/";
+  if (!window.location.pathname.startsWith(prefix)) {
+    return null;
+  }
+  const encoded = window.location.pathname.slice(prefix.length).split("/")[0] || "";
+  if (!encoded) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
 }
 
 function loadUiState(): UiState {

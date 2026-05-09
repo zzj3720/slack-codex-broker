@@ -45,6 +45,7 @@ describe("loadConfig", () => {
     expect(config.isolatedMcpServers).toEqual(["linear", "notion"]);
     expect(config.codexDisabledMcpServers).toEqual(["*", "linear", "notion"]);
     expect(config.tempadLinkServiceUrl).toBeUndefined();
+    expect(config.adminBaseUrl).toBe("http://127.0.0.1:3000");
   });
 
   it("rejects invalid numeric values", () => {

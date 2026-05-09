@@ -65,6 +65,8 @@
     .session-master-detail { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); gap: 1px; align-items: stretch; background: var(--line); }
     .session-master-detail > .panel { display: flex; flex-direction: column; }
     .session-master-detail > * { background: var(--panel); }
+    .session-permalink-layout { height: 100%; min-height: 0; display: flex; }
+    .session-permalink-panel { flex: 1; display: flex; flex-direction: column; }
     .session-list { flex: 1; min-height: 0; overflow: auto; }
     .session-row-button { position: relative; display: block; width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
     .session-row-button::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: transparent; }

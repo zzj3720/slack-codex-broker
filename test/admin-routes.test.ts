@@ -180,6 +180,33 @@ describe("admin routes", () => {
     expect(shell).not.toContain("/admin/api/runtime-files");
   });
 
+  it("serves a deep-linkable admin session page", async () => {
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getStatus: async () => ({ ok: true, status: "admin-ok" }),
+      addAuthProfile: async () => ({ ok: true }),
+      upsertGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true }),
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
+    });
+
+    const page = await fetch(`${baseUrl}/admin/sessions/${encodeURIComponent("C123:111.222")}`);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
+
+    expect(html).toContain('id="admin-root"');
+    expect(html).toContain('/admin/assets/admin-ui.js');
+    expect(sessionViewSource).toContain("readPermalinkSessionKey");
+    expect(sessionViewSource).toContain("SessionPermalinkView");
+    expect(sessionViewSource).toContain("/admin/api/sessions/\" + encodeURIComponent(sessionKey) + \"/timeline");
+  });
+
   it("persists session ui state in the admin page script", async () => {
     const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",

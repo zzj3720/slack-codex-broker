@@ -1025,6 +1025,7 @@ export class AdminService {
       lastTurnSignalReason: session.lastTurnSignalReason ?? null,
       lastTurnSignalAt: session.lastTurnSignalAt ?? null,
       lastSlackReplyAt: session.lastSlackReplyAt ?? null,
+      sessionPageLinkPostedAt: session.sessionPageLinkPostedAt ?? null,
       lastObservedMessageTs: session.lastObservedMessageTs ?? null,
       lastDeliveredMessageTs: session.lastDeliveredMessageTs ?? null,
       openInboundCount: related.openInbound.length,

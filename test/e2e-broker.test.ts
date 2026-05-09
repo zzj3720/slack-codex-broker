@@ -123,6 +123,65 @@ describe.sequential("slack-codex-broker e2e", () => {
     );
   }, 90_000);
 
+  it("posts a session permalink when the bot starts processing a Slack thread", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const brokerPort = await getFreePort();
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: brokerPort,
+      slackPort,
+      codexUrl,
+      tempRoot,
+      extraEnv: {
+        ADMIN_BASE_URL: "https://admin.example.test"
+      }
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-session-link", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "991.220",
+      ts: "991.221",
+      text: "<@UBOT> trace link"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length >= 1, "first turn start");
+    await waitFor(
+      () => mockSlack.postedMessages.some((message) =>
+        message.threadTs === "991.220" &&
+          message.text.includes("查看 Bot 行为时间线") &&
+          message.text.includes("https://admin.example.test/admin/sessions/C123%3A991.220")
+      ),
+      "session permalink startup message"
+    );
+    await waitForSessionIdle(tempRoot, "C123:991.220");
+
+    const postedLinks = mockSlack.postedMessages.filter((message) =>
+      message.threadTs === "991.220" && message.text.includes("/admin/sessions/C123%3A991.220")
+    );
+    expect(postedLinks).toHaveLength(1);
+    await expect(readSessionRecord(tempRoot, "C123:991.220")).resolves.toMatchObject({
+      sessionPageLinkPostedAt: expect.any(String)
+    });
+  }, 60_000);
+
   it("falls back to an eyes reaction when Slack assistant status is unavailable", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { buildAdminSessionUrl } from "../../admin-session-url.js";
 import type { AppConfig } from "../../config.js";
 import { logger } from "../../logger.js";
 import { SessionManager } from "../session-manager.js";
@@ -737,6 +738,34 @@ export class SlackConversationService {
     return ts;
   }
 
+  async #postSessionPageLinkIfNeeded(session: SlackSessionRecord): Promise<SlackSessionRecord> {
+    if (session.sessionPageLinkPostedAt) {
+      return session;
+    }
+
+    const url = buildAdminSessionUrl(this.#config.adminBaseUrl, session.key);
+    try {
+      await this.#postBotThreadMessage(
+        session.channelId,
+        session.rootThreadTs,
+        `已开始处理。<${url}|查看 Bot 行为时间线>`,
+        { alreadyFormatted: true }
+      );
+      return await this.#sessions.setSessionPageLinkPostedAt(
+        session.channelId,
+        session.rootThreadTs,
+        new Date().toISOString()
+      );
+    } catch (error) {
+      logger.warn("Failed to post admin session link into Slack thread", {
+        sessionKey: session.key,
+        adminSessionUrl: url,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return session;
+    }
+  }
+
   async #recordStopSignal(
     session: SlackSessionRecord,
     signal: {
@@ -773,6 +802,7 @@ export class SlackConversationService {
       return;
     }
 
+    latestSession = await this.#postSessionPageLinkIfNeeded(latestSession);
     this.#setAssistantThinking(latestSession);
     if (latestSession.activeTurnId) {
       try {
@@ -1062,6 +1092,7 @@ export class SlackConversationService {
           continue;
         }
 
+        session = await this.#postSessionPageLinkIfNeeded(session);
         const dispatchMessages = next.recoveryKind ? pendingMessages : [pendingMessages[0]!];
         const slackInput = next.recoveryKind
           ? await this.#inboundStore.createRecoveredBatchInput(session, dispatchMessages, next.recoveryKind)

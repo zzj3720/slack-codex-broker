@@ -18,7 +18,7 @@ export async function handleAdminRequest(
     readonly config: AppConfig;
   }
 ): Promise<boolean> {
-  if (method === "GET" && url.pathname === "/admin") {
+  if (method === "GET" && (url.pathname === "/admin" || url.pathname.startsWith("/admin/sessions/"))) {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
     response.end(renderAdminPage({
       serviceName: options.config.serviceName

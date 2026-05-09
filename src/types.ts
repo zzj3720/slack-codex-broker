@@ -13,6 +13,7 @@ export interface SlackSessionRecord {
   readonly lastObservedMessageTs?: string | undefined;
   readonly lastDeliveredMessageTs?: string | undefined;
   readonly lastSlackReplyAt?: string | undefined;
+  readonly sessionPageLinkPostedAt?: string | undefined;
   readonly lastTurnSignalTurnId?: string | undefined;
   readonly lastTurnSignalKind?: SlackTurnSignalKind | undefined;
   readonly lastTurnSignalReason?: string | undefined;

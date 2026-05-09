@@ -40,11 +40,66 @@ describe("admin session timeline display", () => {
       type: "agent_tool_call",
       title: "工具调用",
       summary: "exec_command",
-      toolName: "exec_command"
+      status: "running",
+      toolName: "exec_command",
+      detail: JSON.stringify({
+        command: "/bin/zsh -lc \"cd /tmp/workspace/cueboard && pnpm test\"",
+        cwd: "/tmp/workspace",
+        commandActions: [
+          {
+            type: "test",
+            name: "unit"
+          }
+        ]
+      })
     })).toEqual({
-      badgeLabel: "工具",
-      title: "exec_command",
-      summary: ""
+      badgeLabel: "命令",
+      title: "pnpm test",
+      summary: "测试 unit · cwd cueboard · 运行中"
+    });
+  });
+
+  it("shows command result output instead of repeating exec_command", () => {
+    expect(getTimelineEventDisplay({
+      type: "agent_tool_result",
+      title: "工具结果",
+      summary: "exec_command",
+      status: "completed",
+      toolName: "exec_command",
+      detail: JSON.stringify({
+        command: "/bin/zsh -lc \"cd /tmp/workspace/cueboard && rg -n \\\"bridge\\\" src | sed -n '1,20p'\"",
+        cwd: "/tmp/workspace",
+        exitCode: 0,
+        durationMs: 1240,
+        aggregatedOutput: "src/index.ts:12: bridge config\nsrc/app.ts:5: bridge app"
+      })
+    })).toEqual({
+      badgeLabel: "命令",
+      title: "rg -n \"bridge\" src | sed -n '1,20p'",
+      summary: "exit 0 · 1.2s · 输出 src/index.ts:12: bridge config"
+    });
+  });
+
+  it("can recover command summaries from truncated detail text", () => {
+    expect(getTimelineEventDisplay({
+      type: "agent_tool_result",
+      title: "工具结果",
+      summary: "exec_command",
+      status: "completed",
+      toolName: "exec_command",
+      detailTruncated: true,
+      detail: [
+        "{",
+        "  \"command\": \"/bin/zsh -lc \\\"cd /tmp/workspace/cueboard && pnpm build\\\"\",",
+        "  \"cwd\": \"/tmp/workspace\",",
+        "  \"exitCode\": 0,",
+        "  \"durationMs\": 980,",
+        "  \"aggregatedOutput\": \"dist/admin-ui/assets/admin-ui.js 250 kB\""
+      ].join("\n")
+    })).toEqual({
+      badgeLabel: "命令",
+      title: "pnpm build",
+      summary: "exit 0 · 980ms · 输出 dist/admin-ui/assets/admin-ui.js 250 kB"
     });
   });
 

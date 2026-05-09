@@ -1,3 +1,9 @@
+import {
+  mergeToolTracePayloads,
+  parseToolTraceDetail,
+  summarizeToolTraceDisplay
+} from "../tool-trace-summary.js";
+
 export type TimelineEvent = Record<string, any>;
 
 export type TimelineEventDisplay = {
@@ -26,6 +32,22 @@ export function getTimelineEventDisplay(event: TimelineEvent): TimelineEventDisp
       break;
     case "agent_tool_call":
     case "agent_tool_result": {
+      const toolDisplay = summarizeToolTraceDisplay({
+        eventType: type,
+        toolName: nonEmptyString(event.toolName),
+        status: nonEmptyString(event.status),
+        payload: mergeToolTracePayloads(event.metadata, parseToolTraceDetail(event.detail)),
+        fallbackTitle: rawTitle,
+        fallbackSummary: rawSummary
+      });
+      if (toolDisplay) {
+        return {
+          badgeLabel: toolDisplay.badgeLabel || badgeLabel,
+          title: toolDisplay.title,
+          summary: toolDisplay.summary
+        };
+      }
+
       const title = nonEmptyString(event.toolName) || rawSummary || rawTitle;
       const summary = title === rawSummary ? "" : (rawSummary || "");
       return { badgeLabel, title, summary };
@@ -42,6 +64,10 @@ export function getTimelineEventDisplay(event: TimelineEvent): TimelineEventDisp
 }
 
 function timelineCategoryLabel(type: string, event: TimelineEvent): string {
+  if ((type === "agent_tool_call" || type === "agent_tool_result") && event.toolName === "exec_command") {
+    return "命令";
+  }
+
   const labels: Record<string, string> = {
     agent_input_received: "输入",
     agent_input_delivered: "输入",

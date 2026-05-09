@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { logger } from "../../logger.js";
+import { summarizeToolTraceDisplay } from "../../tool-trace-summary.js";
 import type {
   AgentRuntimeEvent
 } from "./types.js";
@@ -151,29 +152,37 @@ export class AgentTraceRecorder {
           }
         }, now)];
       case "agent.tool.started":
-        return [this.#trace(session, event, {
-          type: "agent_tool_call",
-          title: "工具调用",
-          summary: event.name,
-          detail: stableJson(event.input),
-          status: "running",
-          role: "assistant",
-          toolName: event.name,
-          callId: event.callId,
-          turnId: event.turnId
-        }, now)];
+        {
+          const toolSummary = summarizeToolTrace(event.name, "agent_tool_call", "running", event.input);
+          return [this.#trace(session, event, {
+            type: "agent_tool_call",
+            title: toolSummary?.title ?? "工具调用",
+            summary: toolSummary?.summary ?? event.name,
+            detail: stableJson(event.input),
+            status: "running",
+            role: "assistant",
+            toolName: event.name,
+            callId: event.callId,
+            turnId: event.turnId,
+            metadata: toolSummary?.metadata
+          }, now)];
+        }
       case "agent.tool.completed":
-        return [this.#trace(session, event, {
-          type: "agent_tool_result",
-          title: "工具结果",
-          summary: event.name ?? event.callId,
-          detail: stableJson(event.output),
-          status: event.status,
-          role: "tool",
-          toolName: event.name,
-          callId: event.callId,
-          turnId: event.turnId
-        }, now)];
+        {
+          const toolSummary = summarizeToolTrace(event.name, "agent_tool_result", event.status, event.output);
+          return [this.#trace(session, event, {
+            type: "agent_tool_result",
+            title: toolSummary?.title ?? "工具结果",
+            summary: toolSummary?.summary ?? event.name ?? event.callId,
+            detail: stableJson(event.output),
+            status: event.status,
+            role: "tool",
+            toolName: event.name,
+            callId: event.callId,
+            turnId: event.turnId,
+            metadata: toolSummary?.metadata
+          }, now)];
+        }
       case "agent.usage.updated":
         return [this.#trace(session, event, {
           type: "agent_token_count",
@@ -316,6 +325,25 @@ function traceSequence(at: string): number {
 
 function summarizeTraceText(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+function summarizeToolTrace(
+  toolName: string | undefined,
+  eventType: "agent_tool_call" | "agent_tool_result",
+  status: string,
+  payload: unknown
+): {
+  readonly title: string;
+  readonly summary: string;
+  readonly metadata: JsonLike;
+} | undefined {
+  return summarizeToolTraceDisplay({
+    eventType,
+    toolName,
+    status,
+    payload,
+    fallbackSummary: toolName
+  });
 }
 
 function truncateTraceDetail(text: string): {

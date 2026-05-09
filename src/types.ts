@@ -165,6 +165,16 @@ export interface PersistedAdminAuditEvent {
   readonly createdAt: string;
 }
 
+export interface PersistedAdminEvent {
+  readonly sequence: number;
+  readonly kind: string;
+  readonly scope: "global" | "session";
+  readonly sessionKey?: string | undefined;
+  readonly entityId?: string | undefined;
+  readonly payload: JsonLike;
+  readonly createdAt: string;
+}
+
 export type AgentTurnUsageSource = "exact" | "estimated" | "missing";
 export type PersistedAgentTurnStatus = "completed" | "interrupted" | "failed";
 

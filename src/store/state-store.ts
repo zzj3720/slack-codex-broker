@@ -19,7 +19,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 11;
+export const CURRENT_STATE_SCHEMA_VERSION = 12;
 const ADMIN_EVENT_RETENTION_LIMIT = 20_000;
 
 type SqlValue = string | number | bigint | null;
@@ -295,8 +295,58 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
     up(database) {
       repairSessionAuthProfileSchema(database);
     }
+  },
+  {
+    version: 12,
+    name: "agent_activity_bindings",
+    up(database) {
+      createAgentActivityBindingSchema(database);
+    }
   }
 ];
+
+function createAgentActivityBindingSchema(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS agent_session_bindings (
+      agent_session_id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL,
+      root_thread_ts TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_turn_bindings (
+      turn_id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL,
+      root_thread_ts TEXT NOT NULL,
+      agent_session_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_session_bindings_session ON agent_session_bindings(session_key);
+    CREATE INDEX IF NOT EXISTS idx_agent_turn_bindings_session ON agent_turn_bindings(session_key);
+    CREATE INDEX IF NOT EXISTS idx_agent_turn_bindings_agent_session ON agent_turn_bindings(agent_session_id);
+
+    INSERT OR IGNORE INTO agent_session_bindings (
+      agent_session_id, session_key, channel_id, root_thread_ts, created_at, updated_at
+    )
+    SELECT
+      agent_session_id, key, channel_id, root_thread_ts, updated_at, updated_at
+    FROM sessions
+    WHERE agent_session_id IS NOT NULL;
+
+    INSERT OR IGNORE INTO agent_turn_bindings (
+      turn_id, session_key, channel_id, root_thread_ts, agent_session_id, created_at, updated_at
+    )
+    SELECT
+      active_turn_id, key, channel_id, root_thread_ts, agent_session_id, updated_at, updated_at
+    FROM sessions
+    WHERE active_turn_id IS NOT NULL;
+  `);
+}
 
 function createAdminEventsSchema(database: DatabaseSync): void {
   database.exec(`
@@ -542,6 +592,83 @@ export class StateStore {
       });
       return updated;
     });
+  }
+
+  async bindAgentSession(record: {
+    readonly sessionKey: string;
+    readonly channelId: string;
+    readonly rootThreadTs: string;
+    readonly agentSessionId: string;
+    readonly at?: string | undefined;
+  }): Promise<void> {
+    const agentSessionId = record.agentSessionId.trim();
+    if (!agentSessionId) {
+      return;
+    }
+    const now = record.at ?? new Date().toISOString();
+    this.#transaction(() => {
+      this.#upsertAgentSessionBinding({
+        sessionKey: record.sessionKey,
+        channelId: record.channelId,
+        rootThreadTs: record.rootThreadTs,
+        agentSessionId,
+        createdAt: now,
+        updatedAt: now
+      });
+    });
+  }
+
+  async bindAgentTurn(record: {
+    readonly sessionKey: string;
+    readonly channelId: string;
+    readonly rootThreadTs: string;
+    readonly turnId: string;
+    readonly agentSessionId?: string | undefined;
+    readonly at?: string | undefined;
+  }): Promise<void> {
+    const turnId = record.turnId.trim();
+    if (!turnId) {
+      return;
+    }
+    const agentSessionId = record.agentSessionId?.trim() || undefined;
+    const now = record.at ?? new Date().toISOString();
+    this.#transaction(() => {
+      this.#upsertAgentTurnBinding({
+        sessionKey: record.sessionKey,
+        channelId: record.channelId,
+        rootThreadTs: record.rootThreadTs,
+        agentSessionId,
+        turnId,
+        createdAt: now,
+        updatedAt: now
+      });
+    });
+  }
+
+  getSessionKeyForAgentActivity(options: {
+    readonly agentSessionId?: string | undefined;
+    readonly turnId?: string | undefined;
+  }): string | undefined {
+    const turnId = options.turnId?.trim();
+    if (turnId) {
+      const row = this.#databaseRequired()
+        .prepare("SELECT session_key FROM agent_turn_bindings WHERE turn_id = ?")
+        .get(turnId) as SqlRow | undefined;
+      const sessionKey = optionalStringColumn(row ?? {}, "session_key");
+      if (sessionKey) {
+        return sessionKey;
+      }
+    }
+
+    const agentSessionId = options.agentSessionId?.trim();
+    if (agentSessionId) {
+      const row = this.#databaseRequired()
+        .prepare("SELECT session_key FROM agent_session_bindings WHERE agent_session_id = ?")
+        .get(agentSessionId) as SqlRow | undefined;
+      return optionalStringColumn(row ?? {}, "session_key");
+    }
+
+    return undefined;
   }
 
   hasProcessedEvent(eventId: string): boolean {
@@ -1103,6 +1230,88 @@ export class StateStore {
       record.coAuthorIgnoreMissingRevision ?? null,
       record.coAuthorPromptRevision ?? null,
       record.coAuthorPromptedAt ?? null
+    );
+    this.#bindAgentActivityFromSession(record);
+  }
+
+  #bindAgentActivityFromSession(record: SlackSessionRecord): void {
+    if (record.agentSessionId) {
+      this.#upsertAgentSessionBinding({
+        sessionKey: record.key,
+        channelId: record.channelId,
+        rootThreadTs: record.rootThreadTs,
+        agentSessionId: record.agentSessionId,
+        createdAt: record.updatedAt,
+        updatedAt: record.updatedAt
+      });
+    }
+    if (record.activeTurnId) {
+      this.#upsertAgentTurnBinding({
+        sessionKey: record.key,
+        channelId: record.channelId,
+        rootThreadTs: record.rootThreadTs,
+        agentSessionId: record.agentSessionId,
+        turnId: record.activeTurnId,
+        createdAt: record.updatedAt,
+        updatedAt: record.updatedAt
+      });
+    }
+  }
+
+  #upsertAgentSessionBinding(record: {
+    readonly sessionKey: string;
+    readonly channelId: string;
+    readonly rootThreadTs: string;
+    readonly agentSessionId: string;
+    readonly createdAt: string;
+    readonly updatedAt: string;
+  }): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO agent_session_bindings (
+        agent_session_id, session_key, channel_id, root_thread_ts, created_at, updated_at
+      ) VALUES (${placeholders(6)})
+      ON CONFLICT(agent_session_id) DO UPDATE SET
+        session_key = excluded.session_key,
+        channel_id = excluded.channel_id,
+        root_thread_ts = excluded.root_thread_ts,
+        updated_at = excluded.updated_at
+    `).run(
+      record.agentSessionId,
+      record.sessionKey,
+      record.channelId,
+      record.rootThreadTs,
+      record.createdAt,
+      record.updatedAt
+    );
+  }
+
+  #upsertAgentTurnBinding(record: {
+    readonly sessionKey: string;
+    readonly channelId: string;
+    readonly rootThreadTs: string;
+    readonly agentSessionId?: string | undefined;
+    readonly turnId: string;
+    readonly createdAt: string;
+    readonly updatedAt: string;
+  }): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO agent_turn_bindings (
+        turn_id, session_key, channel_id, root_thread_ts, agent_session_id, created_at, updated_at
+      ) VALUES (${placeholders(7)})
+      ON CONFLICT(turn_id) DO UPDATE SET
+        session_key = excluded.session_key,
+        channel_id = excluded.channel_id,
+        root_thread_ts = excluded.root_thread_ts,
+        agent_session_id = excluded.agent_session_id,
+        updated_at = excluded.updated_at
+    `).run(
+      record.turnId,
+      record.sessionKey,
+      record.channelId,
+      record.rootThreadTs,
+      record.agentSessionId ?? null,
+      record.createdAt,
+      record.updatedAt
     );
   }
 

@@ -236,6 +236,65 @@ describe("StateStore", () => {
     store.close();
   });
 
+  it("persists historical agent activity bindings when the current session runtime changes", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-agent-bindings-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+    await store.upsertSession({
+      key: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      workspacePath: "/tmp/sessions/C123-111.222/workspace",
+      createdAt: "2026-03-15T00:00:00.000Z",
+      updatedAt: "2026-03-15T00:00:00.000Z",
+      agentSessionId: "thread-current",
+      activeTurnId: "turn-current"
+    });
+    expect(store.getSessionKeyForAgentActivity({
+      agentSessionId: "thread-current",
+      turnId: "turn-current"
+    })).toBe("C123:111.222");
+    await store.bindAgentSession({
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      agentSessionId: "thread-old",
+      at: "2026-03-15T00:00:01.000Z"
+    });
+    await store.bindAgentTurn({
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      agentSessionId: "thread-old",
+      turnId: "turn-old",
+      at: "2026-03-15T00:00:02.000Z"
+    });
+
+    expect(store.getSessionKeyForAgentActivity({
+      agentSessionId: "thread-old"
+    })).toBe("C123:111.222");
+    expect(store.getSessionKeyForAgentActivity({
+      turnId: "turn-old"
+    })).toBe("C123:111.222");
+
+    await store.patchSession("C123:111.222", {
+      agentSessionId: "thread-new",
+      activeTurnId: "turn-new"
+    });
+    expect(store.getSessionKeyForAgentActivity({
+      agentSessionId: "thread-old",
+      turnId: "turn-old"
+    })).toBe("C123:111.222");
+
+    await store.deleteSession("C123:111.222");
+    expect(store.getSessionKeyForAgentActivity({
+      agentSessionId: "thread-old",
+      turnId: "turn-old"
+    })).toBeUndefined();
+    store.close();
+  });
+
   it("records explicit schema migrations and does not treat ad hoc DDL as the migration state", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-migrations-"));
     const sessionsRoot = path.join(stateDir, "sessions");
@@ -291,8 +350,12 @@ describe("StateStore", () => {
           name: "session_page_link_announcement"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 11,
           name: "session_auth_profile_binding"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "agent_activity_bindings"
         }
       ]);
     } finally {

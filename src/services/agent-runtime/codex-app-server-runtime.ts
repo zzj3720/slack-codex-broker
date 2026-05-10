@@ -217,6 +217,14 @@ export class CodexAppServerRuntime extends EventEmitter implements AgentRuntime 
       return undefined;
     }
 
+    const byAgentActivity = this.#sessions.findSessionByAgentActivity({
+      agentSessionId,
+      turnId
+    });
+    if (byAgentActivity) {
+      return byAgentActivity;
+    }
+
     for (const session of this.#sessions.listSessions()) {
       if (turnId && session.activeTurnId === turnId) {
         return session;

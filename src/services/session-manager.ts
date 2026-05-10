@@ -143,22 +143,50 @@ export class SessionManager {
     return candidates[0];
   }
 
+  findSessionByAgentActivity(options: {
+    readonly agentSessionId?: string | undefined;
+    readonly turnId?: string | undefined;
+  }): SlackSessionRecord | undefined {
+    const sessionKey = this.#stateStore.getSessionKeyForAgentActivity(options);
+    return sessionKey ? this.getSessionByKey(sessionKey) : undefined;
+  }
+
   async setAgentSessionId(
     channelId: string,
     rootThreadTs: string,
     agentSessionId: string | undefined
   ): Promise<SlackSessionRecord> {
-    return await this.#patchSession(channelId, rootThreadTs, {
+    const session = await this.#patchSession(channelId, rootThreadTs, {
       agentSessionId
     });
+    if (agentSessionId) {
+      await this.#stateStore.bindAgentSession({
+        sessionKey: session.key,
+        channelId: session.channelId,
+        rootThreadTs: session.rootThreadTs,
+        agentSessionId
+      });
+    }
+    return session;
   }
 
   async setActiveTurnId(channelId: string, rootThreadTs: string, activeTurnId: string | undefined): Promise<SlackSessionRecord> {
     const now = new Date().toISOString();
-    return await this.#patchSession(channelId, rootThreadTs, {
+    const session = await this.#patchSession(channelId, rootThreadTs, {
       activeTurnId,
       activeTurnStartedAt: activeTurnId ? now : undefined
     });
+    if (activeTurnId) {
+      await this.#stateStore.bindAgentTurn({
+        sessionKey: session.key,
+        channelId: session.channelId,
+        rootThreadTs: session.rootThreadTs,
+        agentSessionId: session.agentSessionId,
+        turnId: activeTurnId,
+        at: now
+      });
+    }
+    return session;
   }
 
   async clearActiveTurnIdIfMatches(

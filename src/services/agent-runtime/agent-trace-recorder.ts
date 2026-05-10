@@ -56,6 +56,14 @@ export class AgentTraceRecorder {
       return undefined;
     }
 
+    const byAgentActivity = this.#sessions.findSessionByAgentActivity({
+      agentSessionId,
+      turnId
+    });
+    if (byAgentActivity) {
+      return byAgentActivity;
+    }
+
     return this.#sessions.listSessions().find((session) =>
       Boolean(agentSessionId && session.agentSessionId === agentSessionId) ||
       Boolean(turnId && session.activeTurnId === turnId)

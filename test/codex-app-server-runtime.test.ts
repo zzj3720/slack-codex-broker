@@ -164,6 +164,53 @@ describe("CodexAppServerRuntime", () => {
     ]);
   });
 
+  it("uses historical agent activity bindings after the session switches to a new runtime", () => {
+    const switchedSession: SlackSessionRecord = {
+      ...TEST_SESSION,
+      agentSessionId: "thread-new",
+      activeTurnId: "turn-new"
+    };
+    const { codex, events } = createRuntimeFixture({
+      sessions: {
+        findSessionByWorkspace: vi.fn(() => undefined),
+        findSessionByAgentActivity: vi.fn(({ agentSessionId, turnId }) =>
+          agentSessionId === "thread-old" || turnId === "turn-old" ? switchedSession : undefined
+        ),
+        listSessions: vi.fn(() => [switchedSession])
+      } as never
+    });
+
+    codex.emit("notification", "codex/event", {
+      thread_id: "thread-old",
+      turn_id: "turn-old",
+      msg: {
+        type: "response_item",
+        payload: {
+          type: "message",
+          id: "message-late",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: "旧 turn 的迟到事件仍然属于这个 Slack thread。"
+            }
+          ]
+        }
+      }
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "agent.message.completed",
+        agentSessionId: "thread-old",
+        brokerSessionKey: TEST_SESSION.key,
+        turnId: "turn-old",
+        messageId: "message-late",
+        text: "旧 turn 的迟到事件仍然属于这个 Slack thread。"
+      })
+    ]);
+  });
+
   it("ignores empty assistant response_item notifications", () => {
     const { codex, events } = createRuntimeFixture();
 
@@ -185,7 +232,9 @@ describe("CodexAppServerRuntime", () => {
   });
 });
 
-function createRuntimeFixture(): {
+function createRuntimeFixture(options?: {
+  readonly sessions?: unknown;
+}): {
   readonly codex: EventEmitter;
   readonly events: AgentRuntimeEvent[];
 } {
@@ -209,10 +258,11 @@ function createRuntimeFixture(): {
   });
   const runtime = new CodexAppServerRuntime({
     codex: codex as never,
-    sessions: {
+    sessions: (options?.sessions ?? {
       findSessionByWorkspace: vi.fn(() => undefined),
+      findSessionByAgentActivity: vi.fn(() => undefined),
       listSessions: vi.fn(() => [TEST_SESSION])
-    } as never
+    }) as never
   });
   const events: AgentRuntimeEvent[] = [];
   runtime.on("event", (event: AgentRuntimeEvent) => {

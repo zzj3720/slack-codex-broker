@@ -249,6 +249,83 @@ describe("admin control plane e2e", () => {
     });
   });
 
+  it("auto-allocates a blocked session auth profile and asks the worker to resume pending dispatch", async () => {
+    const workerResumePaths: string[] = [];
+    const worker = http.createServer((request, response) => {
+      workerResumePaths.push(request.url ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, resumedCount: 1 }));
+    });
+    await new Promise<void>((resolve) => worker.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+      await new Promise<void>((resolve, reject) => {
+        worker.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    });
+    const address = worker.address();
+    if (!address || typeof address === "string") {
+      throw new Error("failed to start worker fixture");
+    }
+
+    const { baseUrl, sessions } = await startAdminFixture({
+      workerBaseUrl: `http://127.0.0.1:${address.port}`,
+      authProfilesStatus: authProfilesStatusFixture()
+    });
+    let session = await sessions.ensureSession("C123", "111.222");
+    session = await sessions.setAgentSessionId(session.channelId, session.rootThreadTs, "old-thread");
+    session = await sessions.setActiveTurnId(session.channelId, session.rootThreadTs, "old-turn");
+    session = await sessions.setSessionAuthProfile(session.key, "empty-profile", {
+      boundAt: "2026-05-09T00:00:00.000Z"
+    });
+    await sessions.markSessionAuthBlocked(session.key, {
+      reason: "primary_quota_exhausted",
+      blockedAt: "2026-05-09T01:00:00.000Z"
+    });
+
+    const result = await postJson(
+      `${baseUrl}/admin/api/sessions/${encodeURIComponent(session.key)}/auth-profile`,
+      { mode: "auto" }
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      selectedMode: "auto",
+      selectedProfileName: "usable-profile",
+      workerResume: {
+        ok: true,
+        resumedCount: 1
+      },
+      session: {
+        key: session.key,
+        authProfileName: "usable-profile",
+        authBlockedAt: null,
+        agentSessionId: null,
+        activeTurnId: null
+      }
+    });
+    expect(workerResumePaths).toEqual([
+      `/slack/sessions/${encodeURIComponent(session.key)}/resume-pending`
+    ]);
+    expect(sessions.getSessionByKey(session.key)).toMatchObject({
+      authProfileName: "usable-profile",
+      authBlockedAt: undefined,
+      authBlockReason: undefined,
+      agentSessionId: undefined,
+      activeTurnId: undefined
+    });
+    expect(sessions.listAgentTraceEvents(session.key, 10).at(-1)).toMatchObject({
+      title: "Auth Profile 已切换",
+      summary: "自动分配到 usable-profile，继续处理待处理消息",
+      metadata: {
+        profileName: "usable-profile",
+        selectionMode: "auto"
+      }
+    });
+  });
+
   it("exposes a tracked session reset operation and delegates history clearing to the worker", async () => {
     const workerPaths: string[] = [];
     let sessionsRef: SessionManager | undefined;

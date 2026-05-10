@@ -280,7 +280,8 @@ describe("admin routes", () => {
     expect(adminCssSource).toContain(".shell { width: 100%; height: 100dvh;");
     expect(adminCssSource).toContain("grid-template-columns: minmax(320px, 420px)");
     expect(adminCssSource).toContain(".session-detail-panel > .panel-body");
-    expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: auto;");
+    expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
+    expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: auto;");
     expect(adminCssSource).toContain(".session-card { display: block; overflow: hidden; }");
     expect(adminCssSource).toContain(".session-meta-line { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap;");
     expect(adminCssSource).toContain(".session-meta-pill { min-width: 0; max-width: 100%; flex: 0 1 auto;");

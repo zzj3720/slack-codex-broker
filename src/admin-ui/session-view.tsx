@@ -197,11 +197,7 @@ function SessionPermalinkView({ sessionKey }: { readonly sessionKey: string }): 
 
   return (
     <div className="session-permalink-layout">
-      <section className="panel session-detail-panel session-permalink-panel">
-        <div className="panel-head">
-          <div className="panel-title">会话活动</div>
-          <a className="link-button" href="/admin">返回会话索引</a>
-        </div>
+      <section className="session-detail-panel session-permalink-panel">
         <div className="panel-body">
           {error ? (
             <div className="empty-state">{error}</div>
@@ -293,7 +289,9 @@ function SessionDetail({ session, isPermalink = false }: {
           <AuthProfilePanel session={session} profiles={authProfiles} currentProfile={currentProfile} />
           {!isPermalink ? (
             <a className="link-button" href={adminSessionPath(String(session.key || ""))}>打开 Session 页面</a>
-          ) : null}
+          ) : (
+            <a className="link-button" href="/admin">返回会话索引</a>
+          )}
           {session.threadUrl ? (
             <a className="link-button" href={session.threadUrl} target="_blank" rel="noreferrer">打开 Slack Thread</a>
           ) : null}

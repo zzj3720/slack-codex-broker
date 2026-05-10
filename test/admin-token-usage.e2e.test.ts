@@ -266,7 +266,8 @@ describe("admin token usage e2e", () => {
     expect(sessionViewSource).toContain('<SessionHeaderPill label={"Token "');
     expect(sessionViewSource).toContain('<QuotaLine label="总量"');
     expect(sessionViewSource).toContain("session-side-column");
-    expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: auto;");
+    expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
+    expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: auto;");
     expect(adminCssSource).toContain(".timeline { display: grid; gap: 0; overflow: visible;");
     expect(adminCssSource).not.toContain(".session-permalink-panel .timeline");
     expect(sessionViewSource).not.toContain("session-detail-summary");

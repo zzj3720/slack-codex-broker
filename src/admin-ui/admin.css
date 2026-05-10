@@ -147,8 +147,21 @@
     .trace-meta { color: var(--muted); font-size: 9px; }
     .trace-details summary { cursor: pointer; color: var(--cyan); font-size: 9px; }
     .trace-details pre { margin: 4px 0 0; padding: 4px 6px; max-height: 160px; overflow: auto; white-space: pre-wrap; border: 1px solid var(--line); background: #030508; font: 10px/1.4 var(--mono); }
-    .trace-summary { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 4px; color: var(--muted); font-size: 10px; }
-    .session-side-column .trace-summary { margin: 0; }
+    .trace-stat-panel { display: grid; gap: 4px; }
+    .trace-stat-head { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 6px; align-items: baseline; color: var(--muted); font-size: 10px; }
+    .trace-source { padding: 1px 5px; border: 1px solid currentColor; color: var(--cyan); font-weight: 700; }
+    .trace-source.danger { color: var(--red); }
+    .trace-source.warn { color: var(--amber); }
+    .trace-source.good { color: var(--green); }
+    .trace-stat-head strong { color: var(--text); font-size: 13px; }
+    .trace-stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); }
+    .trace-stat { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; align-items: baseline; padding: 3px 5px; background: var(--panel); font-size: 10px; }
+    .trace-stat span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+    .trace-stat strong { color: var(--text); font-size: 12px; }
+    .trace-stat.info strong { color: var(--cyan); }
+    .trace-stat.good strong { color: var(--green); }
+    .trace-stat.warn strong { color: var(--amber); }
+    .trace-stat.purple strong { color: var(--purple); }
 
     .table { width: 100%; border-collapse: collapse; font-size: 11px; }
     .table th { text-align: left; color: var(--muted); font-size: 9px; text-transform: uppercase; padding: 3px 5px; border-bottom: 1px solid var(--line); }
@@ -256,7 +269,7 @@
       .auth-profile-label { display: none; }
       .auth-profile-switcher .link-button { justify-content: center; }
       .mini-body { padding: 4px; }
-      .trace-summary { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+      .trace-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .timeline-event { grid-template-columns: 54px 78px minmax(0, 1fr); gap: 4px; padding: 6px 4px; }
       .timeline-title { display: block; }
       .timeline-title strong,

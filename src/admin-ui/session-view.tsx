@@ -566,23 +566,32 @@ function TimelinePayloadView({ payload }: { readonly payload: TimelinePayload })
 
 function TraceSummary({ trace }: { readonly trace: Record<string, any> }): React.JSX.Element {
   const categories = trace.categories || {};
-  const sourceLabelText = trace.source === "broker_db"
-    ? "已记录 " + (trace.eventCount || 0) + " 条 Agent 事件"
-    : "Trace 读取异常";
+  const source = String(trace.source || "unknown");
+  const sourceLabel = source === "broker_db" ? "DB Trace" : source;
+  const eventCount = Number(trace.eventCount || 0);
+  const items = [
+    ["agent_system_prompt", "系统"],
+    ["agent_memory", "记忆"],
+    ["agent_user_message", "用户"],
+    ["agent_runtime_reminder", "提醒"],
+    ["agent_assistant_message", "助手"],
+    ["agent_tool_call", "工具"]
+  ];
   return (
-    <div className="trace-summary">
-      <Badge label={trace.source || "unknown"} tone={statusTone(trace.source || "unknown")} />
-      <span>{sourceLabelText}</span>
-      {[
-        ["agent_system_prompt", "系统"],
-        ["agent_memory", "记忆"],
-        ["agent_user_message", "用户"],
-        ["agent_runtime_reminder", "提醒"],
-        ["agent_assistant_message", "Assistant"],
-        ["agent_tool_call", "工具"]
-      ].map(([key, label]) => (
-        <Badge key={key} label={label + " " + (categories[key] || 0)} tone={statusTone(key)} />
-      ))}
+    <div className="trace-stat-panel">
+      <div className="trace-stat-head">
+        <span className={"trace-source " + classSafeValue(statusTone(source), "")}>{sourceLabel}</span>
+        <strong>{eventCount}</strong>
+        <span>条 Agent 事件</span>
+      </div>
+      <div className="trace-stat-grid">
+        {items.map(([key, label]) => (
+          <div key={key} className={"trace-stat " + classSafeValue(statusTone(key), "")}>
+            <span>{label}</span>
+            <strong>{Number(categories[key] || 0)}</strong>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

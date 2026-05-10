@@ -264,6 +264,9 @@ describe("admin token usage e2e", () => {
     expect(sessionViewSource).toContain("会话详情");
     expect(sessionViewSource).toContain("会话属性");
     expect(sessionViewSource).toContain("事件统计");
+    expect(sessionViewSource).toContain("trace-stat-grid");
+    expect(adminCssSource).toContain(".trace-stat-grid { display: grid;");
+    expect(sessionViewSource).not.toContain('className="trace-summary"');
     expect(sessionViewSource).toContain("Token 消耗");
     expect(sessionViewSource).toContain('<QuotaLine label="总量"');
     expect(sessionViewSource).toContain("session-side-column");

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  normalizeSlackImageAttachments,
+  normalizeSlackFileAttachments,
   SlackApi
 } from "../src/services/slack/slack-api.js";
 
@@ -9,14 +9,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("normalizeSlackImageAttachments", () => {
-  it("extracts image metadata and prefers thumbnail URLs", () => {
-    const images = normalizeSlackImageAttachments([
+describe("normalizeSlackFileAttachments", () => {
+  it("extracts file metadata and prefers thumbnail URLs for images", () => {
+    const files = normalizeSlackFileAttachments([
       {
         id: "F123",
         name: "screenshot.png",
         title: "Screenshot",
         mimetype: "image/png",
+        filetype: "png",
+        size: 12345,
         thumb_1024: "https://example.com/thumb-1024.png",
         url_private_download: "https://example.com/original.png",
         original_w: 1600,
@@ -24,12 +26,14 @@ describe("normalizeSlackImageAttachments", () => {
       }
     ]);
 
-    expect(images).toEqual([
+    expect(files).toEqual([
       {
         fileId: "F123",
         name: "screenshot.png",
         title: "Screenshot",
         mimetype: "image/png",
+        filetype: "png",
+        size: 12345,
         width: 1600,
         height: 900,
         url: "https://example.com/thumb-1024.png"
@@ -37,21 +41,63 @@ describe("normalizeSlackImageAttachments", () => {
     ]);
   });
 
-  it("ignores non-image files and malformed entries", () => {
-    const images = normalizeSlackImageAttachments([
-      null,
+  it("extracts non-image files and SVG attachments", () => {
+    const files = normalizeSlackFileAttachments([
       {
         id: "F234",
+        name: "report.pdf",
         mimetype: "application/pdf",
         url_private_download: "https://example.com/file.pdf"
       },
       {
         id: "F345",
+        name: "screen.svg",
+        mimetype: "image/svg+xml",
+        url_private_download: "https://example.com/screen.svg"
+      }
+    ]);
+
+    expect(files).toMatchObject([
+      {
+        fileId: "F234",
+        name: "report.pdf",
+        mimetype: "application/pdf",
+        url: "https://example.com/file.pdf"
+      },
+      {
+        fileId: "F345",
+        name: "screen.svg",
+        mimetype: "image/svg+xml",
+        url: "https://example.com/screen.svg"
+      }
+    ]);
+  });
+
+  it("ignores malformed file entries", () => {
+    const files = normalizeSlackFileAttachments([
+      null,
+      {
+        mimetype: "application/pdf",
+        url_private_download: "https://example.com/missing-id.pdf"
+      },
+      {
+        id: "F456",
+        mimetype: "application/pdf",
+        url_private_download: "https://example.com/file.pdf"
+      },
+      {
+        id: "F789",
         mimetype: "image/jpeg"
       }
     ]);
 
-    expect(images).toEqual([]);
+    expect(files).toEqual([
+      {
+        fileId: "F456",
+        mimetype: "application/pdf",
+        url: "https://example.com/file.pdf"
+      }
+    ]);
   });
 });
 

@@ -6,7 +6,7 @@ import type {
   SlackThreadMessage
 } from "../../types.js";
 import {
-  normalizeSlackImageAttachments,
+  normalizeSlackFileAttachments,
   normalizeSlackJson
 } from "./slack-api.js";
 
@@ -35,7 +35,7 @@ export function parseSlackEvent(event: Record<string, any>, botUserId: string): 
   const messageTs = typeof event.ts === "string" ? event.ts : undefined;
   const author = resolveSlackEventAuthor(event);
   const metadata = parseSlackTextMetadata(String(event.text ?? ""));
-  const images = normalizeSlackImageAttachments(event.files);
+  const images = normalizeSlackFileAttachments(event.files);
   const slackMessage = normalizeSlackJson(event);
 
   if (eventType === "app_mention" && channelId && messageTs) {

@@ -1,10 +1,20 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentRuntime } from "../src/services/agent-runtime/types.js";
 import { SlackTurnRunner } from "../src/services/slack/slack-turn-runner.js";
 import type { SlackSessionRecord } from "../src/types.js";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  vi.restoreAllMocks();
+});
 
 function createRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
   const runtime = new EventEmitter() as AgentRuntime;
@@ -68,7 +78,7 @@ describe("SlackTurnRunner", () => {
       agentRuntime: createRuntime({ ensureSession }),
       slackApi: {
         getUserIdentity: vi.fn(),
-        downloadImageAsDataUrl: vi.fn()
+        downloadFileAttachment: vi.fn()
       } as never,
       sessions: {
         setActiveTurnId,
@@ -123,7 +133,7 @@ describe("SlackTurnRunner", () => {
       }),
       slackApi: {
         getUserIdentity: vi.fn(),
-        downloadImageAsDataUrl: vi.fn()
+        downloadFileAttachment: vi.fn()
       } as never,
       sessions: {
         setActiveTurnId: vi.fn(async (_channelId: string, _rootThreadTs: string, turnId: string | undefined) => {
@@ -160,5 +170,61 @@ describe("SlackTurnRunner", () => {
     });
 
     expect(calls.slice(0, 2)).toEqual(["set-active", "mark-inflight"]);
+  });
+
+  it("downloads Slack attachments into the session workspace instead of sending image input items", async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), "slack-attachments-"));
+    tempDirs.push(workspacePath);
+    const session: SlackSessionRecord = {
+      key: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      workspacePath,
+      agentSessionId: "thread-1",
+      createdAt: "2026-03-16T00:00:00.000Z",
+      updatedAt: "2026-03-16T00:00:00.000Z"
+    };
+    const downloadFileAttachment = vi.fn(async () => ({
+      bytes: Buffer.from("<svg/>"),
+      contentType: "image/svg+xml"
+    }));
+
+    const runner = new SlackTurnRunner({
+      agentRuntime: createRuntime({}),
+      slackApi: {
+        getUserIdentity: vi.fn(async () => null),
+        downloadFileAttachment
+      } as never,
+      sessions: {} as never,
+      inboundStore: {} as never
+    });
+
+    const input = await runner.buildTurnInput(session, {
+      source: "thread_reply",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      messageTs: "111.223",
+      userId: "U123",
+      senderKind: "user",
+      text: "use the attached icon",
+      images: [
+        {
+          fileId: "F123",
+          name: "../screen.svg",
+          mimetype: "image/svg+xml",
+          url: "https://files.slack.test/screen.svg"
+        }
+      ]
+    });
+
+    expect(downloadFileAttachment).toHaveBeenCalledTimes(1);
+    expect(input).toHaveLength(1);
+    expect(input[0]).toMatchObject({ type: "text" });
+    expect(input.some((item) => item.type === "image")).toBe(false);
+    const text = input[0]?.type === "text" ? input[0].text : "";
+    const expectedPath = path.join(workspacePath, ".slack-attachments", "111.223", "F123-screen.svg");
+    expect(text).toContain("\"attachments\": [");
+    expect(text).toContain(`"local_path": "${expectedPath}"`);
+    expect(await fs.readFile(expectedPath, "utf8")).toBe("<svg/>");
   });
 });

@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import { logger } from "../../logger.js";
 import type {
   AgentInputItem,
@@ -7,6 +10,8 @@ import type {
 import type {
   PersistedAgentTurnStatus,
   PersistedAgentTurnUsage,
+  SlackBatchInputMessage,
+  SlackImageAttachment,
   SlackInputMessage,
   SlackSessionRecord
 } from "../../types.js";
@@ -38,7 +43,7 @@ export class SlackTurnRunner {
   }
 
   async submitAdditionalInput(session: SlackSessionRecord, item: SlackInputMessage): Promise<void> {
-    const input = await this.#buildImmediateSlackInput(item);
+    const input = await this.#buildImmediateSlackInput(session, item);
     const result = await this.#agentRuntime.submitInput({
       session,
       input,
@@ -50,17 +55,24 @@ export class SlackTurnRunner {
     }
   }
 
-  async buildTurnInput(message: SlackInputMessage): Promise<readonly AgentInputItem[]> {
-    const enrichedMessage = await this.#enrichMentionedUsers(message);
+  async buildTurnInput(message: SlackInputMessage): Promise<readonly AgentInputItem[]>;
+  async buildTurnInput(session: SlackSessionRecord, message: SlackInputMessage): Promise<readonly AgentInputItem[]>;
+  async buildTurnInput(
+    sessionOrMessage: SlackSessionRecord | SlackInputMessage,
+    maybeMessage?: SlackInputMessage
+  ): Promise<readonly AgentInputItem[]> {
+    const message = maybeMessage ?? sessionOrMessage as SlackInputMessage;
+    const session = maybeMessage
+      ? sessionOrMessage as SlackSessionRecord
+      : this.#sessions.getSession(message.channelId, message.rootThreadTs);
+    const enrichedMessage = session
+      ? await this.#prepareSlackInput(session, message)
+      : await this.#enrichMentionedUsers(message);
     const sender = enrichedMessage.source !== "background_job_event" && enrichedMessage.source !== "recovered_thread_batch" && enrichedMessage.senderKind === "user"
       ? await this.#slackApi.getUserIdentity(enrichedMessage.userId)
       : null;
     const inputText = formatSlackMessageForAgent(enrichedMessage, sender);
-    const imageItems = await this.#buildImageInputItems(enrichedMessage);
-    return [
-      createTextInputItem(inputText),
-      ...imageItems
-    ];
+    return [createTextInputItem(inputText)];
   }
 
   async submitInputWithRecovery(options: {
@@ -201,13 +213,12 @@ export class SlackTurnRunner {
     return await this.#sessions.setAgentSessionId(session.channelId, session.rootThreadTs, agentSession.id);
   }
 
-  async #buildImmediateSlackInput(message: SlackInputMessage): Promise<readonly AgentInputItem[]> {
-    const enrichedItem = await this.#enrichMentionedUsers(message);
+  async #buildImmediateSlackInput(session: SlackSessionRecord, message: SlackInputMessage): Promise<readonly AgentInputItem[]> {
+    const enrichedItem = await this.#prepareSlackInput(session, message);
     const sender = enrichedItem.source !== "background_job_event" && enrichedItem.source !== "recovered_thread_batch" && enrichedItem.senderKind === "user"
       ? await this.#slackApi.getUserIdentity(enrichedItem.userId)
       : null;
     const formattedMessage = formatSlackMessageForAgent(enrichedItem, sender);
-    const imageItems = await this.#buildImageInputItems(enrichedItem);
     return [
       createTextInputItem([
         enrichedItem.recoveryKind === "missed_thread_messages"
@@ -218,47 +229,82 @@ export class SlackTurnRunner {
           : "Treat it as the latest instruction and adjust the ongoing work accordingly.",
         "",
         formattedMessage
-      ].join("\n")),
-      ...imageItems
+      ].join("\n"))
     ];
   }
 
-  async #buildImageInputItems(message: SlackInputMessage): Promise<readonly AgentInputItem[]> {
-    const images = [
-      ...(message.images ?? []),
-      ...((message.batchMessages ?? []).flatMap((entry) => entry.images ?? []))
-    ];
-    if (images.length === 0) {
-      return [];
+  async #prepareSlackInput(session: SlackSessionRecord, message: SlackInputMessage): Promise<SlackInputMessage> {
+    const enrichedMessage = await this.#enrichMentionedUsers(message);
+    const batchMessages = enrichedMessage.batchMessages
+      ? await Promise.all(
+        enrichedMessage.batchMessages.map((entry) => this.#materializeSlackAttachments(session, entry))
+      )
+      : undefined;
+    const messageWithAttachments = await this.#materializeSlackAttachments(session, enrichedMessage);
+
+    return {
+      ...messageWithAttachments,
+      batchMessages
+    };
+  }
+
+  async #materializeSlackAttachments<T extends SlackInputMessage | SlackBatchInputMessage>(
+    session: SlackSessionRecord,
+    message: T
+  ): Promise<T> {
+    if (!message.images || message.images.length === 0) {
+      return message;
     }
 
-    const downloaded = await Promise.allSettled(
-      images.map(async (image) => ({
-        type: "image" as const,
-        url: await this.#slackApi.downloadImageAsDataUrl(image),
-        fileId: image.fileId
-      }))
+    const images = await Promise.all(
+      message.images.map((attachment) => this.#downloadSlackAttachment(session, message, attachment))
     );
 
-    return downloaded.flatMap((result) => {
-      if (result.status === "fulfilled") {
-        return [
-          {
-            type: "image" as const,
-            url: result.value.url
-          }
-        ];
-      }
+    return {
+      ...message,
+      images
+    };
+  }
 
-      logger.warn("Failed to download Slack image attachment for agent input", {
-        source: message.source,
-        channelId: message.channelId,
-        rootThreadTs: message.rootThreadTs,
+  async #downloadSlackAttachment(
+    session: SlackSessionRecord,
+    message: Pick<SlackInputMessage | SlackBatchInputMessage, "messageTs" | "source">,
+    attachment: SlackImageAttachment
+  ): Promise<SlackImageAttachment> {
+    if (attachment.localPath || attachment.downloadError) {
+      return attachment;
+    }
+
+    try {
+      const downloaded = await this.#slackApi.downloadFileAttachment(attachment);
+      const localPath = await writeSlackAttachmentFile({
+        workspacePath: session.workspacePath,
         messageTs: message.messageTs,
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+        attachment,
+        bytes: downloaded.bytes
       });
-      return [];
-    });
+
+      return {
+        ...attachment,
+        mimetype: downloaded.contentType || attachment.mimetype,
+        localPath
+      };
+    } catch (error) {
+      const downloadError = error instanceof Error ? error.message : String(error);
+      logger.warn("Failed to download Slack attachment into session workspace", {
+        source: message.source,
+        channelId: session.channelId,
+        rootThreadTs: session.rootThreadTs,
+        messageTs: message.messageTs,
+        fileId: attachment.fileId,
+        error: downloadError
+      });
+
+      return {
+        ...attachment,
+        downloadError
+      };
+    }
   }
 
   async #enrichMentionedUsers(message: SlackInputMessage): Promise<SlackInputMessage> {
@@ -392,6 +438,61 @@ function createTextInputItem(text: string): AgentInputItem {
     text,
     text_elements: []
   };
+}
+
+const SLACK_ATTACHMENTS_DIRECTORY = ".slack-attachments";
+
+async function writeSlackAttachmentFile(options: {
+  readonly workspacePath: string;
+  readonly messageTs?: string | undefined;
+  readonly attachment: SlackImageAttachment;
+  readonly bytes: Buffer;
+}): Promise<string> {
+  const workspaceRoot = path.resolve(options.workspacePath);
+  const messageDirectory = sanitizePathSegment(options.messageTs ?? "unknown-message");
+  const directoryPath = path.join(workspaceRoot, SLACK_ATTACHMENTS_DIRECTORY, messageDirectory);
+  const fileName = buildAttachmentFileName(options.attachment);
+  const filePath = path.join(directoryPath, fileName);
+  const resolvedFilePath = path.resolve(filePath);
+
+  if (!resolvedFilePath.startsWith(`${workspaceRoot}${path.sep}`)) {
+    throw new Error(`Refusing to write Slack attachment outside session workspace: ${resolvedFilePath}`);
+  }
+
+  await fs.mkdir(directoryPath, { recursive: true });
+  await fs.writeFile(resolvedFilePath, options.bytes);
+  return resolvedFilePath;
+}
+
+function buildAttachmentFileName(attachment: SlackImageAttachment): string {
+  const rawName = attachment.name ?? attachment.title ?? attachment.fileId;
+  const safeBaseName = sanitizePathSegment(path.basename(rawName)) || "attachment";
+  const safeFileId = sanitizePathSegment(attachment.fileId) || "slack-file";
+  const prefixedName = safeBaseName.startsWith(`${safeFileId}-`)
+    ? safeBaseName
+    : `${safeFileId}-${safeBaseName}`;
+  return truncateFileName(prefixedName, 180);
+}
+
+function sanitizePathSegment(value: string): string {
+  return value
+    .replaceAll(/[\\/]/g, "_")
+    .replaceAll(/[^A-Za-z0-9._-]+/g, "_")
+    .replaceAll(/^\.{1,2}$/g, "_")
+    .replaceAll(/^\.+/g, "_")
+    .replaceAll(/_+/g, "_")
+    .slice(0, 180);
+}
+
+function truncateFileName(fileName: string, maxLength: number): string {
+  if (fileName.length <= maxLength) {
+    return fileName;
+  }
+
+  const extension = path.extname(fileName);
+  const baseName = path.basename(fileName, extension);
+  const allowedBaseLength = Math.max(1, maxLength - extension.length);
+  return `${baseName.slice(0, allowedBaseLength)}${extension}`;
 }
 
 function inputIdForSessionInput(session: SlackSessionRecord, scope: string, kind: string): string {

@@ -100,7 +100,7 @@ describe("admin token usage e2e", () => {
         mention: "<@U123>",
         realName: "User One"
       }),
-      downloadImageAsDataUrl: async () => "data:image/png;base64,"
+      downloadFileAttachment: async () => ({ bytes: Buffer.from(""), contentType: "image/png" })
     } as never;
     const inboundStore = new SlackInboundStore({
       sessions,

@@ -308,9 +308,13 @@ export interface SlackImageAttachment {
   readonly name?: string | undefined;
   readonly title?: string | undefined;
   readonly mimetype?: string | undefined;
+  readonly filetype?: string | undefined;
+  readonly size?: number | undefined;
   readonly width?: number | undefined;
   readonly height?: number | undefined;
   readonly url: string;
+  readonly localPath?: string | undefined;
+  readonly downloadError?: string | undefined;
 }
 
 export interface SlackThreadMessage {

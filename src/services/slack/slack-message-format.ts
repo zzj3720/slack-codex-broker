@@ -209,14 +209,18 @@ function buildSlackMessagePayload(
       : undefined,
     text: message.text || "[no text body]",
     text_with_resolved_mentions: resolveMentionText(message.text || "[no text body]", message.mentionedUsers),
-    images: (message.images ?? []).map((image) => ({
-      file_id: image.fileId,
-      name: image.name,
-      title: image.title,
-      mimetype: image.mimetype,
-      width: image.width,
-      height: image.height,
-      dimensions: formatImageDimensions(image)
+    attachments: (message.images ?? []).map((attachment) => ({
+      file_id: attachment.fileId,
+      name: attachment.name,
+      title: attachment.title,
+      mimetype: attachment.mimetype,
+      filetype: attachment.filetype,
+      size: attachment.size,
+      width: attachment.width,
+      height: attachment.height,
+      dimensions: formatImageDimensions(attachment),
+      local_path: attachment.localPath,
+      download_error: attachment.downloadError
     })),
     slack_message: buildSelectedSlackPayload(message),
     unexpected_turn_stop: message.unexpectedTurnStop

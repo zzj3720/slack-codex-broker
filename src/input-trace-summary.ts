@@ -67,11 +67,15 @@ function summarizePayload(
 
   const slackText = compactText(extractSlackText(payload), 220);
   const sender = summarizeSender(asRecord(payload.sender));
-  const imageCount = Array.isArray(payload.images) ? payload.images.length : 0;
+  const attachmentCount = Array.isArray(payload.attachments)
+    ? payload.attachments.length
+    : Array.isArray(payload.images)
+      ? payload.images.length
+      : 0;
   const summary = [
     sender,
     sourceLabel(normalizeString(payload.source) || source),
-    imageCount > 0 ? `${imageCount} 张图` : ""
+    attachmentCount > 0 ? `${attachmentCount} 个附件` : ""
   ].filter(Boolean).join(" · ");
 
   return {
@@ -82,7 +86,7 @@ function summarizePayload(
       source: normalizeString(payload.source) || source,
       messageTs: normalizeString(payload.message_ts),
       sender,
-      imageCount
+      attachmentCount
     })
   };
 }
@@ -159,7 +163,12 @@ function extractInputPayload(text: string): ExtractedInputPayload | undefined {
     .filter((payload): payload is Record<string, unknown> => Boolean(payload));
   const currentMessage = [...blocks].reverse().find((payload) =>
     normalizeString(payload.source) !== "thread_history" &&
-      (payload.text !== undefined || payload.text_with_resolved_mentions !== undefined || payload.images !== undefined)
+      (
+        payload.text !== undefined ||
+        payload.text_with_resolved_mentions !== undefined ||
+        payload.attachments !== undefined ||
+        payload.images !== undefined
+      )
   );
   const payload = currentMessage ?? blocks[blocks.length - 1];
   return payload ? {

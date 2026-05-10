@@ -29,6 +29,11 @@ export interface SlackUploadedFile {
   readonly size?: number | undefined;
 }
 
+export interface SlackDownloadedFile {
+  readonly bytes: Buffer;
+  readonly contentType: string;
+}
+
 export interface SlackConversationInfo {
   readonly channelId: string;
   readonly name?: string | undefined;
@@ -336,7 +341,7 @@ export class SlackApi {
       const author = resolveSlackMessageAuthor(message);
       const messageTs = typeof message.ts === "string" ? message.ts : undefined;
       const text = typeof message.text === "string" ? message.text : "";
-      const images = normalizeSlackImageAttachments(message.files);
+      const images = normalizeSlackFileAttachments(message.files);
       const isSupportedSubtype = isSupportedSlackMessageSubtype(message.subtype);
       const slackMessage = normalizeSlackJson(message);
 
@@ -363,8 +368,8 @@ export class SlackApi {
     });
   }
 
-  async downloadImageAsDataUrl(image: SlackImageAttachment): Promise<string> {
-    const response = await fetch(image.url, {
+  async downloadFileAttachment(file: SlackImageAttachment): Promise<SlackDownloadedFile> {
+    const response = await fetch(file.url, {
       method: "GET",
       headers: {
         authorization: `Bearer ${this.#botToken}`
@@ -373,18 +378,21 @@ export class SlackApi {
 
     if (!response.ok) {
       throw new Error(
-        `Slack image download failed (${response.status} ${response.statusText}) for ${image.fileId}`
+        `Slack file download failed (${response.status} ${response.statusText}) for ${file.fileId}`
       );
     }
 
     const rawContentType = response.headers.get("content-type");
-    const mediaType =
+    const contentType =
       rawContentType?.split(";")[0]?.trim() ||
-      image.mimetype ||
+      file.mimetype ||
       "application/octet-stream";
     const bytes = Buffer.from(await response.arrayBuffer());
 
-    return `data:${mediaType};base64,${bytes.toString("base64")}`;
+    return {
+      bytes,
+      contentType
+    };
   }
 
   async #uploadExternalFile(
@@ -523,7 +531,7 @@ export class SlackApi {
   }
 }
 
-export function normalizeSlackImageAttachments(files: unknown): SlackImageAttachment[] {
+export function normalizeSlackFileAttachments(files: unknown): SlackImageAttachment[] {
   if (!Array.isArray(files)) {
     return [];
   }
@@ -537,11 +545,11 @@ export function normalizeSlackImageAttachments(files: unknown): SlackImageAttach
     const fileId = normalizeSlackField(file.id);
     const mimetype = normalizeSlackField(file.mimetype);
 
-    if (!fileId || !mimetype?.startsWith("image/")) {
+    if (!fileId) {
       return [];
     }
 
-    const url = pickSlackImageUrl(file);
+    const url = pickSlackFileUrl(file);
     if (!url) {
       return [];
     }
@@ -552,6 +560,8 @@ export function normalizeSlackImageAttachments(files: unknown): SlackImageAttach
         name: normalizeSlackField(file.name),
         title: normalizeSlackField(file.title),
         mimetype,
+        filetype: normalizeSlackField(file.filetype),
+        size: normalizeSlackNumber(file.size),
         width: normalizeSlackNumber(
           file.original_w ??
             file.thumb_1024_w ??
@@ -573,6 +583,8 @@ export function normalizeSlackImageAttachments(files: unknown): SlackImageAttach
     ];
   });
 }
+
+export const normalizeSlackImageAttachments = normalizeSlackFileAttachments;
 
 export function normalizeSlackJson(value: unknown): JsonLike | undefined {
   if (value === null) {
@@ -675,7 +687,7 @@ function isSupportedSlackMessageSubtype(value: unknown): boolean {
   ].includes(subtype);
 }
 
-function pickSlackImageUrl(file: Record<string, unknown>): string | undefined {
+function pickSlackFileUrl(file: Record<string, unknown>): string | undefined {
   const candidates = [
     file.thumb_1024,
     file.thumb_960,

@@ -73,7 +73,7 @@ describe("formatSlackMessageForAgent", () => {
     expect(result).toContain("\"mentioned_user_mentions\": [");
     expect(result).toContain("\"<@U456>\"");
     expect(result).toContain("\"mentioned_users\": [");
-    expect(result).toContain("\"images\": [");
+    expect(result).toContain("\"attachments\": [");
     expect(result).toContain("\"title\": \"Screenshot\"");
     expect(result).toContain("\"dimensions\": \"1280x720\"");
     expect(result).toContain("\"text\": \"Please fix the flaky test.\"");
@@ -178,7 +178,7 @@ describe("formatSlackMessageForAgent", () => {
       null
     );
 
-    expect(result).toContain("\"images\": [");
+    expect(result).toContain("\"attachments\": [");
     expect(result).toContain("\"text\": \"[no text body]\"");
   });
 
@@ -424,7 +424,7 @@ describe("formatSlackHistoryContextForAgent", () => {
     expect(result).toContain("\"mentioned_user_ids\": [");
     expect(result).toContain("\"U345\"");
     expect(result).toContain("\"display_name\": \"Bob\"");
-    expect(result).toContain("\"images\": [");
+    expect(result).toContain("\"attachments\": [");
     expect(result).toContain("\"text\": \"Earlier note\"");
     expect(result).not.toContain("\"slack_message\":");
   });

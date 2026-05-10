@@ -262,9 +262,12 @@ describe("admin token usage e2e", () => {
     expect(shell).toContain('id="topbar-quota"');
     expect(shell).toContain("session-react-root");
     expect(sessionViewSource).toContain("会话详情");
-    expect(sessionViewSource).toContain("账号额度");
-    expect(sessionViewSource).toContain("会话属性");
-    expect(sessionViewSource).toContain("事件统计");
+    expect(sessionViewSource).toContain("操作");
+    expect(sessionViewSource).toContain("运行状态");
+    expect(sessionViewSource).toContain("活动构成");
+    expect(sessionViewSource).toContain("调试信息");
+    expect(sessionViewSource).not.toContain("会话属性");
+    expect(sessionViewSource).not.toContain("事件统计");
     expect(sessionViewSource).toContain("trace-stat-grid");
     expect(adminCssSource).toContain(".trace-stat-grid { display: grid;");
     expect(sessionViewSource).not.toContain('className="trace-summary"');

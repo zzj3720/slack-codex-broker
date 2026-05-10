@@ -265,8 +265,12 @@ function SessionDetail({ session, isPermalink = false }: {
   const primary = sessionPrimaryText(session);
   const first = sessionFirstText(session);
   const openInbound = Number(session.openInboundCount || 0);
+  const openHumanInbound = Number(session.openHumanInboundCount || 0);
+  const openSystemInbound = Number(session.openSystemInboundCount || 0);
   const runningJobs = Number(session.runningBackgroundJobCount || 0);
   const totalJobs = Number(session.backgroundJobCount || 0);
+  const failedJobs = Number(session.failedBackgroundJobCount || 0);
+  const hasMessagesOrJobs = openInbound > 0 || totalJobs > 0;
   const currentProfile = authProfiles.find((profile) => profile.name === session.authProfileName);
   return (
     <>
@@ -279,16 +283,6 @@ function SessionDetail({ session, isPermalink = false }: {
           </div>
           <div className="session-detail-subtitle" title={first}>{first}</div>
         </div>
-        <div className="session-detail-actions">
-          {!isPermalink ? (
-            <a className="link-button" href={adminSessionPath(String(session.key || ""))}>打开 Session 页面</a>
-          ) : (
-            <a className="link-button" href="/admin">返回会话索引</a>
-          )}
-          {session.threadUrl ? (
-            <a className="link-button" href={session.threadUrl} target="_blank" rel="noreferrer">打开 Slack Thread</a>
-          ) : null}
-        </div>
       </div>
       <div className="session-body">
         <div className="session-inspector">
@@ -300,45 +294,56 @@ function SessionDetail({ session, isPermalink = false }: {
           </div>
           <div className="session-side-column">
             <div className="mini-panel">
-              <div className="mini-title">账号额度</div>
+              <div className="mini-title">操作</div>
               <div className="mini-body">
-                <AuthProfilePanel session={session} profiles={authProfiles} currentProfile={currentProfile} />
-              </div>
-            </div>
-            <div className="mini-panel">
-              <div className="mini-title">会话属性</div>
-              <div className="mini-body">
-                <SessionMetaPanel
-                  channelLabel={channelLabel}
-                  channelTitle={String(session.channelId || "")}
-                  activityAt={activityAt}
-                  state={state}
-                  openInbound={openInbound}
-                  openHumanInbound={Number(session.openHumanInboundCount || 0)}
-                  openSystemInbound={Number(session.openSystemInboundCount || 0)}
-                  totalJobs={totalJobs}
-                  runningJobs={runningJobs}
-                  failedJobs={Number(session.failedBackgroundJobCount || 0)}
+                <SessionActions
+                  session={session}
+                  profiles={authProfiles}
+                  currentProfile={currentProfile}
+                  isPermalink={isPermalink}
                 />
               </div>
             </div>
-            <div className="mini-panel">
-              <div className="mini-title">事件统计</div>
-              <div className="mini-body">
-                <SessionTraceStats sessionKey={String(session.key || "")} />
-              </div>
-            </div>
+            <SessionRuntimePanel
+              session={session}
+              state={state}
+              openInbound={openInbound}
+              openHumanInbound={openHumanInbound}
+              openSystemInbound={openSystemInbound}
+              totalJobs={totalJobs}
+              runningJobs={runningJobs}
+              failedJobs={failedJobs}
+            />
             <div className="mini-panel">
               <div className="mini-title">Token 消耗</div>
               <div className="mini-body">
                 <SessionUsagePanel sessionKey={String(session.key || "")} usage={usage} />
               </div>
             </div>
+            {hasMessagesOrJobs ? (
+              <div className="mini-panel">
+                <div className="mini-title">消息 / 任务</div>
+                <div className="mini-body">
+                  <InboundTable items={session.openInbound || []} />
+                  <JobsTable jobs={session.backgroundJobs || []} />
+                </div>
+              </div>
+            ) : null}
             <div className="mini-panel">
-              <div className="mini-title">消息 / 任务</div>
+              <div className="mini-title">活动构成</div>
               <div className="mini-body">
-                <InboundTable items={session.openInbound || []} />
-                <JobsTable jobs={session.backgroundJobs || []} />
+                <SessionTraceStats sessionKey={String(session.key || "")} />
+              </div>
+            </div>
+            <div className="mini-panel">
+              <div className="mini-title">调试信息</div>
+              <div className="mini-body">
+                <SessionDebugPanel
+                  session={session}
+                  channelLabel={channelLabel}
+                  channelTitle={String(session.channelId || "")}
+                  activityAt={activityAt}
+                />
               </div>
             </div>
           </div>
@@ -348,10 +353,31 @@ function SessionDetail({ session, isPermalink = false }: {
   );
 }
 
-function SessionMetaPanel({ channelLabel, channelTitle, activityAt, state, openInbound, openHumanInbound, openSystemInbound, totalJobs, runningJobs, failedJobs }: {
-  readonly channelLabel: string;
-  readonly channelTitle: string;
-  readonly activityAt: unknown;
+function SessionActions({ session, profiles, currentProfile, isPermalink }: {
+  readonly session: SessionRecord;
+  readonly profiles: readonly SessionRecord[];
+  readonly currentProfile?: SessionRecord | undefined;
+  readonly isPermalink: boolean;
+}): React.JSX.Element {
+  return (
+    <div className="side-action-stack">
+      <AuthProfilePanel session={session} profiles={profiles} currentProfile={currentProfile} />
+      <div className="side-link-grid">
+        {!isPermalink ? (
+          <a className="link-button" href={adminSessionPath(String(session.key || ""))}>打开 Session 页面</a>
+        ) : (
+          <a className="link-button" href="/admin">返回会话索引</a>
+        )}
+        {session.threadUrl ? (
+          <a className="link-button" href={session.threadUrl} target="_blank" rel="noreferrer">打开 Slack Thread</a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SessionRuntimePanel({ session, state, openInbound, openHumanInbound, openSystemInbound, totalJobs, runningJobs, failedJobs }: {
+  readonly session: SessionRecord;
   readonly state: { readonly label: string; readonly tone: string; readonly rank: number; readonly detail: string };
   readonly openInbound: number;
   readonly openHumanInbound: number;
@@ -360,19 +386,49 @@ function SessionMetaPanel({ channelLabel, channelTitle, activityAt, state, openI
   readonly runningJobs: number;
   readonly failedJobs: number;
 }): React.JSX.Element {
-  const pendingDetail = openInbound > 0
-    ? openInbound + " 条（人 " + openHumanInbound + " / 系统 " + openSystemInbound + "）"
-    : "无";
-  const jobDetail = totalJobs > 0
-    ? totalJobs + " 个（运行 " + runningJobs + " / 失败 " + failedJobs + "）"
-    : "无";
+  const rows = [
+    session.activeTurnId ? {
+      label: "回合",
+      value: "运行中",
+      detail: shortValue(session.activeTurnId, 18),
+      tone: "good"
+    } : null,
+    shouldShowSessionState(state) ? {
+      label: "状态",
+      value: state.label,
+      detail: state.detail,
+      tone: state.tone
+    } : null,
+    openInbound > 0 ? {
+      label: "待处理",
+      value: openInbound + " 条",
+      detail: "人 " + openHumanInbound + " / 系统 " + openSystemInbound,
+      tone: openHumanInbound > 0 ? "warn" : undefined
+    } : null,
+    runningJobs > 0 ? {
+      label: "运行任务",
+      value: String(runningJobs),
+      detail: totalJobs + " 个任务",
+      tone: "good"
+    } : null,
+    failedJobs > 0 ? {
+      label: "失败任务",
+      value: String(failedJobs),
+      detail: totalJobs + " 个任务",
+      tone: "danger"
+    } : null
+  ].filter((row): row is { label: string; value: string; detail?: string; tone?: string } => Boolean(row));
+  if (!rows.length) return <></>;
   return (
-    <div className="meta-list">
-      <MetaLine label="频道" value={channelLabel} title={channelTitle} />
-      <MetaLine label="最近活动" value={fmtRelativeTime(activityAt)} title={fmtDateTime(activityAt)} />
-      {shouldShowSessionState(state) ? <MetaLine label="状态" value={state.label} detail={state.detail} tone={state.tone} /> : null}
-      <MetaLine label="待处理" value={pendingDetail} tone={openHumanInbound > 0 ? "warn" : undefined} />
-      <MetaLine label="Jobs" value={jobDetail} tone={failedJobs > 0 ? "danger" : (runningJobs > 0 ? "good" : undefined)} />
+    <div className="mini-panel">
+      <div className="mini-title">运行状态</div>
+      <div className="mini-body">
+        <div className="meta-list">
+          {rows.map((row) => (
+            <MetaLine key={row.label} label={row.label} value={row.value} detail={row.detail} tone={row.tone} />
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -393,6 +449,32 @@ function MetaLine({ label, value, detail, title, tone }: {
   );
 }
 
+function SessionDebugPanel({ session, channelLabel, channelTitle, activityAt }: {
+  readonly session: SessionRecord;
+  readonly channelLabel: string;
+  readonly channelTitle: string;
+  readonly activityAt: unknown;
+}): React.JSX.Element {
+  return (
+    <details className="side-disclosure">
+      <summary>展开调试信息</summary>
+      <div className="meta-list">
+        <MetaLine label="频道" value={channelLabel} title={channelTitle} />
+        <MetaLine label="最近活动" value={fmtRelativeTime(activityAt)} detail={fmtDateTime(activityAt)} />
+        <MetaLine label="Root TS" value={String(session.rootThreadTs || "--")} />
+        <MetaLine label="Agent" value={shortValue(session.agentSessionId || "--", 28)} title={String(session.agentSessionId || "")} />
+        <MetaLine label="Session" value={shortValue(session.key || "--", 28)} title={String(session.key || "")} />
+        {session.activeTurnId ? (
+          <MetaLine label="Turn" value={shortValue(session.activeTurnId, 28)} title={String(session.activeTurnId)} />
+        ) : null}
+        {session.authProfileName ? (
+          <MetaLine label="Auth" value={shortValue(session.authProfileName, 28)} title={String(session.authProfileName)} />
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 function SessionTraceStats({ sessionKey }: { readonly sessionKey: string }): React.JSX.Element {
   const timelineSnapshot = useSyncExternalStore(
     (listener) => subscribeTimeline(sessionKey, listener),
@@ -401,7 +483,7 @@ function SessionTraceStats({ sessionKey }: { readonly sessionKey: string }): Rea
   );
   const payload = timelineSnapshot.payload as TimelinePayload | null;
   const trace = payload && !Array.isArray(payload) ? payload.trace : null;
-  if (!trace) return <div className="summary-detail">事件统计加载中</div>;
+  if (!trace) return <div className="summary-detail">活动构成加载中</div>;
   return <TraceSummary trace={trace} />;
 }
 
@@ -580,21 +662,31 @@ function TraceSummary({ trace }: { readonly trace: Record<string, any> }): React
     ["agent_assistant_message", "助手"],
     ["agent_tool_call", "工具"]
   ];
+  const summary = [
+    ["agent_user_message", "用户"],
+    ["agent_assistant_message", "助手"],
+    ["agent_tool_call", "工具"]
+  ]
+    .map(([key, label]) => label + " " + Number(categories[key] || 0))
+    .join(" · ");
   return (
-    <div className="trace-stat-panel">
-      <div className="trace-stat-head">
-        <strong>{eventCount}</strong>
-        <span>条 Agent 事件</span>
+    <details className="side-disclosure">
+      <summary title={summary}>{summary}</summary>
+      <div className="trace-stat-panel">
+        <div className="trace-stat-head">
+          <strong>{eventCount}</strong>
+          <span>条 Agent 事件</span>
+        </div>
+        <div className="trace-stat-grid">
+          {items.map(([key, label]) => (
+            <div key={key} className={"trace-stat " + classSafeValue(statusTone(key), "")}>
+              <span>{label}</span>
+              <strong>{Number(categories[key] || 0)}</strong>
+            </div>
+          ))}
+        </div>
       </div>
-      <div className="trace-stat-grid">
-        {items.map(([key, label]) => (
-          <div key={key} className={"trace-stat " + classSafeValue(statusTone(key), "")}>
-            <span>{label}</span>
-            <strong>{Number(categories[key] || 0)}</strong>
-          </div>
-        ))}
-      </div>
-    </div>
+    </details>
   );
 }
 

@@ -91,8 +91,8 @@
     .session-detail-panel { min-height: 0; }
     .session-detail-panel > .panel-body { flex: 1; min-height: 0; padding: 0; display: flex; flex-direction: column; overflow: hidden; }
     .session-detail-empty { min-height: 200px; display: grid; place-items: center; color: var(--muted); }
-    .selected-session-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
-    .session-detail-toolbar { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main actions"; gap: 8px; align-items: start; }
+    .selected-session-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+    .session-detail-toolbar { grid-template-areas: "main"; gap: 8px; align-items: start; }
     .session-detail-toolbar .session-detail-main { grid-area: main; }
     .session-detail-main { min-width: 0; display: grid; gap: 2px; }
     .session-detail-title-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
@@ -106,13 +106,17 @@
     .session-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
     .session-inspector { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 1px; align-items: stretch; background: var(--line); }
     .trace-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
-    .session-side-column { display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); gap: 1px; align-content: stretch; min-width: 0; min-height: 0; background: var(--line); }
+    .session-side-column { display: grid; grid-auto-rows: max-content; gap: 1px; align-content: start; min-width: 0; min-height: 0; background: var(--line); }
 
     .mini-panel { border: 1px solid var(--line); }
     .session-inspector .mini-panel { border: 0; min-width: 0; }
     .session-side-column .mini-panel { min-height: 0; background: var(--panel); overflow: hidden; }
-    .session-side-column .mini-panel:last-child { display: flex; flex-direction: column; }
-    .session-side-column .mini-panel:last-child .mini-body { min-height: 0; overflow: auto; }
+    .side-action-stack { display: grid; gap: 5px; }
+    .side-link-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+    .side-link-grid .link-button { justify-content: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .side-disclosure { min-width: 0; color: var(--muted); font-size: 10px; }
+    .side-disclosure summary { cursor: pointer; color: var(--cyan); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .side-disclosure .meta-list, .side-disclosure .trace-stat-panel { margin-top: 5px; }
     .mini-title { padding: 3px 6px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; text-transform: uppercase; }
     .mini-body { padding: 4px 6px; }
     .meta-list { display: grid; gap: 1px; background: var(--line); }
@@ -246,7 +250,7 @@
       .session-list { max-height: 32vh; min-height: 0; }
       .session-line { grid-template-columns: minmax(0, 1fr) auto; }
       .session-time { grid-column: 1 / -1; }
-      .session-detail-toolbar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "actions"; }
+      .session-detail-toolbar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main"; }
       .session-detail-actions { justify-content: flex-start; max-width: none; }
       .session-body { overflow: auto; }
       .session-inspector { height: auto; grid-template-columns: 1fr; align-items: start; }
@@ -273,6 +277,7 @@
       .auth-profile-switcher { grid-template-columns: minmax(0, 1fr); }
       .auth-profile-label { display: none; }
       .auth-profile-switcher .link-button { justify-content: center; }
+      .side-link-grid { grid-template-columns: minmax(0, 1fr); }
       .mini-body { padding: 4px; }
       .trace-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .quota-grid { grid-template-columns: minmax(0, 1fr); }

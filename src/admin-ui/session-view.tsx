@@ -280,7 +280,6 @@ function SessionDetail({ session, isPermalink = false }: {
           <div className="session-detail-subtitle" title={first}>{first}</div>
         </div>
         <div className="session-detail-actions">
-          <AuthProfilePanel session={session} profiles={authProfiles} currentProfile={currentProfile} />
           {!isPermalink ? (
             <a className="link-button" href={adminSessionPath(String(session.key || ""))}>打开 Session 页面</a>
           ) : (
@@ -300,6 +299,12 @@ function SessionDetail({ session, isPermalink = false }: {
             </div>
           </div>
           <div className="session-side-column">
+            <div className="mini-panel">
+              <div className="mini-title">账号额度</div>
+              <div className="mini-body">
+                <AuthProfilePanel session={session} profiles={authProfiles} currentProfile={currentProfile} />
+              </div>
+            </div>
             <div className="mini-panel">
               <div className="mini-title">会话属性</div>
               <div className="mini-body">

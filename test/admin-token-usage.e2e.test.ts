@@ -262,6 +262,7 @@ describe("admin token usage e2e", () => {
     expect(shell).toContain('id="topbar-quota"');
     expect(shell).toContain("session-react-root");
     expect(sessionViewSource).toContain("会话详情");
+    expect(sessionViewSource).toContain("账号额度");
     expect(sessionViewSource).toContain("会话属性");
     expect(sessionViewSource).toContain("事件统计");
     expect(sessionViewSource).toContain("trace-stat-grid");
@@ -275,6 +276,8 @@ describe("admin token usage e2e", () => {
     expect(sessionViewSource).toContain('<summary>原始计数</summary>');
     expect(adminCssSource).toContain(".usage-metric");
     expect(sessionViewSource).toContain("session-side-column");
+    expect(sessionViewSource).not.toContain(`<div className="session-detail-actions">
+          <AuthProfilePanel`);
     expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
     expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden;");
     expect(adminCssSource).toContain(".timeline { height: 100%; display: grid; gap: 0; overflow: auto;");

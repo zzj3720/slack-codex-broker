@@ -106,7 +106,7 @@
     .session-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
     .session-inspector { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 1px; align-items: stretch; background: var(--line); }
     .trace-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
-    .session-side-column { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 1px; align-content: stretch; min-width: 0; min-height: 0; background: var(--line); }
+    .session-side-column { display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); gap: 1px; align-content: stretch; min-width: 0; min-height: 0; background: var(--line); }
 
     .mini-panel { border: 1px solid var(--line); }
     .session-inspector .mini-panel { border: 0; min-width: 0; }
@@ -125,6 +125,7 @@
     .meta-line.danger strong { color: var(--red); }
     .auth-profile-panel { display: grid; gap: 6px; min-width: 0; }
     .auth-profile-compact-button { display: inline-flex; justify-content: center; align-items: center; min-width: 76px; padding: 2px 7px; border-color: var(--cyan); background: transparent; color: var(--cyan); font-weight: 700; white-space: nowrap; }
+    .session-side-column .auth-profile-compact-button { width: 100%; }
     .auth-profile-compact-button.danger { border-color: var(--red); color: var(--red); }
     .auth-profile-dialog { width: min(560px, 92vw); }
     .auth-profile-dialog-current { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 6px 8px; border: 1px solid var(--line); background: #05080c; color: var(--muted); font-size: 10px; }

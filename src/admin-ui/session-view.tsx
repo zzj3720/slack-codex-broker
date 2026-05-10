@@ -566,8 +566,6 @@ function TimelinePayloadView({ payload }: { readonly payload: TimelinePayload })
 
 function TraceSummary({ trace }: { readonly trace: Record<string, any> }): React.JSX.Element {
   const categories = trace.categories || {};
-  const source = String(trace.source || "unknown");
-  const sourceLabel = source === "broker_db" ? "DB Trace" : source;
   const eventCount = Number(trace.eventCount || 0);
   const items = [
     ["agent_system_prompt", "系统"],
@@ -580,7 +578,6 @@ function TraceSummary({ trace }: { readonly trace: Record<string, any> }): React
   return (
     <div className="trace-stat-panel">
       <div className="trace-stat-head">
-        <span className={"trace-source " + classSafeValue(statusTone(source), "")}>{sourceLabel}</span>
         <strong>{eventCount}</strong>
         <span>条 Agent 事件</span>
       </div>
@@ -661,14 +658,52 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
 function SessionUsage({ usage }: { readonly usage: Record<string, any> }): React.JSX.Element {
   const exact = Number(usage?.exactTurns || 0);
   const total = Number(usage?.turnCount || 0);
+  const totalTokens = Number(usage?.totalTokens || 0);
+  const inputTokens = Number(usage?.inputTokens || 0);
+  const cachedInputTokens = Number(usage?.cachedInputTokens || 0);
+  const outputTokens = Number(usage?.outputTokens || 0);
+  const reasoningTokens = Number(usage?.reasoningTokens || 0);
+  const missingTurns = Number(usage?.missingTurns || 0);
+  const estimatedTurns = Number(usage?.estimatedTurns || 0);
+  const averageTokens = total > 0 ? totalTokens / total : 0;
+  const cacheHitRate = inputTokens > 0 ? cachedInputTokens / inputTokens : null;
+  const generatedTokens = outputTokens + reasoningTokens;
+  const generatedShare = totalTokens > 0 ? generatedTokens / totalTokens : null;
+  const exactRate = total > 0 ? exact / total : 0;
   if (!total) return <div className="summary-detail">这个会话还没有用量记录</div>;
   return (
     <div className="quota-grid">
-      <QuotaLine label="总量" value={fmtTokens(usage.totalTokens)} detail={total + " 回合"} />
-      <QuotaLine label="输入" value={fmtTokens(usage.inputTokens)} detail={"缓存 " + fmtTokens(usage.cachedInputTokens)} />
-      <QuotaLine label="输出" value={fmtTokens(usage.outputTokens)} detail={"推理 " + fmtTokens(usage.reasoningTokens)} />
-      <QuotaLine label="精确" value={exact + "/" + total} detail={"缺失 " + (usage.missingTurns || 0)} />
-      <div className="summary-detail">最近：{fmtDateTime(usage.lastTurnAt)}</div>
+      <UsageMetric label="总消耗" value={fmtTokens(totalTokens)} detail={total + " 回合"} />
+      <UsageMetric label="平均每回合" value={fmtTokens(averageTokens)} detail="衡量单轮上下文重量" />
+      <UsageMetric label="缓存命中率" value={cacheHitRate === null ? "无输入" : fmtPercent(cacheHitRate)} detail="输入侧复用比例" />
+      <UsageMetric label="生成占比" value={generatedShare === null ? "无" : fmtPercent(generatedShare)} detail="输出和推理占总量" />
+      <UsageMetric label="记录完整度" value={fmtPercent(exactRate)} detail={missingTurns ? ("缺失 " + missingTurns + " 回合") : "全部精确"} />
+      <UsageMetric label="最近回合" value={fmtRelativeTime(usage.lastTurnAt)} detail={fmtDateTime(usage.lastTurnAt)} />
+      <details className="usage-raw-details">
+        <summary>原始计数</summary>
+        <div className="usage-raw-grid">
+          <QuotaLine label="输入" value={fmtTokens(inputTokens)} detail={"缓存 " + fmtTokens(cachedInputTokens)} />
+          <QuotaLine label="输出" value={fmtTokens(outputTokens)} detail={"推理 " + fmtTokens(reasoningTokens)} />
+          <QuotaLine label="记录" value={exact + "/" + total} detail={"估算 " + estimatedTurns + " · 缺失 " + missingTurns} />
+          {usage.model || usage.effort ? (
+            <QuotaLine label="模型" value={String(usage.model || "未知")} detail={String(usage.effort || "默认")} />
+          ) : null}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function UsageMetric({ label, value, detail }: {
+  readonly label: string;
+  readonly value: string;
+  readonly detail: string;
+}): React.JSX.Element {
+  return (
+    <div className="usage-metric">
+      <span>{label}</span>
+      <strong title={value}>{value}</strong>
+      <em title={detail}>{detail}</em>
     </div>
   );
 }
@@ -966,6 +1001,13 @@ function fmtTokens(value: unknown): string {
   if (count >= 1000000) return (count / 1000000).toFixed(2).replace(/\.00$/, "") + "M";
   if (count >= 1000) return (count / 1000).toFixed(1).replace(/\.0$/, "") + "K";
   return String(Math.round(count));
+}
+
+function fmtPercent(value: number): string {
+  if (!Number.isFinite(value)) return "0%";
+  const percent = Math.max(0, Math.min(999, value * 100));
+  if (percent >= 10) return Math.round(percent) + "%";
+  return percent.toFixed(1).replace(/\.0$/, "") + "%";
 }
 
 function shortValue(value: unknown, maxLength: number): string {

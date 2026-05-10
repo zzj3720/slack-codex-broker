@@ -305,7 +305,7 @@ export function initAdminPage(options = {}) {
         background_job: "后台任务",
         turn_signal: "回合信号",
         not_configured: "未关联",
-        broker_db: "DB Trace",
+        broker_db: "Trace",
         agent_system_prompt: "系统 Prompt",
         agent_memory: "记忆",
         agent_user_message: "用户消息",

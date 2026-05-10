@@ -267,8 +267,12 @@ describe("admin token usage e2e", () => {
     expect(sessionViewSource).toContain("trace-stat-grid");
     expect(adminCssSource).toContain(".trace-stat-grid { display: grid;");
     expect(sessionViewSource).not.toContain('className="trace-summary"');
+    expect(sessionViewSource).not.toContain("DB Trace");
     expect(sessionViewSource).toContain("Token 消耗");
-    expect(sessionViewSource).toContain('<QuotaLine label="总量"');
+    expect(sessionViewSource).toContain('<UsageMetric label="缓存命中率"');
+    expect(sessionViewSource).toContain('<UsageMetric label="平均每回合"');
+    expect(sessionViewSource).toContain('<summary>原始计数</summary>');
+    expect(adminCssSource).toContain(".usage-metric");
     expect(sessionViewSource).toContain("session-side-column");
     expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
     expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden;");

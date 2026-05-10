@@ -76,11 +76,13 @@ export async function handleAdminRequest(
     }
 
     const name = readString(body.name);
-    if (!name) {
+    const mode = readString(body.mode);
+    const autoMode = mode === "auto";
+    if (!name && !autoMode) {
       respondJson(response, 400, {
         ok: false,
         error: "missing_required_body",
-        required: ["name"]
+        required: ["name", "mode=auto"]
       });
       return true;
     }
@@ -88,7 +90,7 @@ export async function handleAdminRequest(
     await runAdminOperation(response, () =>
       options.adminService.switchSessionAuthProfile({
         sessionKey,
-        name
+        ...(autoMode ? { mode: "auto" as const } : { name })
       })
     );
     return true;

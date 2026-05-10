@@ -23,7 +23,8 @@ import type { RuntimeControl } from "./runtime-control.js";
 import {
   authProfileReasonLabel,
   evaluateAuthProfile,
-  findAuthProfile
+  findAuthProfile,
+  selectBestAuthProfile
 } from "./session-auth-profile-selector.js";
 import type {
   DeployReleaseOptions,
@@ -465,14 +466,23 @@ export class AdminService {
 
   async switchSessionAuthProfile(options: {
     readonly sessionKey: string;
-    readonly name: string;
+    readonly name?: string | undefined;
+    readonly mode?: "auto" | undefined;
   }): Promise<Record<string, unknown>> {
+    const selectionMode = options.mode === "auto" ? "auto" : "manual";
+    const request: JsonLike = selectionMode === "auto"
+      ? {
+          sessionKey: options.sessionKey,
+          mode: "auto"
+        }
+      : {
+          sessionKey: options.sessionKey,
+          mode: "manual",
+          name: options.name ?? ""
+        };
     return await this.#runTrackedOperation(
       "session_auth_profile_switch",
-      {
-        sessionKey: options.sessionKey,
-        name: options.name
-      },
+      request,
       async () => {
         const session = this.options.sessions.getSessionByKey(options.sessionKey);
         if (!session) {
@@ -480,9 +490,14 @@ export class AdminService {
         }
 
         const status = await this.options.authProfiles.listProfilesStatus();
-        const profile = findAuthProfile(status, options.name);
+        const profile = selectionMode === "auto"
+          ? selectBestAuthProfile(status)
+          : (options.name ? findAuthProfile(status, options.name) : null);
         if (!profile) {
-          throw new Error(`Auth profile not found: ${options.name}`);
+          if (selectionMode === "auto") {
+            throw new Error(`No usable auth profile: ${authProfileReasonLabel("no_usable_auth_profiles")}`);
+          }
+          throw new Error(`Auth profile not found: ${options.name ?? ""}`);
         }
 
         const evaluation = evaluateAuthProfile(profile);
@@ -492,10 +507,12 @@ export class AdminService {
 
         await this.options.sessions.resetInflightMessages(session.channelId, session.rootThreadTs);
         const switched = await this.options.sessions.switchSessionAuthProfileAndClearBlock(session.key, profile.name);
-        await this.#appendSessionAuthProfileSwitchTrace(switched, profile.name);
+        await this.#appendSessionAuthProfileSwitchTrace(switched, profile.name, selectionMode);
         const workerResume = await this.#resumeWorkerPendingSession(switched.key);
         return {
           ok: true,
+          selectedMode: selectionMode,
+          selectedProfileName: profile.name,
           session: this.#summarizeSessionByKey(switched.key),
           workerResume
         };
@@ -1227,10 +1244,12 @@ export class AdminService {
 
   async #appendSessionAuthProfileSwitchTrace(
     session: SlackSessionRecord,
-    profileName: string
+    profileName: string,
+    selectionMode: "manual" | "auto"
   ): Promise<void> {
     const now = new Date().toISOString();
     const sequence = this.options.sessions.listAgentTraceEvents(session.key, 10_000).length + 1;
+    const actionLabel = selectionMode === "auto" ? "自动分配到" : "人工切换到";
     await this.options.sessions.upsertAgentTraceEvent({
       id: randomUUID(),
       sessionKey: session.key,
@@ -1239,11 +1258,12 @@ export class AdminService {
       at: now,
       sequence,
       title: "Auth Profile 已切换",
-      summary: `人工切换到 ${profileName}，继续处理待处理消息`,
-      detail: JSON.stringify({ profileName }, null, 2),
+      summary: `${actionLabel} ${profileName}，继续处理待处理消息`,
+      detail: JSON.stringify({ profileName, selectionMode }, null, 2),
       status: "completed",
       metadata: {
-        profileName
+        profileName,
+        selectionMode
       },
       createdAt: now,
       updatedAt: now

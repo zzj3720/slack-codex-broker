@@ -286,7 +286,7 @@ describe("admin token usage e2e", () => {
           <AuthProfilePanel`);
     expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
     expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden;");
-    expect(adminCssSource).toContain(".timeline { height: 100%; display: grid; gap: 0; overflow: auto;");
+    expect(adminCssSource).toContain(".timeline { height: 100%; display: grid; grid-auto-rows: max-content; align-content: start;");
     expect(sessionViewSource).not.toContain("SessionHeaderPill");
     expect(sessionViewSource).not.toContain("session-detail-meta-strip");
     expect(adminCssSource).not.toContain(".session-permalink-panel .timeline");

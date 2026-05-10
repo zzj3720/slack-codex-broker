@@ -40,6 +40,7 @@ type TimelinePayload = {
 } | TimelineEvent[];
 
 const sessionFilters = ["ongoing", "all", "active", "inbound", "jobs", "issues", "usage"];
+const AUTO_AUTH_PROFILE_VALUE = "__auto_auth_profile__";
 
 export function AdminSessionsView(): React.JSX.Element {
   const permalinkSessionKey = readPermalinkSessionKey();
@@ -577,7 +578,7 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
   readonly currentProfile?: SessionRecord | undefined;
 }): React.JSX.Element {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const [selected, setSelected] = useState(String(session.authProfileName || ""));
+  const [selected, setSelected] = useState(() => initialAuthProfileSelection(session));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const currentProfile = providedCurrentProfile ?? profiles.find((profile) => profile.name === session.authProfileName);
@@ -588,7 +589,7 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
   const compactLabel = currentProfile ? profileQuotaLabel(currentProfile) : (blocked ? "账号不可用" : "账号");
 
   useEffect(() => {
-    setSelected(String(session.authProfileName || ""));
+    setSelected(initialAuthProfileSelection(session));
     setMessage(null);
   }, [session.key, session.authProfileName, session.authBlockedAt]);
 
@@ -613,7 +614,8 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
   }
 
   async function switchProfile(): Promise<void> {
-    if (!selected || selected === session.authProfileName) {
+    const autoSelected = selected === AUTO_AUTH_PROFILE_VALUE;
+    if (!autoSelected && (!selected || selected === session.authProfileName)) {
       return;
     }
 
@@ -623,11 +625,11 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
       await requestJson("/admin/api/sessions/" + encodeURIComponent(String(session.key || "")) + "/auth-profile", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: selected })
+        body: JSON.stringify(autoSelected ? { mode: "auto" } : { name: selected })
       });
       const timelinePayload = await requestJson(sessionTimelineApiPath(String(session.key || "")));
       publishTimelinePayload(String(session.key || ""), timelinePayload as TimelinePayload);
-      setMessage("已切换，正在恢复待处理消息");
+      setMessage(autoSelected ? "已自动分配，正在恢复待处理消息" : "已切换，正在恢复待处理消息");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -653,7 +655,7 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
           </div>
           {currentProfile ? (
             <div className="auth-profile-dialog-current">
-              <span>周额度</span>
+              <span>额度</span>
               <strong>{profileQuotaLabel(currentProfile)}</strong>
             </div>
           ) : null}
@@ -671,6 +673,7 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
               onChange={(event) => setSelected(event.target.value)}
             >
               <option value="">选择账号</option>
+              <option value={AUTO_AUTH_PROFILE_VALUE}>自动分配（按额度规则）</option>
               {profiles.map((profile) => (
                 <option key={profile.name} value={profile.name} disabled={!profileIsSelectable(profile)}>
                   {profileOptionLabel(profile)}
@@ -680,10 +683,10 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
             <button
               type="button"
               className="link-button"
-              disabled={busy || !selected || selected === session.authProfileName}
+              disabled={busy || (selected !== AUTO_AUTH_PROFILE_VALUE && (!selected || selected === session.authProfileName))}
               onClick={() => { void switchProfile(); }}
             >
-              切换并继续处理
+              {selected === AUTO_AUTH_PROFILE_VALUE ? "自动分配并继续处理" : "切换并继续处理"}
             </button>
           </div>
           {message ? <div className="summary-detail">{message}</div> : null}
@@ -694,6 +697,10 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
       </dialog>
     </div>
   );
+}
+
+function initialAuthProfileSelection(session: SessionRecord): string {
+  return session.authBlockedAt ? AUTO_AUTH_PROFILE_VALUE : String(session.authProfileName || "");
 }
 
 function TimelinePayloadView({ payload }: { readonly payload: TimelinePayload }): React.JSX.Element {

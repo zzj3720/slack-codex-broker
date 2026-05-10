@@ -142,7 +142,7 @@
     .auth-profile-label { color: var(--muted); font-size: 10px; white-space: nowrap; }
 
     .session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
-    .timeline { height: 100%; display: grid; gap: 0; overflow: auto; border: 0; }
+    .timeline { height: 100%; display: grid; grid-auto-rows: max-content; align-content: start; gap: 0; overflow: auto; border: 0; }
     .timeline-event { display: grid; grid-template-columns: 72px 90px minmax(0, 1fr); gap: 6px; align-items: start; padding: 4px 6px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
     .timeline-event:last-child { border-bottom: 0; }
     .timeline-main { min-width: 0; }

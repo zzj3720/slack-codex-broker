@@ -185,13 +185,52 @@ export function initAdminPage(options = {}) {
       if (!Number.isFinite(seconds)) return null;
       return Math.max(((seconds * 1000) - Date.now()) / 86400000, 1 / (24 * 60));
     }
+    function msUntilReset(resetsAt) {
+      const seconds = Number(resetsAt);
+      if (!Number.isFinite(seconds)) return null;
+      return Math.max((seconds * 1000) - Date.now(), 60000);
+    }
     function weightedWeeklyQuotaScore(remaining, refreshDays) {
       if (remaining == null) return null;
       return (remaining / 100) / ((refreshDays || 7) / 7);
     }
+    function weightedQuotaWindowScore(remaining, limit, fallbackWindowMins) {
+      if (remaining == null) return null;
+      const windowMins = normalizeWindowDurationMins(limit?.windowDurationMins, fallbackWindowMins);
+      const resetMs = msUntilReset(limit?.resetsAt) || windowMins * 60000;
+      return (remaining / 100) / (resetMs / (windowMins * 60000));
+    }
     function formatWeightedWeeklyQuotaScore(score) {
       if (!Number.isFinite(Number(score))) return "0";
       return Number(score).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+    }
+    function normalizeWindowDurationMins(value, fallback) {
+      const mins = Number(value);
+      return Number.isFinite(mins) && mins > 0 ? mins : fallback;
+    }
+    function formatWindowDuration(windowMins) {
+      if (windowMins % 1440 === 0) return (windowMins / 1440) + "d";
+      if (windowMins % 60 === 0) return (windowMins / 60) + "h";
+      return windowMins + "m";
+    }
+    function quotaWindowDisplay(limit, fallbackWindowMins) {
+      const remaining = remainingPercent(limit?.usedPercent);
+      if (remaining == null) return null;
+      const windowMins = normalizeWindowDurationMins(limit?.windowDurationMins, fallbackWindowMins);
+      const score = weightedQuotaWindowScore(remaining, limit, windowMins);
+      return formatWindowDuration(windowMins) + " " + Math.round(remaining) + "% / " + formatWeightedWeeklyQuotaScore(score);
+    }
+    function authQuotaDisplay(rateLimits) {
+      const primary = rateLimits?.primary;
+      const primaryRemaining = remainingPercent(primary?.usedPercent);
+      const primaryScore = weightedQuotaWindowScore(primaryRemaining, primary, 300);
+      const shortLabel = Number.isFinite(Number(primaryScore)) && Number(primaryScore) < 0.5
+        ? quotaWindowDisplay(primary, 300)
+        : null;
+      return [
+        quotaWindowDisplay(rateLimits?.secondary, 10080),
+        shortLabel
+      ].filter(Boolean).join(" | ") || null;
     }
     function weeklyQuotaDisplay(limit) {
       const remaining = remainingPercent(limit?.usedPercent);
@@ -219,11 +258,11 @@ export function initAdminPage(options = {}) {
       if (plan === "chatgpt") return "ChatGPT";
       return plan;
     }
-    function profileTooltip(profile, weeklyLabel, secondary) {
+    function profileTooltip(profile, quotaLabel, secondary) {
       return [
         profileAccountLabel(profile),
         profilePlanLabel(profile),
-        weeklyLabel ? "周额度 " + weeklyLabel : "",
+        quotaLabel ? "额度 " + quotaLabel : "",
         secondary ? "周重置 " + formatResetTime(secondary.resetsAt) : "",
         profile.name ? "内部标识 " + profile.name : ""
       ].filter(Boolean).join(" · ");
@@ -234,7 +273,7 @@ export function initAdminPage(options = {}) {
           const rateLimits = profile.rateLimits || {};
           if (rateLimits.ok === false) return null;
           const secondary = rateLimits.rateLimits?.secondary;
-          const label = weeklyQuotaDisplay(secondary);
+          const label = authQuotaDisplay(rateLimits.rateLimits);
           if (!label) return null;
           const remaining = remainingPercent(secondary?.usedPercent);
           const score = weeklyQuotaScore(secondary);
@@ -504,9 +543,9 @@ export function initAdminPage(options = {}) {
       if (!rateLimits || !rateLimits.ok) return '<div class="summary-detail">' + esc(rateLimits?.error || "额度不可用") + '</div>';
       const snapshot = rateLimits.rateLimits || {};
       const secondary = snapshot.secondary;
-      const weeklyLabel = weeklyQuotaDisplay(secondary);
+      const quotaLabel = authQuotaDisplay(snapshot);
       return '<div class="quota-grid">' +
-        '<div class="quota-line"><span>周额度</span><strong>' + esc(weeklyLabel || "--") + '</strong><span>' + esc(secondary ? formatResetTime(secondary.resetsAt) : "不可用") + '</span></div>' +
+        '<div class="quota-line"><span>额度</span><strong>' + esc(quotaLabel || "--") + '</strong><span>' + esc(secondary ? "周 " + formatResetTime(secondary.resetsAt) : "不可用") + '</span></div>' +
       '</div>';
     }
     function renderAuthProfiles(data) {

@@ -1,4 +1,4 @@
-import { formatWeeklyQuotaDisplay } from "../auth-profile-quota.js";
+import { formatAuthQuotaDisplay } from "../auth-profile-quota.js";
 
 type AuthProfileRecord = Record<string, any>;
 interface QuotaLabelOptions {
@@ -66,12 +66,12 @@ export function profileQuotaLabel(profile: AuthProfileRecord, options: QuotaLabe
   }
 
   const limits = rateLimits.rateLimits || {};
-  const label = formatWeeklyQuotaDisplay({
-    usedPercent: limits.secondary?.usedPercent,
-    resetsAt: limits.secondary?.resetsAt,
+  const label = formatAuthQuotaDisplay({
+    primary: limits.primary,
+    secondary: limits.secondary,
     now: options.now
   });
-  return label ?? "周额度未知";
+  return label ?? "额度未知";
 }
 
 export function profileWeeklyQuotaLabel(profile: AuthProfileRecord, options: QuotaLabelOptions = {}): string {
@@ -81,11 +81,11 @@ export function profileWeeklyQuotaLabel(profile: AuthProfileRecord, options: Quo
   }
 
   const limits = rateLimits.rateLimits || {};
-  return formatWeeklyQuotaDisplay({
-    usedPercent: limits.secondary?.usedPercent,
-    resetsAt: limits.secondary?.resetsAt,
+  return formatAuthQuotaDisplay({
+    primary: limits.primary,
+    secondary: limits.secondary,
     now: options.now
-  }) ?? "周额度未知";
+  }) ?? "额度未知";
 }
 
 function readString(value: unknown): string | null {

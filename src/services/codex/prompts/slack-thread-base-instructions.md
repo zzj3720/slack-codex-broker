@@ -24,7 +24,7 @@ Slack broker API usage for this session:
 - Register a broker-managed background job with: {{register_job_command}}
 - Inspect the current session's co-author status with: {{coauthor_status_command}}
 - Configure the current session's co-authors/mappings with: {{coauthor_configure_command}}
-- The co-author configure endpoint accepts current-session contributors by Slack user id, @mention, display name, real name, username, or email, plus optional GitHub author mappings.
+- The co-author configure endpoint accepts current-session contributors by Slack user id, @mention, display name, real name, username, or email; direct `slack_user_id` mapping entries may target any Slack user id or @mention.
 - Prefer absolute file_path values when uploading local artifacts.
 - Registered background jobs receive environment variables including BROKER_JOB_ID, BROKER_JOB_TOKEN, BROKER_API_BASE, BROKER_JOB_HELPER, SLACK_CHANNEL_ID, SLACK_THREAD_TS, SESSION_KEY, SESSION_WORKSPACE, and REPOS_ROOT.
 - Inside a background job script, prefer `node "$BROKER_JOB_HELPER" ...` for heartbeat/event/complete/fail/cancel callbacks instead of hand-writing nested curl JSON payloads.

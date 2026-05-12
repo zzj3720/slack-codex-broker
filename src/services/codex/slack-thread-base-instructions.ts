@@ -64,6 +64,10 @@ export async function buildSlackThreadBaseInstructions(
       {
         slack_user: "Alice Example",
         github_author: "Alice Example <alice@example.com>"
+      },
+      {
+        slack_user_id: "<@U12345678>",
+        github_author: "Bot Reviewer <bot@example.com>"
       }
     ]
   });

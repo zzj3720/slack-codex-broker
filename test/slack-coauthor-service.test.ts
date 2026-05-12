@@ -454,4 +454,52 @@ describe("SlackCoauthorService", () => {
     expect(mappings.getMapping("U1")).toBeUndefined();
     expect(mappings.getMapping("U2")).toBeUndefined();
   });
+
+  it("allows direct Slack user ids or mentions in configure-session mappings outside the co-author candidates", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-sessions-"));
+    tempDirs.push(stateDir, sessionsRoot);
+
+    const sessions = new SessionManager({
+      stateStore: new StateStore(stateDir, sessionsRoot),
+      sessionsRoot
+    });
+    await sessions.load();
+    const session = await sessions.ensureSession("C777", "222.333");
+    const mappings = new GitHubAuthorMappingService({ stateDir });
+    await mappings.load();
+
+    const service = new SlackCoauthorService({
+      sessions,
+      mappings,
+      slackApi: {
+        getUserIdentity: vi.fn(async (userId: string) => ({
+          userId,
+          mention: `<@${userId}>`,
+          realName: userId === "U3720" ? "codex-3720" : userId
+        })),
+        postEphemeral: vi.fn(),
+        openView: vi.fn()
+      } as never
+    });
+
+    await service.configureSessionCoauthors({
+      cwd: session.workspacePath,
+      mappings: [
+        {
+          slackUserId: "<@U3720>",
+          githubAuthor: "3720 Bot <bot@example.com>"
+        }
+      ]
+    });
+
+    expect(mappings.getMapping("U3720")).toMatchObject({
+      slackUserId: "U3720",
+      githubAuthor: "3720 Bot <bot@example.com>",
+      source: "manual",
+      slackIdentity: {
+        realName: "codex-3720"
+      }
+    });
+  });
 });

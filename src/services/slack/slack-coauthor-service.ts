@@ -668,12 +668,8 @@ export class SlackCoauthorService {
     readonly githubAuthor: string;
   }> {
     return (mappings ?? []).map((entry) => {
-      const directUserId = entry.slackUserId?.trim();
+      const directUserId = normalizeDirectSlackUserId(entry.slackUserId);
       if (directUserId) {
-        if (!status.candidates.some((candidate) => candidate.userId === directUserId)) {
-          throw new Error(`Unknown co-author candidate: ${entry.slackUserId}`);
-        }
-
         return {
           slackUserId: directUserId,
           githubAuthor: entry.githubAuthor
@@ -857,4 +853,22 @@ function buildGitHubAuthorHint(
 function normalizeUserReference(value: string | undefined): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized || undefined;
+}
+
+function normalizeDirectSlackUserId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const mention = trimmed.match(/^<@([UW][A-Z0-9]+)(?:\|[^>]+)?>$/i);
+  if (mention?.[1]) {
+    return mention[1];
+  }
+
+  if (/^[UW][A-Z0-9]+$/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return undefined;
 }

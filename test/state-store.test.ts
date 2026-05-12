@@ -1,13 +1,70 @@
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { Readable } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import { CURRENT_STATE_SCHEMA_VERSION, STATE_DATABASE_FILENAME, StateStore } from "../src/store/state-store.js";
+import {
+  CURRENT_STATE_SCHEMA_VERSION,
+  STATE_DATABASE_FILENAME,
+  STATE_STORE_BUSY_TIMEOUT_MS,
+  StateStore
+} from "../src/store/state-store.js";
 
 describe("StateStore", () => {
+  it("does not rerun migrations on repeated load calls", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+
+    const lockConnection = new DatabaseSync(path.join(stateDir, STATE_DATABASE_FILENAME));
+    lockConnection.exec("BEGIN IMMEDIATE");
+    try {
+      const startedAt = Date.now();
+      await expect(store.load()).resolves.toBeUndefined();
+      expect(Date.now() - startedAt).toBeLessThan(250);
+    } finally {
+      lockConnection.exec("ROLLBACK");
+      lockConnection.close();
+      store.close();
+    }
+  }, STATE_STORE_BUSY_TIMEOUT_MS + 1_000);
+
+  it("waits for short-lived startup write locks before running migrations", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    await fs.mkdir(stateDir, { recursive: true });
+
+    const locker = spawn(process.execPath, ["-e", LOCK_DATABASE_SCRIPT], {
+      env: {
+        ...process.env,
+        DB_PATH: path.join(stateDir, STATE_DATABASE_FILENAME)
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    try {
+      await waitForOutput(locker, "locked");
+
+      const store = new StateStore(stateDir, sessionsRoot);
+      try {
+        const startedAt = Date.now();
+        await expect(store.load()).resolves.toBeUndefined();
+        expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
+      } finally {
+        store.close();
+      }
+    } finally {
+      if (locker.exitCode === null) {
+        locker.kill();
+      }
+    }
+  }, STATE_STORE_BUSY_TIMEOUT_MS + 1_000);
+
   it("persists sessions and processed events in the SQLite database", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
     const sessionsRoot = path.join(stateDir, "sessions");
@@ -605,3 +662,52 @@ describe("StateStore", () => {
     }
   });
 });
+
+const LOCK_DATABASE_SCRIPT = `
+const { DatabaseSync } = require("node:sqlite");
+
+const database = new DatabaseSync(process.env.DB_PATH);
+database.exec("PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS lock_probe (id INTEGER); BEGIN IMMEDIATE; INSERT INTO lock_probe (id) VALUES (1);");
+process.stdout.write("locked\\n");
+setTimeout(() => {
+  try {
+    database.exec("ROLLBACK");
+  } finally {
+    database.close();
+  }
+}, 350);
+`;
+
+function waitForOutput(child: ChildProcessByStdio<null, Readable, Readable>, marker: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for child output ${marker}. stdout=${stdout} stderr=${stderr}`));
+    }, 2_000);
+    const onStdout = (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+      if (stdout.includes(marker)) {
+        cleanup();
+        resolve();
+      }
+    };
+    const onStderr = (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      reject(new Error(`Child exited before ${marker}: code=${code} signal=${signal} stdout=${stdout} stderr=${stderr}`));
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stdout.off("data", onStdout);
+      child.stderr.off("data", onStderr);
+      child.off("exit", onExit);
+    };
+    child.stdout.on("data", onStdout);
+    child.stderr.on("data", onStderr);
+    child.once("exit", onExit);
+  });
+}

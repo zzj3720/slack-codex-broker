@@ -20,6 +20,7 @@ import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
 export const CURRENT_STATE_SCHEMA_VERSION = 12;
+export const STATE_STORE_BUSY_TIMEOUT_MS = 5_000;
 const ADMIN_EVENT_RETENTION_LIMIT = 20_000;
 
 type SqlValue = string | number | bigint | null;
@@ -490,6 +491,7 @@ export class StateStore {
   readonly #stateDir: string;
   readonly #sessionsRoot: string;
   #database: DatabaseSync | undefined;
+  #loaded = false;
 
   constructor(stateDir: string, sessionsRoot: string) {
     this.#stateDir = stateDir;
@@ -498,13 +500,18 @@ export class StateStore {
 
   async load(): Promise<void> {
     await ensureDir(this.#stateDir);
+    if (this.#loaded) {
+      return;
+    }
     this.#openDatabase();
     this.#migrate();
+    this.#loaded = true;
   }
 
   close(): void {
     this.#database?.close();
     this.#database = undefined;
+    this.#loaded = false;
   }
 
   listSessions(): SlackSessionRecord[] {
@@ -1125,6 +1132,7 @@ export class StateStore {
       PRAGMA foreign_keys = ON;
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
+      PRAGMA busy_timeout = ${STATE_STORE_BUSY_TIMEOUT_MS};
     `);
   }
 

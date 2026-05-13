@@ -539,6 +539,9 @@ function streamAdminEvents(
   url: URL
 ): void {
   let cursor = readEventCursor(url, request);
+  if (cursor <= 0) {
+    cursor = adminService.getRealtimeCursor();
+  }
   let closed = false;
   let draining = false;
 

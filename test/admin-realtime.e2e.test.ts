@@ -63,6 +63,44 @@ describe("admin realtime e2e", () => {
     });
   });
 
+  it("starts zero-cursor streams from the current tail instead of replaying retained events", async () => {
+    const fixture = await startAdminFixture();
+    await fixture.sessions.ensureSession("COLD", "100.000", {
+      channelName: "old"
+    });
+
+    const controller = new AbortController();
+    const eventPromise = readSseEvent(`${fixture.baseUrl}/admin/api/events?after=0`, controller.signal);
+
+    await delay(25);
+    const writerStore = new StateStore(fixture.config.stateDir, fixture.config.sessionsRoot);
+    await writerStore.load();
+    cleanups.push(async () => {
+      writerStore.close();
+    });
+    await writerStore.upsertSession({
+      key: "CNEW:200.000",
+      channelId: "CNEW",
+      channelName: "new",
+      rootThreadTs: "200.000",
+      workspacePath: path.join(fixture.config.sessionsRoot, "CNEW-200-000", "workspace"),
+      createdAt: "2026-05-09T00:00:02.000Z",
+      updatedAt: "2026-05-09T00:00:03.000Z"
+    });
+
+    const message = await eventPromise;
+    controller.abort();
+    expect(message.id).toBe("2");
+    expect(message.data).toMatchObject({
+      ok: true,
+      event: {
+        sequence: 2,
+        kind: "session.upsert",
+        sessionKey: "CNEW:200.000"
+      }
+    });
+  });
+
   it("replays missed events from the supplied cursor", async () => {
     const fixture = await startAdminFixture();
     await fixture.sessions.ensureSession("C123", "111.222", {

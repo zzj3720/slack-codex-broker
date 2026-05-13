@@ -401,6 +401,10 @@ export class AdminService {
     };
   }
 
+  getRealtimeCursor(): number {
+    return this.#latestRealtimeSequence();
+  }
+
   async addAuthProfile(options: {
     readonly name?: string | undefined;
     readonly authJsonContent: string;

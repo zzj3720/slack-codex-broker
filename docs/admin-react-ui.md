@@ -64,6 +64,8 @@ Status data flows through a React hook backed by `admin-status-store`:
 - realtime events go through `connectAdminRealtime`, but only after the initial
   session index publishes its realtime cursor, so a page load does not replay
   the retained event log from sequence 0;
+- realtime SSE treats a zero cursor as "start at the current tail" instead of
+  replaying the full retained event log;
 - realtime `trace.append` events stream the new timeline item only. They must
   not recompute full session summaries or trace aggregates for every replayed
   event;
@@ -116,6 +118,8 @@ After the React migration, GitHub account work continues in React:
   unbounded `inbound_messages` read.
 - The React shell connects realtime only after publishing the initial
   `/admin/api/sessions` cursor.
+- `/admin/api/events?after=0` does not replay retained history; it waits for
+  events created after the stream opens.
 - `/admin/api/events` does not recompute full session summaries or trace
   aggregates for every `trace.append` event.
 - `pnpm test` and `pnpm build` pass.

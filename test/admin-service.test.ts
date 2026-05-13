@@ -163,6 +163,71 @@ describe("AdminService", () => {
     expect(inboundCalls).toEqual([]);
   });
 
+  it("resolves session Slack thread links through Slack permalinks", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-thread-link-"));
+    tempDirs.push(dataRoot);
+
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      DATA_ROOT: dataRoot
+    } as NodeJS.ProcessEnv);
+
+    await fs.mkdir(config.codexHome, { recursive: true });
+    await fs.mkdir(config.logDir, { recursive: true });
+
+    const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot: config.sessionsRoot
+    });
+    await sessions.load();
+    await sessions.ensureSession("C123", "111.222");
+
+    const permalinkCalls: Array<Record<string, string>> = [];
+    const service = new AdminService({
+      config,
+      startedAt: new Date("2026-03-19T00:00:00.000Z"),
+      sessions,
+      authProfiles: {
+        listProfilesStatus: async () => ({
+          managedRoot: path.join(dataRoot, "auth-profiles"),
+          profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
+          profiles: []
+        })
+      } as never,
+      githubAuthorMappings: {
+        load: async () => {},
+        listMappings: () => []
+      } as never,
+      runtime: {
+        restartRuntime: async () => {},
+        readAccountSummary: async () => ({
+          account: null,
+          requiresOpenaiAuth: true
+        }),
+        readAccountRateLimits: async () => ({
+          rateLimits: null,
+          rateLimitsByLimitId: {}
+        })
+      } as never,
+      slackConversations: {
+        getConversationInfo: async () => null,
+        getPermalink: async (options) => {
+          permalinkCalls.push(options);
+          return "https://workspace.slack.com/archives/C123/p111222?thread_ts=111.222&cid=C123";
+        }
+      }
+    });
+
+    await expect(service.getSessionSlackThreadUrl("C123:111.222")).resolves.toEqual({
+      ok: true,
+      sessionKey: "C123:111.222",
+      url: "https://workspace.slack.com/archives/C123/p111222?thread_ts=111.222&cid=C123"
+    });
+    expect(permalinkCalls).toEqual([{ channelId: "C123", messageTs: "111.222" }]);
+  });
+
   it("exposes GitHub author mappings and OAuth bindings as unified GitHub accounts", async () => {
     const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-github-accounts-"));
     tempDirs.push(dataRoot);

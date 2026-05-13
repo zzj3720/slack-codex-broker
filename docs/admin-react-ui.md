@@ -72,6 +72,10 @@ Status data flows through a React hook backed by `admin-status-store`:
 - realtime `trace.append` events stream the new timeline item only. They must
   not recompute full session summaries or trace aggregates for every replayed
   event;
+- the session detail "打开 Slack Thread" action resolves a real Slack message
+  permalink from the backend before opening it. It must not rely on a
+  client-side or backend hand-built `slack.com/app_redirect` URL, because that
+  redirect does not reliably land inside the thread view;
 - components read status with `useSyncExternalStore`.
 
 No business UI may use `getElementById`, `querySelector`, or `innerHTML` for
@@ -134,4 +138,8 @@ After the React migration, GitHub account work continues in React:
   events created after the stream opens.
 - `/admin/api/events` does not recompute full session summaries or trace
   aggregates for every `trace.append` event.
+- Clicking `打开 Slack Thread` calls a session-specific admin API that resolves
+  Slack's permalink for `channelId + rootThreadTs`, then opens that permalink.
+  If permalink resolution fails, the UI shows the error instead of silently
+  opening the old `slack.com/app_redirect` fallback.
 - `pnpm test` and `pnpm build` pass.

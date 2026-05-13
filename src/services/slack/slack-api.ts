@@ -320,6 +320,28 @@ export class SlackApi {
     }
   }
 
+  async getPermalink(options: {
+    readonly channelId: string;
+    readonly messageTs: string;
+  }): Promise<string> {
+    const response = await this.#post<{
+      permalink?: string;
+    }>(
+      "chat.getPermalink",
+      {
+        channel: options.channelId,
+        message_ts: options.messageTs
+      },
+      this.#botToken
+    );
+
+    if (!response.permalink) {
+      throw new Error("Slack chat.getPermalink response did not include permalink");
+    }
+
+    return response.permalink;
+  }
+
   async listThreadMessages(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;

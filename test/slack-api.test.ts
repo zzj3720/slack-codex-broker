@@ -409,6 +409,46 @@ describe("SlackApi.getUserIdentity", () => {
   });
 });
 
+describe("SlackApi.getPermalink", () => {
+  it("uses Slack chat.getPermalink for message links", async () => {
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (!url.endsWith("/chat.getPermalink")) {
+        throw new Error(`Unexpected fetch ${url}`);
+      }
+
+      expect(init?.method).toBe("POST");
+      const body = String(init?.body);
+      expect(body).toContain("channel=C123");
+      expect(body).toContain("message_ts=111.222");
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          permalink: "https://workspace.slack.com/archives/C123/p111222?thread_ts=111.222&cid=C123"
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new SlackApi({
+      baseUrl: "https://slack.test/api",
+      appToken: "xapp-test",
+      botToken: "xoxb-test"
+    });
+
+    await expect(api.getPermalink({
+      channelId: "C123",
+      messageTs: "111.222"
+    })).resolves.toBe("https://workspace.slack.com/archives/C123/p111222?thread_ts=111.222&cid=C123");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("SlackApi interactivity helpers", () => {
   it("posts ephemeral thread prompts and opens views", async () => {
     const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {

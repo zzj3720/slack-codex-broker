@@ -384,6 +384,41 @@ function SessionActions({ session, profiles, currentProfile, isPermalink }: {
   readonly currentProfile?: SessionRecord | undefined;
   readonly isPermalink: boolean;
 }): React.JSX.Element {
+  const sessionKey = String(session.key || "");
+  const [threadBusy, setThreadBusy] = useState(false);
+  const [threadError, setThreadError] = useState<string | null>(null);
+
+  async function openSlackThread(): Promise<void> {
+    if (!sessionKey || threadBusy) {
+      return;
+    }
+    const opened = window.open("", "_blank");
+    setThreadBusy(true);
+    setThreadError(null);
+    try {
+      const payload = await requestJson(slackThreadUrlApiPath(sessionKey)) as Record<string, any>;
+      const url = typeof payload.url === "string" ? payload.url : "";
+      if (!url) {
+        throw new Error("Slack permalink missing");
+      }
+      if (opened) {
+        try {
+          opened.opener = null;
+        } catch {}
+        opened.location.href = url;
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      if (opened) {
+        opened.close();
+      }
+      setThreadError("Slack Thread 跳转失败：" + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setThreadBusy(false);
+    }
+  }
+
   return (
     <div className="side-action-stack">
       <AuthProfilePanel session={session} profiles={profiles} currentProfile={currentProfile} />
@@ -395,10 +430,16 @@ function SessionActions({ session, profiles, currentProfile, isPermalink }: {
         ) : (
           <a className="link-button" href="/admin">返回会话索引</a>
         )}
-        {session.threadUrl ? (
-          <a className="link-button" href={session.threadUrl} target="_blank" rel="noreferrer">打开 Slack Thread</a>
-        ) : null}
+        <button
+          type="button"
+          className="link-button"
+          disabled={threadBusy || !sessionKey}
+          onClick={() => { void openSlackThread(); }}
+        >
+          {threadBusy ? "正在打开 Slack Thread" : "打开 Slack Thread"}
+        </button>
       </div>
+      {threadError ? <div className="summary-detail">{threadError}</div> : null}
     </div>
   );
 }
@@ -1250,6 +1291,10 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
 
 function sessionTimelineApiPath(sessionKey: string): string {
   return "/admin/api/sessions/" + encodeURIComponent(sessionKey) + "/timeline";
+}
+
+function slackThreadUrlApiPath(sessionKey: string): string {
+  return "/admin/api/sessions/" + encodeURIComponent(sessionKey) + "/slack-thread-url";
 }
 
 function githubIdentityApiPath(sessionKey: string): string {

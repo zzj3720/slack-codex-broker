@@ -92,6 +92,10 @@ interface SlackConversationLookup {
     readonly channelType?: string | undefined;
   } | null>;
   getUserIdentity?(userId: string): Promise<SlackUserIdentity | null>;
+  getPermalink?(options: {
+    readonly channelId: string;
+    readonly messageTs: string;
+  }): Promise<string | null>;
 }
 
 interface OperationPreflight {
@@ -357,6 +361,58 @@ export class AdminService {
       trace: summarizeAgentTrace(agentEvents, allAgentEvents),
       events: [...events, ...agentEvents.map(agentTraceEventToTimelineEvent)].sort(compareTimelineEvents)
     };
+  }
+
+  async getSessionSlackThreadUrl(sessionKey: string): Promise<Record<string, unknown>> {
+    await this.#refreshSessions();
+    const session = this.options.sessions.getSessionByKey(sessionKey);
+    if (!session) {
+      return {
+        ok: false,
+        error: "session_not_found",
+        sessionKey
+      };
+    }
+
+    const getPermalink = this.options.slackConversations?.getPermalink;
+    if (!getPermalink) {
+      return {
+        ok: false,
+        error: "slack_permalink_unavailable",
+        sessionKey
+      };
+    }
+
+    try {
+      const url = await getPermalink.call(this.options.slackConversations, {
+        channelId: session.channelId,
+        messageTs: session.rootThreadTs
+      });
+      if (!url) {
+        return {
+          ok: false,
+          error: "slack_permalink_unavailable",
+          sessionKey
+        };
+      }
+      return {
+        ok: true,
+        sessionKey,
+        url
+      };
+    } catch (error) {
+      logger.warn("Failed to resolve Slack thread permalink", {
+        sessionKey,
+        channelId: session.channelId,
+        rootThreadTs: session.rootThreadTs,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        sessionKey
+      };
+    }
   }
 
   async getOperationPreflight(options: {

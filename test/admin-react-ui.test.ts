@@ -81,6 +81,15 @@ describe("admin React UI architecture", () => {
     expect(shell).not.toContain("历史 Commit 作者");
   });
 
+  it("opens Slack threads through a backend permalink resolver", async () => {
+    const sessionView = await fs.readFile(new URL("session-view.tsx", adminUiRoot), "utf8");
+    expect(sessionView).toContain("openSlackThread");
+    expect(sessionView).toContain("slackThreadUrlApiPath");
+    expect(sessionView).toContain("window.open");
+    expect(sessionView).toContain("Slack Thread 跳转失败");
+    expect(sessionView).not.toContain('href={session.threadUrl}');
+  });
+
   it("prefers backend GitHub account identities over session fallback rows", async () => {
     const shell = await readAdminShellSource();
     expect(shell.indexOf("const accounts = status.githubAccounts?.accounts")).toBeLessThan(

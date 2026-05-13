@@ -255,6 +255,30 @@ describe("admin routes", () => {
     expect(sessionViewSource).toContain("/admin/api/sessions/\" + encodeURIComponent(sessionKey) + \"/timeline");
   });
 
+  it("routes session Slack thread permalink resolution", async () => {
+    const calls: string[] = [];
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getSessionSlackThreadUrl: async (sessionKey: string) => {
+        calls.push(sessionKey);
+        return {
+          ok: true,
+          url: "https://workspace.slack.com/archives/C123/p111222?thread_ts=111.222&cid=C123"
+        };
+      }
+    });
+
+    const response = await fetch(`${baseUrl}/admin/api/sessions/${encodeURIComponent("C123:111.222")}/slack-thread-url`);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      url: "https://workspace.slack.com/archives/C123/p111222?thread_ts=111.222&cid=C123"
+    });
+    expect(calls).toEqual(["C123:111.222"]);
+  });
+
   it("serves the GitHub bind session deep link and routes device OAuth api calls", async () => {
     const calls: string[] = [];
     const baseUrl = await startAdminServer({

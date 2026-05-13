@@ -68,6 +68,20 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "GET" && url.pathname.startsWith("/admin/api/sessions/") && url.pathname.endsWith("/slack-thread-url")) {
+    const sessionKey = decodeURIComponent(url.pathname.slice(
+      "/admin/api/sessions/".length,
+      -"/slack-thread-url".length
+    ));
+    if (!sessionKey || sessionKey.includes("/")) {
+      return false;
+    }
+
+    const result = await options.adminService.getSessionSlackThreadUrl(sessionKey);
+    respondJson(response, result.ok === false ? 404 : 200, result);
+    return true;
+  }
+
   if (method === "GET" && url.pathname.startsWith("/admin/api/sessions/") && url.pathname.endsWith("/github-identity")) {
     const sessionKey = decodeURIComponent(url.pathname.slice(
       "/admin/api/sessions/".length,

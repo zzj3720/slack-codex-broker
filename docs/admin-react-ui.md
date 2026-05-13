@@ -48,7 +48,13 @@ harder because new UI must choose between React state and imperative DOM writes.
 
 Status data flows through a React hook backed by `admin-status-store`:
 
-- initial load fetches `/admin/api/status` and `/admin/api/sessions`;
+- initial load fetches `/admin/api/sessions` first and publishes the session
+  index immediately;
+- `/admin/api/overview` is loaded after the session index, with bounded runtime
+  probes, so account quota, auth profile, GitHub, or deploy status reads cannot
+  keep the whole admin page blank;
+- recent logs load from `/admin/api/logs` after the first shell state is
+  published, so logs cannot block the session index;
 - successful mutating operations publish the returned `status`;
 - realtime events go through `connectAdminRealtime`;
 - components read status with `useSyncExternalStore`.
@@ -77,7 +83,8 @@ After the React migration, GitHub account work continues in React:
 - the old author mapping panel is presented as `GitHub 账号`;
 - each row merges Slack identity, commit co-author mapping, OAuth PR binding,
   and default PR account flag;
-- editing commit author mapping stays supported;
+- the old manual commit-author editing path is not shown; rows bind existing
+  Slack users to GitHub OAuth identities;
 - setting the default PR account only accepts a bound non-revoked OAuth account.
 
 ## Acceptance Criteria
@@ -93,4 +100,6 @@ After the React migration, GitHub account work continues in React:
   into the session React view.
 - Session list/detail behavior remains unchanged.
 - Operations page behavior remains unchanged.
+- A slow or stuck runtime status probe returns a bounded error object instead of
+  blocking `/admin/api/overview` or `/admin/api/status`.
 - `pnpm test` and `pnpm build` pass.

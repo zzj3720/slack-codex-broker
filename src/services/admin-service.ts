@@ -44,6 +44,7 @@ import {
 import { resolveMentionText } from "./slack/slack-message-format.js";
 
 const LOG_TAIL_MAX_BYTES_PER_FILE = 256 * 1024;
+const ADMIN_RUNTIME_PROBE_TIMEOUT_MS = 4_000;
 
 interface FileInfo {
   readonly exists: boolean;
@@ -243,6 +244,16 @@ export class AdminService {
     return {
       ok: true,
       ...this.#readUsageOverview()
+    };
+  }
+
+  async getRecentLogs(options: {
+    readonly limit?: number | undefined;
+  } = {}): Promise<Record<string, unknown>> {
+    const limit = Math.max(0, Math.min(100, Math.floor(options.limit ?? 40)));
+    return {
+      ok: true,
+      logs: await this.#readRecentBrokerLogs(limit)
     };
   }
 
@@ -796,12 +807,12 @@ export class AdminService {
   async #readRuntimeStatus(): Promise<RuntimeStatus> {
     await this.options.githubAuthorMappings.load();
     await this.options.githubPrIdentity?.load();
-    const [account, rateLimits, deployment] = await Promise.all([
+    const [account, rateLimits, deployment, authProfiles] = await Promise.all([
       this.#readAccountSummary(),
       this.#readAccountRateLimits(),
-      this.options.deployment?.getStatus() ?? Promise.resolve(null)
+      this.#readDeploymentStatus(),
+      this.#readAuthProfilesStatus()
     ]);
-    const authProfiles = await this.options.authProfiles.listProfilesStatus();
     const mappings = this.options.githubAuthorMappings.listMappings();
     const prBindings = this.options.githubPrIdentity?.listBindings() ?? [];
     const defaultPrAccount = this.options.githubPrIdentity?.getDefaultAccountStatus() ?? {
@@ -1252,7 +1263,10 @@ export class AdminService {
 
   async #readAccountSummary(): Promise<SerializedAccountStatus> {
     try {
-      return serializeAccountSummary(await this.options.runtime.readAccountSummary(false));
+      return serializeAccountSummary(await withAdminProbeTimeout(
+        this.options.runtime.readAccountSummary(false),
+        "account summary"
+      ));
     } catch (error) {
       return serializeAccountError(error);
     }
@@ -1260,9 +1274,34 @@ export class AdminService {
 
   async #readAccountRateLimits(): Promise<SerializedRateLimitsStatus> {
     try {
-      return serializeRateLimits(await this.options.runtime.readAccountRateLimits());
+      return serializeRateLimits(await withAdminProbeTimeout(
+        this.options.runtime.readAccountRateLimits(),
+        "account rate limits"
+      ));
     } catch (error) {
       return serializeRateLimitsError(error);
+    }
+  }
+
+  async #readDeploymentStatus(): Promise<unknown> {
+    if (!this.options.deployment) {
+      return null;
+    }
+    try {
+      return await withAdminProbeTimeout(this.options.deployment.getStatus(), "deployment status");
+    } catch (error) {
+      return serializeProbeError(error);
+    }
+  }
+
+  async #readAuthProfilesStatus(): Promise<unknown> {
+    try {
+      return await withAdminProbeTimeout(this.options.authProfiles.listProfilesStatus(), "auth profiles");
+    } catch (error) {
+      return {
+        ...serializeProbeError(error),
+        profiles: []
+      };
     }
   }
 
@@ -2142,4 +2181,25 @@ function readStringField(value: JsonLike | undefined, key: string): string | und
 
 function normalizeNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function withAdminProbeTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ADMIN_RUNTIME_PROBE_TIMEOUT_MS}ms`));
+    }, ADMIN_RUNTIME_PROBE_TIMEOUT_MS);
+    promise.then(resolve, reject).finally(() => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    });
+  });
+}
+
+function serializeProbeError(error: unknown): Record<string, unknown> {
+  return {
+    ok: false,
+    error: error instanceof Error ? error.message : String(error)
+  };
 }

@@ -118,6 +118,35 @@ describe("admin routes", () => {
     await waitFor(() => restartCalls.length === 1, "deferred restart callback");
   });
 
+  it("serves recent logs as a separate admin resource", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getRecentLogs: async (payload: Record<string, unknown>) => {
+        calls.push(payload);
+        return {
+          ok: true,
+          logs: [{ ts: "2026-05-13T09:00:00.000Z", level: "info", message: "ready" }]
+        };
+      }
+    });
+
+    const response = await fetch(`${baseUrl}/admin/api/logs?limit=3`);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      logs: [
+        {
+          level: "info",
+          message: "ready"
+        }
+      ]
+    });
+    expect(calls).toEqual([{ limit: 3 }]);
+  });
+
   it("renders auth profile management and session console sections in the admin page", async () => {
     const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",

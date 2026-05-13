@@ -43,6 +43,13 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "GET" && url.pathname === "/admin/api/logs") {
+    respondJson(response, 200, await options.adminService.getRecentLogs({
+      limit: readPositiveNumber(url.searchParams.get("limit"))
+    }));
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/admin/api/sessions") {
     respondJson(response, 200, await options.adminService.listSessionSummaries());
     return true;

@@ -34,6 +34,19 @@ describe("admin React UI architecture", () => {
     expect(shell).not.toContain("dangerouslySetInnerHTML");
   });
 
+  it("bootstraps from lightweight control-plane APIs instead of the monolithic status endpoint", async () => {
+    const shell = await readAdminShellSource();
+    expect(shell).toContain("const nextStatus = await loadAdminSessionsStatus()");
+    expect(shell).toContain("void loadAdminOverview()");
+    expect(shell.indexOf("const nextStatus = await loadAdminSessionsStatus()")).toBeLessThan(
+      shell.indexOf("void loadAdminOverview()")
+    );
+    expect(shell).toContain('requestJson("/admin/api/sessions", { timeoutMs: 15_000 })');
+    expect(shell).toContain('requestJson("/admin/api/overview", { timeoutMs: 8_000 })');
+    expect(shell).toContain('requestJson("/admin/api/logs?limit=40", { timeoutMs: 5_000 })');
+    expect(shell).not.toContain('requestJson("/admin/api/status")');
+  });
+
   it("binds GitHub OAuth from existing Slack account rows instead of adding Slack ids", async () => {
     const shell = await readAdminShellSource();
     expect(shell).toContain("startGitHubAccountDeviceAuthorization");

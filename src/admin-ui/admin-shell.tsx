@@ -31,10 +31,18 @@ export function AdminShell({ serviceName }: {
     let cancelled = false;
     async function load(): Promise<void> {
       try {
-        const nextStatus = await loadAdminStatus();
+        const nextStatus = await loadAdminSessionsStatus();
         if (!cancelled) {
           publishAdminStatus(nextStatus);
           setLoadError(null);
+          void loadAdminOverview().then((overview) => {
+            if (!cancelled) publishAdminStatus(mergeStatusOverview(getAdminStatusSnapshot().status, overview));
+          }).catch((error) => {
+            if (!cancelled) setLoadError(errorMessage(error));
+          });
+          void loadAdminLogs().then((logsStatus) => {
+            if (!cancelled) publishAdminStatus(mergeStatusLogs(getAdminStatusSnapshot().status, logsStatus.logs));
+          }).catch(() => undefined);
         }
       } catch (error) {
         if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error));
@@ -830,6 +838,9 @@ function DeploymentPanel({ deployment }: {
   if (!deployment) {
     return <div className="summary-detail">Worker 发布状态不可用</div>;
   }
+  if (deployment.ok === false) {
+    return <div className="summary-detail danger">发布状态读取失败：{deployment.error || "unknown"}</div>;
+  }
   const admin = deployment.admin || {};
   const worker = deployment.worker || {};
   return (
@@ -899,24 +910,134 @@ function Badge({ label, tone = "" }: {
 }
 
 async function loadAdminStatus(): Promise<AdminStatus> {
-  const status = await requestJson("/admin/api/status");
-  const sessionsPayload = await requestJson("/admin/api/sessions");
+  const sessionStatus = await loadAdminSessionsStatus();
+  const [overviewResult, logsResult] = await Promise.allSettled([
+    loadAdminOverview(),
+    loadAdminLogs()
+  ]);
+  const withOverview = overviewResult.status === "fulfilled"
+    ? mergeStatusOverview(sessionStatus, overviewResult.value)
+    : sessionStatus;
+  return logsResult.status === "fulfilled"
+    ? mergeStatusLogs(withOverview, logsResult.value.logs)
+    : withOverview;
+}
+
+async function loadAdminSessionsStatus(): Promise<AdminStatus> {
+  const sessionsPayload = await requestJson("/admin/api/sessions", { timeoutMs: 15_000 });
+  const sessions = Array.isArray(sessionsPayload.sessions) ? sessionsPayload.sessions : [];
   return {
-    ...status,
+    ok: true,
+    realtime: sessionsPayload.realtime || {},
     state: {
-      ...(status.state || {}),
-      sessions: sessionsPayload.sessions || []
+      ...summarizeSessionRows(sessions),
+      sessions
     }
   };
 }
 
-async function requestJson(path: string, init: RequestInit = {}): Promise<Record<string, any>> {
-  const response = await fetch(path, init);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error || response.statusText || "请求失败");
+async function loadAdminOverview(): Promise<Record<string, any>> {
+  return await requestJson("/admin/api/overview", { timeoutMs: 8_000 });
+}
+
+async function loadAdminLogs(): Promise<Record<string, any>> {
+  return await requestJson("/admin/api/logs?limit=40", { timeoutMs: 5_000 });
+}
+
+function mergeStatusOverview(status: unknown, overview: unknown): AdminStatus {
+  const current = status && typeof status === "object" && !Array.isArray(status)
+    ? status as AdminStatus
+    : {};
+  const next = overview && typeof overview === "object" && !Array.isArray(overview)
+    ? overview as AdminStatus
+    : {};
+  return {
+    ...current,
+    ...next,
+    state: {
+      ...(current.state || {}),
+      ...(next.state || {}),
+      sessions: Array.isArray(next.state?.sessions)
+        ? next.state.sessions
+        : Array.isArray(current.state?.sessions)
+          ? current.state.sessions
+          : []
+    }
+  };
+}
+
+function mergeStatusLogs(status: unknown, logs: unknown): AdminStatus {
+  const current = status && typeof status === "object" && !Array.isArray(status)
+    ? status as AdminStatus
+    : {};
+  return {
+    ...current,
+    state: {
+      ...(current.state || {}),
+      recentBrokerLogs: Array.isArray(logs) ? logs : []
+    }
+  };
+}
+
+function summarizeSessionRows(sessions: readonly Record<string, any>[]): Record<string, number> {
+  return sessions.reduce((summary, session) => {
+    const openInboundCount = Number(session.openInboundCount || 0);
+    const openHumanInboundCount = Number(session.openHumanInboundCount || 0);
+    const openSystemInboundCount = Number(session.openSystemInboundCount || 0);
+    const backgroundJobCount = Number(session.backgroundJobCount || 0);
+    const runningBackgroundJobCount = Number(session.runningBackgroundJobCount || 0);
+    const failedBackgroundJobCount = Number(session.failedBackgroundJobCount || 0);
+    return {
+      sessionCount: summary.sessionCount + 1,
+      activeCount: summary.activeCount + (session.activeTurnId ? 1 : 0),
+      openInboundCount: summary.openInboundCount + openInboundCount,
+      openHumanInboundCount: summary.openHumanInboundCount + openHumanInboundCount,
+      openSystemInboundCount: summary.openSystemInboundCount + openSystemInboundCount,
+      backgroundJobCount: summary.backgroundJobCount + backgroundJobCount,
+      runningBackgroundJobCount: summary.runningBackgroundJobCount + runningBackgroundJobCount,
+      failedBackgroundJobCount: summary.failedBackgroundJobCount + failedBackgroundJobCount
+    };
+  }, {
+    sessionCount: 0,
+    activeCount: 0,
+    openInboundCount: 0,
+    openHumanInboundCount: 0,
+    openSystemInboundCount: 0,
+    backgroundJobCount: 0,
+    runningBackgroundJobCount: 0,
+    failedBackgroundJobCount: 0
+  });
+}
+
+type AdminRequestInit = RequestInit & {
+  readonly timeoutMs?: number | undefined;
+};
+
+async function requestJson(path: string, init: AdminRequestInit = {}): Promise<Record<string, any>> {
+  const { timeoutMs, ...fetchInit } = init;
+  let timeout: number | null = null;
+  const responsePromise = fetch(path, fetchInit).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.error || response.statusText || "请求失败");
+    }
+    return payload as Record<string, any>;
+  });
+  if (!timeoutMs) {
+    return await responsePromise;
   }
-  return payload as Record<string, any>;
+  try {
+    return await Promise.race([
+      responsePromise,
+      new Promise<Record<string, any>>((_, reject) => {
+        timeout = window.setTimeout(() => reject(new Error(`请求超时：${path}`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout !== null) {
+      window.clearTimeout(timeout);
+    }
+  }
 }
 
 function githubAccountDeviceStartApiPath(slackUserId: string): string {

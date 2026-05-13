@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   renderSessionMeta,
   sessionActivityAt,
+  sessionQueueState,
   shouldShowSessionState
 } from "../src/admin-ui/session-row-display.js";
 import { getTimelineEventDisplay, isTimelineEventVisible } from "../src/admin-ui/timeline-display.js";
@@ -365,6 +366,36 @@ describe("admin session row display", () => {
     expect(labels).toContain("#deep-review");
     expect(labels).toContain("Jobs 2");
     expect(shouldShowSessionState({ rank: 50 })).toBe(true);
+  });
+
+  it("explains failed session state with the failed job reason", () => {
+    const state = sessionQueueState({
+      failedBackgroundJobCount: 2,
+      backgroundJobs: [
+        {
+          id: "completed-job",
+          kind: "watch_ci",
+          status: "completed"
+        }
+      ],
+      failedBackgroundJobs: [
+        {
+          id: "failed-job",
+          kind: "watch_ci",
+          status: "failed",
+          error: "PR #349 failed: CI Check failed",
+          updatedAt: "2026-05-13T05:47:45.765Z"
+        }
+      ]
+    });
+
+    expect(state).toMatchObject({
+      label: "任务失败",
+      tone: "danger",
+      rank: 60,
+      detail: "watch_ci：PR #349 failed: CI Check failed"
+    });
+    expect(state.detail).not.toBe("2 个失败任务");
   });
 
   it("uses semantic session activity time instead of metadata updatedAt", () => {

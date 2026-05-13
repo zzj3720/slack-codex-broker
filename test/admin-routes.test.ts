@@ -414,6 +414,7 @@ describe("admin routes", () => {
     const adminMainSource = await fs.readFile(new URL("../src/admin-ui/main.tsx", import.meta.url), "utf8");
     const adminShellSource = await fs.readFile(new URL("../src/admin-ui/admin-shell.tsx", import.meta.url), "utf8");
     const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
+    const sessionRowDisplaySource = await fs.readFile(new URL("../src/admin-ui/session-row-display.ts", import.meta.url), "utf8");
     const adminCssSource = await fs.readFile(new URL("../src/admin-ui/admin.css", import.meta.url), "utf8");
 
     expect(adminMainSource).not.toContain("admin-legacy");
@@ -443,7 +444,8 @@ describe("admin routes", () => {
     expect(sessionViewSource).toContain("compareSessionsForMode");
     expect(sessionViewSource).toContain("session-card");
     expect(sessionViewSource).toContain("session-meta-pill");
-    expect(sessionViewSource).toContain("待人处理");
+    expect(sessionRowDisplaySource).toContain("待人处理");
+    expect(sessionRowDisplaySource).toContain("任务失败");
     expect(sessionViewSource).toContain('mode === "usage"');
     expect(sessionViewSource).toContain("fmtRelativeTime");
     expect(adminCssSource).toContain("text-overflow: ellipsis");

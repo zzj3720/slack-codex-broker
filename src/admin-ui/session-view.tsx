@@ -21,8 +21,11 @@ import {
   resolveSessionChannelLabel,
   sessionActivityAt,
   sessionActivityMs,
+  sessionFailedJobSummary,
+  sessionQueueState,
   shouldShowSessionState
 } from "./session-row-display";
+import type { SessionQueueState } from "./session-row-display";
 import { getTimelineEventDisplay, isTimelineEventVisible, statusLabel, type TimelineEvent } from "./timeline-display";
 
 type UiState = {
@@ -248,7 +251,7 @@ function SessionRow({ session, selected, authProfileByName, channelLabelById, on
   const activityAt = sessionActivityAt(session);
   const primary = sessionPrimaryText(session);
   const first = sessionFirstText(session);
-  const stateBadge = shouldShowSessionState(state) ? <Badge label={state.label} tone={state.tone} /> : null;
+  const stateBadge = shouldShowSessionState(state) ? <Badge label={state.label} tone={state.tone} title={state.detail} /> : null;
   return (
     <button
       type="button"
@@ -303,7 +306,7 @@ function SessionDetail({ session, isPermalink = false }: {
         <div className="session-detail-main">
           <div className="session-detail-title-row">
             <div className="session-detail-title" title={primary}>{primary}</div>
-            {shouldShowSessionState(state) ? <Badge label={state.label} tone={state.tone} /> : null}
+            {shouldShowSessionState(state) ? <Badge label={state.label} tone={state.tone} title={state.detail} /> : null}
             <span className="session-time" title={fmtDateTime(activityAt)}>{fmtRelativeTime(activityAt)}</span>
           </div>
           <div className="session-detail-subtitle" title={first}>{first}</div>
@@ -689,7 +692,7 @@ function SessionResetButton({ session }: {
 
 function SessionRuntimePanel({ session, state, openInbound, openHumanInbound, openSystemInbound, totalJobs, runningJobs, failedJobs }: {
   readonly session: SessionRecord;
-  readonly state: { readonly label: string; readonly tone: string; readonly rank: number; readonly detail: string };
+  readonly state: SessionQueueState;
   readonly openInbound: number;
   readonly openHumanInbound: number;
   readonly openSystemInbound: number;
@@ -697,6 +700,7 @@ function SessionRuntimePanel({ session, state, openInbound, openHumanInbound, op
   readonly runningJobs: number;
   readonly failedJobs: number;
 }): React.JSX.Element {
+  const failedJob = sessionFailedJobSummary(session);
   const rows = [
     session.activeTurnId ? {
       label: "回合",
@@ -725,7 +729,7 @@ function SessionRuntimePanel({ session, state, openInbound, openHumanInbound, op
     failedJobs > 0 ? {
       label: "失败任务",
       value: String(failedJobs),
-      detail: totalJobs + " 个任务",
+      detail: failedJob?.detail || totalJobs + " 个任务",
       tone: "danger"
     } : null
   ].filter((row): row is { label: string; value: string; detail?: string; tone?: string } => Boolean(row));
@@ -1190,8 +1194,8 @@ function JobsTable({ jobs }: { readonly jobs: readonly Record<string, any>[] }):
   );
 }
 
-function Badge({ label, tone }: { readonly label: unknown; readonly tone?: string }): React.JSX.Element {
-  return <span className={"badge " + (tone || statusTone(label))}>{statusLabel(label)}</span>;
+function Badge({ label, tone, title }: { readonly label: unknown; readonly tone?: string; readonly title?: string }): React.JSX.Element {
+  return <span className={"badge " + (tone || statusTone(label))} title={title}>{statusLabel(label)}</span>;
 }
 
 function sessionMatchesFilter(session: SessionRecord, mode: string, query: string): boolean {
@@ -1224,8 +1228,8 @@ function messagePreview(message: Record<string, any> | undefined): string {
 }
 
 function summarizeSessionLead(session: SessionRecord): string {
-  const failedJob = (session.backgroundJobs || []).find((job: Record<string, any>) => job.status === "failed");
-  if (failedJob) return "失败任务：" + (failedJob.kind || failedJob.id || "后台任务") + (failedJob.error ? " · " + failedJob.error : "");
+  const failedJob = sessionFailedJobSummary(session);
+  if (failedJob) return "失败任务：" + failedJob.detail;
   if (session.lastUserMessage) return messagePreview(session.lastUserMessage) || "用户消息";
   if (session.openInbound?.length) return session.openInbound[0].textPreview || "新消息";
   if (session.activeTurnId) {
@@ -1239,31 +1243,6 @@ function summarizeSessionLead(session: SessionRecord): string {
   if (session.lastTurnSignalKind) return statusLabel(session.lastTurnSignalKind) + (session.lastTurnSignalReason ? "：" + session.lastTurnSignalReason : "");
   if (session.usage?.turnCount) return "最近消耗：" + fmtTokens(session.usage.totalTokens || 0) + " · " + (session.usage.turnCount || 0) + " 回合";
   return "空闲";
-}
-
-function sessionQueueState(session: SessionRecord): { label: string; tone: string; rank: number; detail: string } {
-  if (session.authBlockedAt) {
-    return { label: "账号待切换", tone: "danger", rank: 70, detail: session.authBlockReasonLabel || session.authBlockReason || "账号不可用" };
-  }
-  if (Number(session.failedBackgroundJobCount || 0) > 0) {
-    return { label: "异常", tone: "danger", rank: 60, detail: session.failedBackgroundJobCount + " 个失败任务" };
-  }
-  if (Number(session.openHumanInboundCount || 0) > 0) {
-    return { label: "待人处理", tone: "warn", rank: 50, detail: session.openHumanInboundCount + " 条用户消息" };
-  }
-  if (Number(session.openInboundCount || 0) > 0) {
-    return { label: "待处理", tone: "warn", rank: 40, detail: session.openInboundCount + " 条系统消息" };
-  }
-  if (session.activeTurnId) {
-    return { label: "运行中", tone: "good", rank: 30, detail: shortValue(session.activeTurnId, 18) };
-  }
-  if (Number(session.runningBackgroundJobCount || 0) > 0) {
-    return { label: "后台任务", tone: "good", rank: 20, detail: session.runningBackgroundJobCount + " 个运行任务" };
-  }
-  if (Number(session.usage?.turnCount || 0) > 0) {
-    return { label: "有记录", tone: "info", rank: 10, detail: fmtTokens(session.usage?.totalTokens || 0) };
-  }
-  return { label: "空闲", tone: "", rank: 0, detail: "" };
 }
 
 function compareSessionsForMode(mode: string, left: SessionRecord, right: SessionRecord): number {

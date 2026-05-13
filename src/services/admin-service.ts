@@ -1519,7 +1519,8 @@ export class AdminService {
     }
   ): Record<string, unknown> {
     const runningBackgroundJobCount = related.jobs.filter((job) => job.status === "running").length;
-    const failedBackgroundJobCount = related.jobs.filter((job) => job.status === "failed").length;
+    const failedBackgroundJobs = related.jobs.filter((job) => job.status === "failed");
+    const failedBackgroundJobCount = failedBackgroundJobs.length;
     const openHumanInboundCount = related.openInbound.filter(isHumanInboundMessage).length;
     const openSystemInboundCount = related.openInbound.length - openHumanInboundCount;
     const userMessages = related.inbound.filter(isUserInboundMessage);
@@ -1568,6 +1569,7 @@ export class AdminService {
       backgroundJobCount: related.jobs.length,
       runningBackgroundJobCount,
       failedBackgroundJobCount,
+      failedBackgroundJobs: failedBackgroundJobs.slice(0, 3).map((job) => this.#summarizeJob(job)),
       backgroundJobs: related.jobs.slice(0, 5).map((job) => this.#summarizeJob(job)),
       usage: related.usage ?? emptySessionUsageSummary(session)
     };

@@ -59,7 +59,15 @@ describe("admin control plane e2e", () => {
           },
           openInboundCount: 1,
           runningBackgroundJobCount: 1,
-          backgroundJobCount: 2
+          backgroundJobCount: 3,
+          failedBackgroundJobCount: 1,
+          failedBackgroundJobs: [
+            expect.objectContaining({
+              kind: "watch_ci",
+              status: "failed",
+              error: "PR #349 failed: CI Check failed"
+            })
+          ]
         }
       ]
     });
@@ -900,6 +908,16 @@ async function seedActiveSession(sessions: SessionManager): Promise<void> {
     updatedAt: "2026-03-19T00:00:02.500Z",
     startedAt: "2026-03-19T00:00:02.000Z",
     completedAt: "2026-03-19T00:00:02.500Z"
+  }));
+  await sessions.upsertBackgroundJob(backgroundJob({
+    sessionKey: session.key,
+    id: "failed-job",
+    token: "failed-token",
+    status: "failed",
+    error: "PR #349 failed: CI Check failed",
+    updatedAt: "2026-03-19T00:00:02.750Z",
+    startedAt: "2026-03-19T00:00:02.000Z",
+    completedAt: "2026-03-19T00:00:02.750Z"
   }));
   await sessions.recordTurnSignal("C123", "111.222", {
     turnId: "turn-1",

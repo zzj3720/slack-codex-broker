@@ -85,6 +85,11 @@ Status data flows through a React hook backed by `admin-status-store`:
   present, and completed-turn rows that merely duplicate the assistant message.
   If two runtime sources report the same turn completion, the trace recorder must
   coalesce them into one record and keep the richer final detail;
+- session list and detail status badges must explain abnormal states. A session
+  with failed background jobs must say `任务失败`, not generic `异常`, and expose
+  the latest failed job kind/error/time in the badge title and detail panel. The
+  API must include failed job samples even if the failed job is not one of the
+  latest generic background job rows;
 - components read status with `useSyncExternalStore`.
 
 No business UI may use `getElementById`, `querySelector`, or `innerHTML` for
@@ -156,4 +161,7 @@ After the React migration, GitHub account work continues in React:
   `agent_token_count`, completed inbound-message queue rows, completed jobs,
   completed tool-call start rows that have matching results, or final-only turn
   signals. Realtime `trace.append` applies the same visibility rules.
+- Session summaries include `failedBackgroundJobs` for failed-job sessions, and
+  the React session state display uses that data to explain why the session is
+  marked as problematic.
 - `pnpm test` and `pnpm build` pass.

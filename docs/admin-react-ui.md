@@ -96,6 +96,9 @@ Status data flows through a React hook backed by `admin-status-store`:
   process validates session/job ownership and delegates cancellation to the
   worker `JobManager`. Cancelling from admin stops the runtime process and marks
   the job `cancelled` without waking the agent with a synthetic job event;
+- the session detail operation panel has enough room to show the selected auth
+  profile as account identity plus quota detail. Compact quota-only labels stay
+  reserved for dense surfaces such as the top quota strip and session list pills;
 - components read status with `useSyncExternalStore`.
 
 No business UI may use `getElementById`, `querySelector`, or `innerHTML` for
@@ -172,4 +175,6 @@ After the React migration, GitHub account work continues in React:
   problematic session state.
 - Registered/running jobs in the session detail can be cancelled. Completed,
   failed, and already-cancelled jobs do not show a cancel action.
+- The session detail operation panel displays the selected auth profile with
+  account identity, plan, and quota. Dense quota labels elsewhere remain compact.
 - `pnpm test` and `pnpm build` pass.

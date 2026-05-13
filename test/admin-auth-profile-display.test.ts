@@ -5,6 +5,7 @@ import {
   profileDisplayLabel,
   profileOptionLabel,
   profileQuotaLabel,
+  profileSessionActionLabel,
   profileTitle,
   profileWeeklyQuotaLabel
 } from "../src/admin-ui/auth-profile-display.js";
@@ -29,6 +30,7 @@ describe("admin auth profile display", () => {
     expect(profileQuotaLabel(profile, { now })).toBe("7d 64% / 0.64");
     expect(profileWeeklyQuotaLabel(profile, { now })).toBe("7d 64% / 0.64");
     expect(profileOptionLabel(profile, { now })).toBe("hejiachen@toeverything.info · Pro Lite · 7d 64% / 0.64");
+    expect(profileSessionActionLabel(profile, { now })).toBe("hejiachen@toeverything.info · Pro Lite · 7d 64% / 0.64");
     expect(profileTitle(profile, { now })).toContain("内部标识 575d9997-db66-4b21-979d-4d3b9597b36e");
   });
 

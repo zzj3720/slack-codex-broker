@@ -5,6 +5,7 @@ import {
   profileIsSelectable,
   profileOptionLabel,
   profileQuotaLabel,
+  profileSessionActionLabel,
   profileTitle
 } from "./auth-profile-display";
 import {
@@ -840,7 +841,7 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
     ? profileDisplayLabel(currentProfile)
     : (session.authProfileName ? "账号状态加载中" : "未绑定");
   const blocked = sessionAuthBlockActive(session, currentProfile);
-  const compactLabel = currentProfile ? profileQuotaLabel(currentProfile) : (blocked ? "账号不可用" : "账号");
+  const actionLabel = currentProfile ? profileSessionActionLabel(currentProfile) : (blocked ? "账号不可用" : "账号");
   const [selected, setSelected] = useState(() => initialAuthProfileSelection(session, blocked));
 
   useEffect(() => {
@@ -896,11 +897,12 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
     <div className="auth-profile-panel">
       <button
         type="button"
-        className={"auth-profile-compact-button " + (blocked ? "danger" : "")}
+        className={"auth-profile-detail-button " + (blocked ? "danger" : "")}
         title={currentProfile ? profileTitle(currentProfile) : currentLabel}
         onClick={openDialog}
       >
-        {compactLabel}
+        <span>账号额度</span>
+        <strong>{actionLabel}</strong>
       </button>
       <dialog ref={dialogRef} className="auth-profile-dialog">
         <div className="modal-content">

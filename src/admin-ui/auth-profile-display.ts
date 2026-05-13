@@ -48,6 +48,10 @@ export function profileOptionLabel(profile: AuthProfileRecord, options: QuotaLab
     .join(" · ");
 }
 
+export function profileSessionActionLabel(profile: AuthProfileRecord, options: QuotaLabelOptions = {}): string {
+  return profileOptionLabel(profile, options);
+}
+
 export function profileTitle(profile: AuthProfileRecord, options: QuotaLabelOptions = {}): string {
   const internalName = readString(profile.name);
   return [profileOptionLabel(profile, options), internalName ? `内部标识 ${internalName}` : ""]

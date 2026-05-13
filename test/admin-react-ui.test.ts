@@ -81,6 +81,14 @@ describe("admin React UI architecture", () => {
     expect(shell).not.toContain("历史 Commit 作者");
   });
 
+  it("keeps session auth profile action detailed without expanding dense quota labels", async () => {
+    const sessionView = await fs.readFile(new URL("session-view.tsx", adminUiRoot), "utf8");
+    const authProfileDisplay = await fs.readFile(new URL("auth-profile-display.ts", adminUiRoot), "utf8");
+    expect(authProfileDisplay).toContain("export function profileSessionActionLabel");
+    expect(sessionView).toContain("profileSessionActionLabel(currentProfile)");
+    expect(sessionView).toContain('className={"auth-profile-detail-button " + (blocked ? "danger" : "")}');
+  });
+
   it("opens Slack threads through a backend permalink resolver", async () => {
     const sessionView = await fs.readFile(new URL("session-view.tsx", adminUiRoot), "utf8");
     expect(sessionView).toContain("openSlackThread");

@@ -145,9 +145,11 @@
     .github-bind-button { justify-content: center; width: 100%; min-width: 0; }
     .github-identity-panel .device-code-panel { padding: 6px; }
     .github-identity-panel .device-code-panel .link-button { justify-content: center; }
-    .auth-profile-compact-button { display: inline-flex; justify-content: center; align-items: center; min-width: 76px; padding: 2px 7px; border-color: var(--cyan); background: transparent; color: var(--cyan); font-weight: 700; white-space: nowrap; }
-    .session-side-column .auth-profile-compact-button { width: 100%; }
-    .auth-profile-compact-button.danger { border-color: var(--red); color: var(--red); }
+    .auth-profile-detail-button { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; width: 100%; min-width: 0; padding: 4px 7px; border-color: var(--cyan); background: transparent; text-align: left; }
+    .auth-profile-detail-button span { color: var(--muted); font-size: 10px; font-weight: 500; }
+    .auth-profile-detail-button strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cyan); font-size: 11px; }
+    .auth-profile-detail-button.danger { border-color: var(--red); }
+    .auth-profile-detail-button.danger strong { color: var(--red); }
     .auth-profile-dialog { width: min(560px, 92vw); }
     .auth-profile-dialog-current { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 6px 8px; border: 1px solid var(--line); background: #05080c; color: var(--muted); font-size: 10px; }
     .auth-profile-dialog-current strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cyan); }

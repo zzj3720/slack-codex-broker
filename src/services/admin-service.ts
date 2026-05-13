@@ -218,7 +218,6 @@ export class AdminService {
   }
 
   async getOverview(): Promise<Record<string, unknown>> {
-    const snapshot = await this.#readSessionSnapshot();
     const runtime = await this.#readRuntimeStatus();
     const usage = this.#readUsageOverview();
     return {
@@ -235,7 +234,7 @@ export class AdminService {
       usage,
       operations: this.#listAdminOperations(10),
       auditEvents: this.#listAdminAuditEvents({ limit: 10 }),
-      state: this.#summarizeStateCounts(snapshot)
+      state: this.#summarizeCachedStateCounts()
     };
   }
 
@@ -770,10 +769,9 @@ export class AdminService {
     await githubPrIdentity.load();
     const knownSlackUserIds = collectKnownGitHubAccountSlackUserIds({
       bindings: githubPrIdentity.listBindings(),
-      sessions: this.options.sessions.listSessions(),
-      inbound: this.options.sessions.listInboundMessages()
+      sessions: this.options.sessions.listSessions()
     });
-    if (!knownSlackUserIds.has(normalizedSlackUserId)) {
+    if (!knownSlackUserIds.has(normalizedSlackUserId) && !looksLikeSlackUserId(normalizedSlackUserId)) {
       return {
         ok: false,
         error: "slack_user_not_found"
@@ -822,8 +820,7 @@ export class AdminService {
     const githubAccounts = buildGitHubAccounts({
       bindings: prBindings,
       defaultPrAccount,
-      sessions: this.options.sessions.listSessions(),
-      inbound: this.options.sessions.listInboundMessages()
+      sessions: this.options.sessions.listSessions()
     });
     return {
       account,
@@ -901,6 +898,27 @@ export class AdminService {
       openHumanInboundCount,
       openSystemInboundCount: snapshot.openInbound.length - openHumanInboundCount,
       backgroundJobCount: snapshot.backgroundJobs.length,
+      runningBackgroundJobCount,
+      failedBackgroundJobCount
+    };
+  }
+
+  #summarizeCachedStateCounts(): Record<string, unknown> {
+    const sessions = this.options.sessions.listSessions();
+    const openInbound = this.options.sessions.listInboundMessages({
+      status: ["pending", "inflight"]
+    });
+    const backgroundJobs = this.options.sessions.listBackgroundJobs();
+    const runningBackgroundJobCount = backgroundJobs.filter((job) => job.status === "running").length;
+    const failedBackgroundJobCount = backgroundJobs.filter((job) => job.status === "failed").length;
+    const openHumanInboundCount = openInbound.filter(isHumanInboundMessage).length;
+    return {
+      sessionCount: sessions.length,
+      activeCount: sessions.filter((session) => Boolean(session.activeTurnId)).length,
+      openInboundCount: openInbound.length,
+      openHumanInboundCount,
+      openSystemInboundCount: openInbound.length - openHumanInboundCount,
+      backgroundJobCount: backgroundJobs.length,
       runningBackgroundJobCount,
       failedBackgroundJobCount
     };
@@ -1219,7 +1237,7 @@ export class AdminService {
     return {
       ...payload,
       operation,
-      status: await this.getStatus()
+      status: await this.getOverview()
     } as T & { readonly operation: PersistedAdminOperation };
   }
 
@@ -1944,6 +1962,10 @@ function uniqueChannelIds(sessions: readonly SlackSessionRecord[]): string[] {
 
 function looksLikeSlackConversationId(channelId: string): boolean {
   return /^[CDG][A-Z0-9]+$/.test(channelId);
+}
+
+function looksLikeSlackUserId(userId: string): boolean {
+  return /^U[A-Z0-9]+$/.test(userId);
 }
 
 function buildChannelLabelLookup(

@@ -53,6 +53,9 @@ Status data flows through a React hook backed by `admin-status-store`:
 - `/admin/api/overview` is loaded after the session index, with bounded runtime
   probes, so account quota, auth profile, GitHub, or deploy status reads cannot
   keep the whole admin page blank;
+- `/admin/api/overview` must not scan the full inbound-message history; Slack
+  account rows are composed in React from the already loaded session summaries
+  plus OAuth bindings;
 - recent logs load from `/admin/api/logs` after the first shell state is
   published, so logs cannot block the session index;
 - successful mutating operations publish the returned `status`;
@@ -102,4 +105,6 @@ After the React migration, GitHub account work continues in React:
 - Operations page behavior remains unchanged.
 - A slow or stuck runtime status probe returns a bounded error object instead of
   blocking `/admin/api/overview` or `/admin/api/status`.
+- `/admin/api/overview` and mutating operation responses do not require an
+  unbounded `inbound_messages` read.
 - `pnpm test` and `pnpm build` pass.

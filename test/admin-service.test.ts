@@ -87,6 +87,82 @@ describe("AdminService", () => {
     });
   });
 
+  it("keeps overview off the unbounded inbound-message history", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-overview-inbound-"));
+    tempDirs.push(dataRoot);
+
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      DATA_ROOT: dataRoot
+    } as NodeJS.ProcessEnv);
+    const inboundCalls: Array<unknown> = [];
+
+    const service = new AdminService({
+      config,
+      startedAt: new Date("2026-03-19T00:00:00.000Z"),
+      sessions: {
+        listSessions: () => [
+          {
+            key: "C123:111.222",
+            channelId: "C123",
+            rootThreadTs: "111.222",
+            workspacePath: "/tmp/session",
+            initiatorUserId: "U_BOB",
+            createdAt: "2026-03-19T00:00:00.000Z",
+            updatedAt: "2026-03-19T00:00:00.000Z"
+          }
+        ],
+        listInboundMessages: (options?: unknown) => {
+          inboundCalls.push(options);
+          return [];
+        },
+        listBackgroundJobs: () => []
+      } as never,
+      authProfiles: {
+        listProfilesStatus: async () => ({
+          managedRoot: path.join(dataRoot, "auth-profiles"),
+          profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
+          profiles: []
+        })
+      } as never,
+      githubAuthorMappings: {
+        load: async () => {},
+        listMappings: () => []
+      } as never,
+      runtime: {
+        readAccountSummary: async () => ({
+          account: null,
+          requiresOpenaiAuth: true
+        }),
+        readAccountRateLimits: async () => ({
+          rateLimits: null,
+          rateLimitsByLimitId: {}
+        })
+      } as never
+    });
+
+    const overview = await service.getOverview();
+    expect(overview).toMatchObject({
+      state: {
+        sessionCount: 1,
+        openInboundCount: 0
+      },
+      githubAccounts: {
+        accounts: [
+          {
+            slackUserId: "U_BOB"
+          }
+        ]
+      }
+    });
+    expect(inboundCalls).toEqual([
+      {
+        status: ["pending", "inflight"]
+      }
+    ]);
+  });
+
   it("exposes GitHub author mappings and OAuth bindings as unified GitHub accounts", async () => {
     const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-github-accounts-"));
     tempDirs.push(dataRoot);
@@ -233,7 +309,7 @@ describe("AdminService", () => {
 
     const overview = await service.getOverview();
     expect(overview.githubAccounts).toMatchObject({
-      count: 3,
+      count: 2,
       defaultPrAccount: {
         available: true,
         source: "bound",
@@ -260,16 +336,8 @@ describe("AdminService", () => {
         {
           slackUserId: "U_BOB",
           slackIdentity: {
-            username: "bob"
-          },
-          prBinding: {
-            state: "unbound"
-          }
-        },
-        {
-          slackUserId: "U_CAROL",
-          slackIdentity: {
-            username: "carol"
+            userId: "U_BOB",
+            mention: "<@U_BOB>"
           },
           prBinding: {
             state: "unbound"
@@ -277,6 +345,7 @@ describe("AdminService", () => {
         }
       ]
     });
+    expect(JSON.stringify(overview.githubAccounts)).not.toContain("U_CAROL");
     expect(JSON.stringify(overview.githubAccounts)).not.toContain("U_BOT");
     expect(JSON.stringify(overview.githubAccounts)).not.toContain("username:legacy-bot");
     expect(JSON.stringify(overview.githubAccounts)).not.toContain("githubAuthor");

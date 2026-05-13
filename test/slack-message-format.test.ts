@@ -156,6 +156,36 @@ describe("formatSlackMessageForAgent", () => {
     expect(result).toContain("\"text_with_resolved_mentions\": \"@claude preview 呢？\"");
   });
 
+  it("includes sender timezone context for relative dates", () => {
+    const result = formatSlackMessageForAgent(
+      {
+        source: "thread_reply",
+        channelId: "C123",
+        rootThreadTs: "1778695279.438599",
+        messageTs: "1778695279.438599",
+        userId: "U123",
+        senderKind: "user",
+        text: "今天广州天气如何？"
+      },
+      {
+        userId: "U123",
+        mention: "<@U123>",
+        displayName: "Alice",
+        timezone: "Asia/Shanghai",
+        timezoneLabel: "China Standard Time",
+        timezoneOffsetSeconds: 28800
+      }
+    );
+
+    expect(result).toContain("\"request_context\": {");
+    expect(result).toContain("\"timezone_source\": \"slack_user_profile\"");
+    expect(result).toContain("\"message_time_utc\": \"2026-05-13T18:01:19.438Z\"");
+    expect(result).toContain("\"sender_local_date\": \"2026-05-14\"");
+    expect(result).toContain("\"sender_timezone\": \"Asia/Shanghai\"");
+    expect(result).toContain("\"sender_timezone_offset\": \"+08:00\"");
+    expect(result).toContain("\"timezone\": \"Asia/Shanghai\"");
+  });
+
   it("renders image-only messages without dropping the body block", () => {
     const result = formatSlackMessageForAgent(
       {

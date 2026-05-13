@@ -244,9 +244,11 @@ function buildSlackMessagePayload(
         mention: user.mention,
         display_name: user.displayName,
         real_name: user.realName && user.realName !== user.displayName ? user.realName : undefined,
-        username: user.username && user.username !== user.displayName ? user.username : undefined
+        username: user.username && user.username !== user.displayName ? user.username : undefined,
+        ...buildTimezonePayload(user)
       }))
       : undefined,
+    request_context: buildRequestContextPayload(message, sender),
     text: message.text || "[no text body]",
     text_with_resolved_mentions: resolveMentionText(message.text || "[no text body]", message.mentionedUsers),
     attachments: (message.images ?? []).map((attachment) => ({
@@ -301,7 +303,8 @@ function buildSenderPayload(
       mention: `<@${message.userId}>`,
       display_name: sender?.displayName,
       real_name: sender?.realName && sender.realName !== sender.displayName ? sender.realName : undefined,
-      username: sender?.username && sender.username !== sender.displayName ? sender.username : undefined
+      username: sender?.username && sender.username !== sender.displayName ? sender.username : undefined,
+      ...buildTimezonePayload(sender)
     };
   }
 
@@ -312,6 +315,120 @@ function buildSenderPayload(
     app_id: message.appId,
     username: message.senderUsername
   };
+}
+
+function buildRequestContextPayload(
+  message: SlackRenderableMessage,
+  sender: SlackUserIdentity | null
+): Record<string, unknown> | undefined {
+  const timezonePayload = buildTimezonePayload(sender);
+  if (Object.keys(timezonePayload).length === 0) {
+    return undefined;
+  }
+
+  const messageDate = parseSlackMessageDate(message.messageTs);
+  const localTime = sender?.timezone && messageDate
+    ? formatLocalTimeParts(messageDate, sender.timezone)
+    : undefined;
+
+  return {
+    timezone_source: "slack_user_profile",
+    ...(messageDate ? { message_time_utc: messageDate.toISOString() } : {}),
+    ...(localTime
+      ? {
+          sender_local_date: localTime.date,
+          sender_local_time: localTime.time
+        }
+      : {}),
+    ...prefixTimezonePayload("sender", timezonePayload)
+  };
+}
+
+function buildTimezonePayload(user: SlackUserIdentity | null | undefined): Record<string, unknown> {
+  if (!user) {
+    return {};
+  }
+
+  return {
+    ...(user.timezone ? { timezone: user.timezone } : {}),
+    ...(user.timezoneLabel ? { timezone_label: user.timezoneLabel } : {}),
+    ...(user.timezoneOffsetSeconds !== undefined
+      ? {
+          timezone_offset_seconds: user.timezoneOffsetSeconds,
+          timezone_offset: formatTimezoneOffset(user.timezoneOffsetSeconds)
+        }
+      : {})
+  };
+}
+
+function prefixTimezonePayload(prefix: string, payload: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(payload).map(([key, value]) => [`${prefix}_${key}`, value])
+  );
+}
+
+function parseSlackMessageDate(messageTs: string | undefined): Date | undefined {
+  const match = /^(\d{1,10})(?:\.(\d{1,6}))?$/.exec(messageTs?.trim() ?? "");
+  if (!match) {
+    return undefined;
+  }
+
+  const seconds = Number(match[1]);
+  const microseconds = Number((match[2] ?? "").padEnd(6, "0"));
+  if (
+    !Number.isFinite(seconds) ||
+    !Number.isFinite(microseconds) ||
+    seconds <= 0 ||
+    seconds > 10_000_000_000
+  ) {
+    return undefined;
+  }
+
+  const date = new Date((seconds * 1000) + Math.floor(microseconds / 1000));
+  return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function formatLocalTimeParts(date: Date, timeZone: string): { date: string; time: string } | undefined {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(date);
+    const values = new Map(parts.map((part) => [part.type, part.value]));
+    const year = values.get("year");
+    const month = values.get("month");
+    const day = values.get("day");
+    const hour = values.get("hour");
+    const minute = values.get("minute");
+    const second = values.get("second");
+    if (!year || !month || !day || !hour || !minute || !second) {
+      return undefined;
+    }
+    return {
+      date: `${year}-${month}-${day}`,
+      time: `${hour}:${minute}:${second}`
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function formatTimezoneOffset(offsetSeconds: number): string | undefined {
+  if (!Number.isFinite(offsetSeconds)) {
+    return undefined;
+  }
+
+  const sign = offsetSeconds >= 0 ? "+" : "-";
+  const absoluteSeconds = Math.abs(offsetSeconds);
+  const hours = Math.floor(absoluteSeconds / 3600);
+  const minutes = Math.floor((absoluteSeconds % 3600) / 60);
+  return `${sign}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 function formatImageDimensions(image: SlackImageAttachment): string | undefined {

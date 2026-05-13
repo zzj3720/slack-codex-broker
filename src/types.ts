@@ -276,6 +276,9 @@ export interface SlackUserIdentity {
   readonly displayName?: string | undefined;
   readonly realName?: string | undefined;
   readonly email?: string | undefined;
+  readonly timezone?: string | undefined;
+  readonly timezoneLabel?: string | undefined;
+  readonly timezoneOffsetSeconds?: number | undefined;
 }
 
 export type GitHubAuthorMappingSource = "manual" | "slack_inferred";

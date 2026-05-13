@@ -444,6 +444,9 @@ export class SlackApi {
         id?: string;
         name?: string;
         real_name?: string;
+        tz?: string;
+        tz_label?: string;
+        tz_offset?: number;
         profile?: {
           display_name?: string;
           display_name_normalized?: string;
@@ -481,7 +484,8 @@ export class SlackApi {
       username,
       displayName,
       realName,
-      email: normalizeSlackField(response.user.profile?.email)?.toLowerCase()
+      email: normalizeSlackField(response.user.profile?.email)?.toLowerCase(),
+      ...optionalSlackTimezoneFields(response.user)
     };
   }
 
@@ -737,6 +741,22 @@ function normalizeSlackField(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function optionalSlackTimezoneFields(user: {
+  readonly tz?: unknown;
+  readonly tz_label?: unknown;
+  readonly tz_offset?: unknown;
+}): Pick<SlackUserIdentity, "timezone" | "timezoneLabel" | "timezoneOffsetSeconds"> {
+  const timezone = normalizeSlackField(user.tz);
+  const timezoneLabel = normalizeSlackField(user.tz_label);
+  const timezoneOffsetSeconds = normalizeSlackNumber(user.tz_offset);
+
+  return {
+    ...(timezone ? { timezone } : {}),
+    ...(timezoneLabel ? { timezoneLabel } : {}),
+    ...(timezoneOffsetSeconds !== undefined ? { timezoneOffsetSeconds } : {})
+  };
 }
 
 function conversationType(channel: {

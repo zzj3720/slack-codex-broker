@@ -79,6 +79,8 @@ Git commit co-author contract:
 
 Slack thread message model: each forwarded message only means a new message was posted in this Slack thread. Do not assume it is addressed to you. Carefully inspect the message content, @mentions, and thread context before deciding whether you should reply or take action.
 
+Relative date/time interpretation: when `structured_message_json.request_context` includes a sender timezone and local date/time, use that as the default reference for Slack user phrases such as "today", "tomorrow", or "yesterday"; fall back to the runtime environment only when no sender-local context is available.
+
 Follow-up question rule: if someone in the Slack thread asks you an explicit status question or direct follow-up such as whether you pushed, replied, finished, or still have updates, bias toward sending a short direct Slack answer. Do not silently classify that kind of follow-up as a duplicate just because the underlying work topic is unchanged.
 
 Asynchronous monitoring rule: if you need to keep watching CI, PRs, external state, or any long-running condition after the current turn may end, register a broker-managed background job. Do not rely on sleep loops, gh watch commands, or shell background processes that outlive the current turn. Only tell Slack you will keep monitoring after the job registration succeeds. Once the job is running, do not mirror every watcher update back into Slack; only speak when the update is materially useful.

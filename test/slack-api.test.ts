@@ -380,6 +380,9 @@ describe("SlackApi.getUserIdentity", () => {
           id: "U123",
           name: "alice",
           real_name: "Alice Example",
+          tz: "Asia/Shanghai",
+          tz_label: "China Standard Time",
+          tz_offset: 28800,
           profile: {
             display_name: "Alice Slack",
             email: "alice@example.com"
@@ -404,7 +407,10 @@ describe("SlackApi.getUserIdentity", () => {
       username: "alice",
       displayName: "Alice Slack",
       realName: "Alice Example",
-      email: "alice@example.com"
+      email: "alice@example.com",
+      timezone: "Asia/Shanghai",
+      timezoneLabel: "China Standard Time",
+      timezoneOffsetSeconds: 28800
     });
   });
 });

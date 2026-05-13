@@ -61,7 +61,12 @@ Status data flows through a React hook backed by `admin-status-store`:
 - recent logs load from `/admin/api/logs` after the first shell state is
   published, so logs cannot block the session index;
 - successful mutating operations publish the returned `status`;
-- realtime events go through `connectAdminRealtime`;
+- realtime events go through `connectAdminRealtime`, but only after the initial
+  session index publishes its realtime cursor, so a page load does not replay
+  the retained event log from sequence 0;
+- realtime `trace.append` events stream the new timeline item only. They must
+  not recompute full session summaries or trace aggregates for every replayed
+  event;
 - components read status with `useSyncExternalStore`.
 
 No business UI may use `getElementById`, `querySelector`, or `innerHTML` for
@@ -109,4 +114,8 @@ After the React migration, GitHub account work continues in React:
   blocking `/admin/api/overview` or `/admin/api/status`.
 - `/admin/api/overview` and mutating operation responses do not require an
   unbounded `inbound_messages` read.
+- The React shell connects realtime only after publishing the initial
+  `/admin/api/sessions` cursor.
+- `/admin/api/events` does not recompute full session summaries or trace
+  aggregates for every `trace.append` event.
 - `pnpm test` and `pnpm build` pass.

@@ -961,7 +961,7 @@ export class AdminService {
       createdAt: event.createdAt
     };
 
-    if (event.sessionKey) {
+    if (event.sessionKey && event.kind !== "trace.append") {
       serialized.session = this.#summarizeSessionByKey(event.sessionKey) ?? null;
     }
 
@@ -969,11 +969,6 @@ export class AdminService {
       const traceEvent = event.payload as unknown as PersistedAgentTraceEvent;
       if (isVisibleTimelineTraceEvent(traceEvent)) {
         serialized.timelineEvent = agentTraceEventToTimelineEvent(traceEvent);
-      }
-      if (event.sessionKey) {
-        const allTraceEvents = this.options.sessions.listAgentTraceEvents(event.sessionKey, 1000);
-        const traceEvents = allTraceEvents.filter(isVisibleTimelineTraceEvent);
-        serialized.trace = summarizeAgentTrace(traceEvents, allTraceEvents);
       }
     }
 
@@ -1007,10 +1002,7 @@ export class AdminService {
       rootThreadTs: session.rootThreadTs
     });
 
-    const channelLabels = this.#knownChannelLabelLookup(
-      this.options.sessions.listSessions(),
-      groupBySession(this.options.sessions.listInboundMessages())
-    );
+    const channelLabels = this.#knownChannelLabelLookup([session], new Map([[session.key, inbound]]));
     return this.#summarizeSession(session, {
       inbound,
       openInbound,

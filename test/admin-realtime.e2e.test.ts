@@ -101,14 +101,12 @@ describe("admin realtime e2e", () => {
           type: "agent_tool_call",
           toolName: "exec_command",
           detail: "{\"cmd\":\"pnpm test\"}"
-        },
-        trace: {
-          categories: {
-            agent_tool_call: 1
-          }
         }
       }
     });
+    const event = message.data.event as Record<string, unknown>;
+    expect(event.trace).toBeUndefined();
+    expect(event.session).toBeUndefined();
   });
 
   async function startAdminFixture(): Promise<{

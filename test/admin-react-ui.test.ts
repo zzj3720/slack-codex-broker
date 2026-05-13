@@ -47,6 +47,13 @@ describe("admin React UI architecture", () => {
     expect(shell).not.toContain('requestJson("/admin/api/status")');
   });
 
+  it("opens realtime only after the initial session cursor is published", async () => {
+    const shell = await readAdminShellSource();
+    expect(shell).toContain("let disconnectRealtime");
+    expect(shell).not.toContain("const disconnect = connectAdminRealtime()");
+    expect(shell.indexOf("publishAdminStatus(nextStatus)")).toBeLessThan(shell.indexOf("connectAdminRealtime()"));
+  });
+
   it("binds GitHub OAuth from existing Slack account rows instead of adding Slack ids", async () => {
     const shell = await readAdminShellSource();
     expect(shell).toContain("startGitHubAccountDeviceAuthorization");

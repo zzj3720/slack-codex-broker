@@ -29,11 +29,13 @@ export function AdminShell({ serviceName }: {
 
   useEffect(() => {
     let cancelled = false;
+    let disconnectRealtime: (() => void) | undefined;
     async function load(): Promise<void> {
       try {
         const nextStatus = await loadAdminSessionsStatus();
         if (!cancelled) {
           publishAdminStatus(nextStatus);
+          disconnectRealtime = connectAdminRealtime();
           setLoadError(null);
           void loadAdminOverview().then((overview) => {
             if (!cancelled) publishAdminStatus(mergeStatusOverview(getAdminStatusSnapshot().status, overview));
@@ -49,10 +51,9 @@ export function AdminShell({ serviceName }: {
       }
     }
     void load();
-    const disconnect = connectAdminRealtime();
     return () => {
       cancelled = true;
-      disconnect();
+      disconnectRealtime?.();
     };
   }, []);
 

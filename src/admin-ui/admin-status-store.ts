@@ -245,11 +245,14 @@ function appendUniqueTimelineEvent(
   events: readonly Record<string, unknown>[],
   event: Record<string, unknown>
 ): Array<Record<string, unknown>> {
+  const baseEvents = isToolResultEvent(event)
+    ? events.filter((existing) => !isMatchingToolCall(existing, event))
+    : events;
   const key = timelineEventIdentity(event);
-  if (key && events.some((existing) => timelineEventIdentity(existing) === key)) {
-    return [...events];
+  if (key && baseEvents.some((existing) => timelineEventIdentity(existing) === key)) {
+    return [...baseEvents];
   }
-  return [...events, event];
+  return [...baseEvents, event];
 }
 
 function timelineEventIdentity(event: Record<string, unknown>): string {
@@ -263,6 +266,33 @@ function timelineEventIdentity(event: Record<string, unknown>): string {
     event.title,
     event.summary
   ].filter(Boolean).join("\u001f");
+}
+
+function isToolResultEvent(event: Record<string, unknown>): boolean {
+  return String(event.type || "") === "agent_tool_result";
+}
+
+function isMatchingToolCall(
+  existing: Record<string, unknown>,
+  result: Record<string, unknown>
+): boolean {
+  if (String(existing.type || "") !== "agent_tool_call") {
+    return false;
+  }
+  return toolEventKey(existing) !== "" && toolEventKey(existing) === toolEventKey(result);
+}
+
+function toolEventKey(event: Record<string, unknown>): string {
+  const turnId = String(event.turnId || "");
+  const callId = String(event.callId || "");
+  const toolName = String(event.toolName || "");
+  if (callId) {
+    return [turnId, callId].join("\u001f");
+  }
+  if (!turnId && !toolName) {
+    return "";
+  }
+  return [turnId, toolName].join("\u001f");
 }
 
 function summarizeSessionCounts(sessions: readonly Record<string, unknown>[]): Record<string, number> {

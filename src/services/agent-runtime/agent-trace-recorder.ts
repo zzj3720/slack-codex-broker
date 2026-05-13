@@ -262,7 +262,7 @@ export class AgentTraceRecorder {
   ): PersistedAgentTraceEvent {
     const detail = values.detail === undefined ? undefined : truncateTraceDetail(values.detail);
     return {
-      id: traceEventId(session.key, event, values.type, values.sequenceOffset ?? 0),
+      id: traceEventId(session.key, event, values),
       sessionKey: session.key,
       source: agentTraceSource(event),
       type: values.type,
@@ -332,14 +332,43 @@ function inputTitle(source: string): string {
   return "用户消息";
 }
 
-function traceEventId(sessionKey: string, event: AgentRuntimeEvent, type: string, offset: number): string {
-  const stable = JSON.stringify({
-    type,
-    offset,
-    event
-  });
+function traceEventId(
+  sessionKey: string,
+  event: AgentRuntimeEvent,
+  values: {
+    readonly type: string;
+    readonly status?: string | undefined;
+    readonly turnId?: string | undefined;
+    readonly sequenceOffset?: number | undefined;
+  }
+): string {
+  const stable = JSON.stringify(traceEventIdentity(event, values));
   const digest = createHash("sha256").update(stable).digest("hex").slice(0, 20);
-  return `${sessionKey}:agent:${type}:${digest}`;
+  return `${sessionKey}:agent:${values.type}:${digest}`;
+}
+
+function traceEventIdentity(
+  event: AgentRuntimeEvent,
+  values: {
+    readonly type: string;
+    readonly status?: string | undefined;
+    readonly turnId?: string | undefined;
+    readonly sequenceOffset?: number | undefined;
+  }
+): Record<string, unknown> {
+  if (values.type === "agent_turn_completed" && values.turnId) {
+    return {
+      type: values.type,
+      turnId: values.turnId,
+      status: values.status ?? null
+    };
+  }
+
+  return {
+    type: values.type,
+    offset: values.sequenceOffset ?? 0,
+    event
+  };
 }
 
 function traceSequence(at: string): number {

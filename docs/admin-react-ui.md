@@ -76,6 +76,15 @@ Status data flows through a React hook backed by `admin-status-store`:
   permalink from the backend before opening it. It must not rely on a
   client-side or backend hand-built `slack.com/app_redirect` URL, because that
   redirect does not reliably land inside the thread view;
+- the session detail timeline is a semantic agent activity log, not a raw broker
+  queue dump. It should show durable things a reader cares about: system prompt,
+  memory, user/runtime inputs, assistant messages, tool calls/results, pending
+  human input, active/failed jobs, and meaningful wait/block/failure states. It
+  must hide delivery receipts, routine turn starts, token update rows, completed
+  queue bookkeeping, completed tool-call start rows when the matching result is
+  present, and completed-turn rows that merely duplicate the assistant message.
+  If two runtime sources report the same turn completion, the trace recorder must
+  coalesce them into one record and keep the richer final detail;
 - components read status with `useSyncExternalStore`.
 
 No business UI may use `getElementById`, `querySelector`, or `innerHTML` for
@@ -142,4 +151,9 @@ After the React migration, GitHub account work continues in React:
   Slack's permalink for `channelId + rootThreadTs`, then opens that permalink.
   If permalink resolution fails, the UI shows the error instead of silently
   opening the old `slack.com/app_redirect` fallback.
+- `/admin/api/sessions/:key/timeline` does not include duplicate completed-turn
+  rows, `agent_input_delivered`, routine `agent_turn_started`,
+  `agent_token_count`, completed inbound-message queue rows, completed jobs,
+  completed tool-call start rows that have matching results, or final-only turn
+  signals. Realtime `trace.append` applies the same visibility rules.
 - `pnpm test` and `pnpm build` pass.

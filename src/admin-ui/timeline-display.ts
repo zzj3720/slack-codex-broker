@@ -18,7 +18,19 @@ export function isTimelineEventVisible(event: TimelineEvent): boolean {
   if (type === "agent_token_count") {
     return false;
   }
-  if (type === "agent_input_delivered" && String(event.status || "").toLowerCase() === "joined_active_turn") {
+  if (type === "agent_input_delivered" || type === "agent_turn_started") {
+    return false;
+  }
+  if (type === "agent_turn_completed" && String(event.status || "").toLowerCase() === "completed") {
+    return false;
+  }
+  if (type === "inbound_message" && !["pending", "inflight"].includes(String(event.status || "").toLowerCase())) {
+    return false;
+  }
+  if (type === "background_job" && ["completed", "cancelled"].includes(String(event.status || "").toLowerCase())) {
+    return false;
+  }
+  if (type === "turn_signal" && ["final", "completed"].includes(String(event.status || "").toLowerCase())) {
     return false;
   }
   return true;

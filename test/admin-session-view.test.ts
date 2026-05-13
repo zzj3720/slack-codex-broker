@@ -127,7 +127,7 @@ describe("admin session timeline display", () => {
     });
   });
 
-  it("hides joined-active-turn input delivery rows because they duplicate the input row", () => {
+  it("hides low-value protocol rows that duplicate surrounding activity", () => {
     expect(isTimelineEventVisible({
       type: "agent_input_delivered",
       status: "joined_active_turn",
@@ -140,7 +140,33 @@ describe("admin session timeline display", () => {
       status: "started_turn",
       title: "输入已送达",
       summary: "启动新回合"
-    })).toBe(true);
+    })).toBe(false);
+
+    expect(isTimelineEventVisible({
+      type: "agent_turn_started",
+      status: "running",
+      title: "回合开始",
+      summary: "开始处理输入"
+    })).toBe(false);
+
+    expect(isTimelineEventVisible({
+      type: "agent_turn_completed",
+      status: "completed",
+      title: "回合结束",
+      summary: "回合已完成"
+    })).toBe(false);
+
+    expect(isTimelineEventVisible({
+      type: "inbound_message",
+      status: "done",
+      summary: "已交给 agent 的 Slack 消息"
+    })).toBe(false);
+
+    expect(isTimelineEventVisible({
+      type: "background_job",
+      status: "completed",
+      summary: "watch_ci"
+    })).toBe(false);
   });
 
   it("summarizes broker-managed background job input events", () => {

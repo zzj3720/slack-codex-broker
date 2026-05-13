@@ -59,7 +59,7 @@ describe("admin control plane e2e", () => {
           },
           openInboundCount: 1,
           runningBackgroundJobCount: 1,
-          backgroundJobCount: 1
+          backgroundJobCount: 2
         }
       ]
     });
@@ -92,6 +92,9 @@ describe("admin control plane e2e", () => {
     const trace = timeline.trace as { readonly categories?: Record<string, unknown> };
     const eventTypes = (timeline.events as Array<{ type: string; summary?: string }>).map((event) => event.type);
     expect(eventTypes).not.toContain("agent_token_count");
+    expect(eventTypes).not.toContain("agent_input_delivered");
+    expect(eventTypes).not.toContain("agent_turn_started");
+    expect(eventTypes).not.toContain("agent_turn_completed");
     expect(trace.categories).not.toHaveProperty("agent_token_count");
     expect(JSON.stringify(timeline.events)).not.toContain("tokenUsage");
     expect(eventTypes).toEqual(expect.arrayContaining([
@@ -107,6 +110,24 @@ describe("admin control plane e2e", () => {
       "agent_tool_call",
       "agent_tool_result"
     ]));
+    expect(timeline.events).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "inbound_message",
+          status: "done",
+          summary: "initial request"
+        }),
+        expect.objectContaining({
+          type: "background_job",
+          status: "completed",
+          summary: "watch_ci"
+        }),
+        expect.objectContaining({
+          type: "turn_signal",
+          status: "final"
+        })
+      ])
+    );
     expect(timeline.events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -153,11 +174,13 @@ describe("admin control plane e2e", () => {
           type: "agent_tool_call",
           title: "工具调用",
           toolName: "exec_command",
-          detail: expect.stringContaining("pnpm test")
+          detail: expect.stringContaining("pnpm lint")
         }),
         expect.objectContaining({
           type: "agent_tool_result",
           title: "工具结果",
+          callId: "call-1",
+          turnId: "turn-1",
           detail: expect.stringContaining("PASS admin-control-plane")
         })
       ])
@@ -703,6 +726,28 @@ async function seedAgentTraceFixture(sessions: SessionManager, sessionKey: strin
       turnId: "turn-1"
     },
     {
+      id: `${sessionKey}:runtime:input-delivered`,
+      source: "agent_runtime",
+      type: "agent_input_delivered",
+      at: "2026-03-19T00:00:02.100Z",
+      sequence: 2100,
+      title: "输入已送达",
+      summary: "启动新回合",
+      status: "started_turn",
+      turnId: "turn-1"
+    },
+    {
+      id: `${sessionKey}:runtime:turn-started`,
+      source: "agent_runtime",
+      type: "agent_turn_started",
+      at: "2026-03-19T00:00:02.200Z",
+      sequence: 2200,
+      title: "回合开始",
+      summary: "开始处理输入",
+      status: "running",
+      turnId: "turn-1"
+    },
+    {
       id: `${sessionKey}:runtime:assistant`,
       source: "agent_runtime",
       type: "agent_assistant_message",
@@ -728,6 +773,21 @@ async function seedAgentTraceFixture(sessions: SessionManager, sessionKey: strin
       role: "assistant",
       toolName: "exec_command",
       callId: "call-1",
+      turnId: "turn-1"
+    },
+    {
+      id: `${sessionKey}:runtime:running-tool-call`,
+      source: "agent_runtime",
+      type: "agent_tool_call",
+      at: "2026-03-19T00:00:04.100Z",
+      sequence: 4100,
+      title: "工具调用",
+      summary: "exec_command",
+      detail: "{\"cmd\":\"pnpm lint\"}",
+      status: "running",
+      role: "assistant",
+      toolName: "exec_command",
+      callId: "call-2",
       turnId: "turn-1"
     },
     {
@@ -760,6 +820,18 @@ async function seedAgentTraceFixture(sessions: SessionManager, sessionKey: strin
         reasoningTokens: 0,
         source: "exact"
       }
+    },
+    {
+      id: `${sessionKey}:runtime:turn-completed`,
+      source: "agent_runtime",
+      type: "agent_turn_completed",
+      at: "2026-03-19T00:00:04.600Z",
+      sequence: 4600,
+      title: "回合结束",
+      summary: "回合已完成",
+      detail: "我会先检查状态。",
+      status: "completed",
+      turnId: "turn-1"
     },
     {
       id: `${sessionKey}:runtime:tool-result`,
@@ -820,6 +892,27 @@ async function seedActiveSession(sessions: SessionManager): Promise<void> {
     startedAt: "2026-03-19T00:00:02.000Z",
     heartbeatAt: "2026-03-19T00:00:03.000Z"
   }));
+  await sessions.upsertBackgroundJob(backgroundJob({
+    sessionKey: session.key,
+    id: "completed-job",
+    token: "completed-token",
+    status: "completed",
+    updatedAt: "2026-03-19T00:00:02.500Z",
+    startedAt: "2026-03-19T00:00:02.000Z",
+    completedAt: "2026-03-19T00:00:02.500Z"
+  }));
+  await sessions.recordTurnSignal("C123", "111.222", {
+    turnId: "turn-1",
+    kind: "final",
+    reason: "final",
+    occurredAt: "2026-03-19T00:00:05.000Z"
+  });
+  await sessions.recordTurnSignal("C123", "111.222", {
+    turnId: "turn-1",
+    kind: "wait",
+    reason: "waiting on CI",
+    occurredAt: "2026-03-19T00:00:06.000Z"
+  });
 }
 
 function inboundMessage(patch: Partial<PersistedInboundMessage>): PersistedInboundMessage {

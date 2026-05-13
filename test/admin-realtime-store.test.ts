@@ -98,4 +98,58 @@ describe("admin realtime client store", () => {
       }
     });
   });
+
+  it("replaces a running realtime tool call with its matching result", () => {
+    const payload = {
+      ok: true,
+      trace: {
+        source: "broker_db",
+        eventCount: 1,
+        categories: {
+          agent_tool_call: 1
+        }
+      },
+      events: [
+        {
+          id: "tool-call-1",
+          type: "agent_tool_call",
+          at: "2026-05-09T00:00:01.000Z",
+          turnId: "turn-1",
+          callId: "call-1",
+          toolName: "exec_command"
+        }
+      ]
+    };
+
+    const updated = applyTimelineRealtimeEvent(payload, {
+      sequence: 2,
+      kind: "trace.append",
+      scope: "session",
+      sessionKey: "C1:1",
+      entityId: "tool-result-1",
+      createdAt: "2026-05-09T00:00:02.000Z",
+      payload: {},
+      timelineEvent: {
+        id: "tool-result-1",
+        type: "agent_tool_result",
+        at: "2026-05-09T00:00:02.000Z",
+        turnId: "turn-1",
+        callId: "call-1",
+        toolName: "exec_command"
+      }
+    } satisfies AdminRealtimeEvent);
+
+    expect((updated as Record<string, any>).events).toEqual([
+      expect.objectContaining({
+        id: "tool-result-1",
+        type: "agent_tool_result"
+      })
+    ]);
+    expect((updated as Record<string, any>).trace).toMatchObject({
+      eventCount: 1,
+      categories: {
+        agent_tool_result: 1
+      }
+    });
+  });
 });

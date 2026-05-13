@@ -311,7 +311,7 @@ export class AdminService {
       }
     ];
 
-    for (const message of inbound) {
+    for (const message of inbound.filter(isVisibleTimelineInboundMessage)) {
       events.push({
         type: "inbound_message",
         at: message.updatedAt ?? message.createdAt,
@@ -324,7 +324,7 @@ export class AdminService {
       });
     }
 
-    for (const job of jobs) {
+    for (const job of jobs.filter(isVisibleTimelineBackgroundJob)) {
       events.push({
         type: "background_job",
         at: job.updatedAt ?? job.createdAt,
@@ -335,19 +335,20 @@ export class AdminService {
       });
     }
 
-    if (session.lastTurnSignalKind) {
+    const lastTurnSignalKind = session.lastTurnSignalKind;
+    if (lastTurnSignalKind && isVisibleTimelineTurnSignal(lastTurnSignalKind)) {
       events.push({
         type: "turn_signal",
         at: session.lastTurnSignalAt ?? session.updatedAt,
-        status: session.lastTurnSignalKind,
-        summary: session.lastTurnSignalReason ?? session.lastTurnSignalKind,
+        status: lastTurnSignalKind,
+        summary: session.lastTurnSignalReason ?? lastTurnSignalKind,
         sessionKey: session.key,
         turnId: session.lastTurnSignalTurnId ?? null
       });
     }
 
     const allAgentEvents = this.options.sessions.listAgentTraceEvents(session.key, 1000);
-    const agentEvents = allAgentEvents.filter(isVisibleTimelineTraceEvent);
+    const agentEvents = visibleTimelineTraceEvents(allAgentEvents);
 
     return {
       ok: true,
@@ -1891,11 +1892,58 @@ function summarizeAgentTrace(
 }
 
 function isVisibleTimelineTraceEvent(event: PersistedAgentTraceEvent): boolean {
-  return event.type !== "agent_token_count";
+  if (event.type === "agent_token_count") {
+    return false;
+  }
+  if (event.type === "agent_input_delivered" || event.type === "agent_turn_started") {
+    return false;
+  }
+  if (event.type === "agent_turn_completed" && event.status === "completed") {
+    return false;
+  }
+  return true;
+}
+
+function visibleTimelineTraceEvents(events: readonly PersistedAgentTraceEvent[]): PersistedAgentTraceEvent[] {
+  const completedToolCallKeys = new Set(
+    events
+      .filter((event) => event.type === "agent_tool_result")
+      .map(toolTraceKey)
+      .filter(Boolean)
+  );
+  return events.filter((event) => {
+    if (!isVisibleTimelineTraceEvent(event)) {
+      return false;
+    }
+    return !(event.type === "agent_tool_call" && completedToolCallKeys.has(toolTraceKey(event)));
+  });
+}
+
+function toolTraceKey(event: Pick<PersistedAgentTraceEvent, "turnId" | "callId" | "toolName">): string {
+  if (event.callId) {
+    return [event.turnId ?? "", event.callId].join("\u001f");
+  }
+  if (!event.turnId && !event.toolName) {
+    return "";
+  }
+  return [event.turnId ?? "", event.toolName ?? ""].join("\u001f");
+}
+
+function isVisibleTimelineInboundMessage(message: PersistedInboundMessage): boolean {
+  return message.status === "pending" || message.status === "inflight";
+}
+
+function isVisibleTimelineBackgroundJob(job: PersistedBackgroundJob): boolean {
+  return job.status !== "completed" && job.status !== "cancelled";
+}
+
+function isVisibleTimelineTurnSignal(kind: string | undefined): boolean {
+  return Boolean(kind && kind !== "final" && kind !== "completed");
 }
 
 function agentTraceEventToTimelineEvent(event: PersistedAgentTraceEvent): Record<string, JsonLike> {
   return withoutUndefined({
+    id: event.id,
     type: event.type,
     at: event.at,
     sequence: event.sequence,
@@ -1905,6 +1953,8 @@ function agentTraceEventToTimelineEvent(event: PersistedAgentTraceEvent): Record
     status: event.status,
     role: event.role,
     toolName: event.toolName,
+    callId: event.callId,
+    turnId: event.turnId,
     source: event.source,
     detailTruncated: event.detailTruncated,
     detailOriginalChars: event.detailOriginalChars,

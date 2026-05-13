@@ -93,4 +93,79 @@ describe("handleSlackRequest", () => {
     });
     expect(response.statusCode).toBe(200);
   });
+
+  it("resolves GitHub PR tokens through the bridge", async () => {
+    const resolveGitHubPrToken = vi.fn(async () => ({
+      ok: true,
+      mode: "initiator",
+      slackUserId: "U_STARTER",
+      githubLogin: "alice",
+      token: "alice-token"
+    }));
+    const request = createJsonRequest({
+      cwd: "/tmp/session/workspace",
+      command: ["pr", "create", "--fill"]
+    });
+    const response = createResponse();
+
+    const handled = await handleSlackRequest(
+      "POST",
+      new URL("http://localhost/slack/github-token/resolve"),
+      request as never,
+      response as never,
+      {
+        bridge: {
+          resolveGitHubPrToken
+        } as never,
+        config: {} as never
+      }
+    );
+
+    expect(handled).toBe(true);
+    expect(resolveGitHubPrToken).toHaveBeenCalledWith({
+      cwd: "/tmp/session/workspace",
+      command: ["pr", "create", "--fill"]
+    });
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.bodyText || "{}")).toMatchObject({
+      ok: true,
+      githubLogin: "alice",
+      token: "alice-token"
+    });
+  });
+
+  it("returns a blocking status when GitHub PR token resolution is blocked", async () => {
+    const resolveGitHubPrToken = vi.fn(async () => ({
+      ok: false,
+      mode: "blocked",
+      reason: "initiator_token_invalid",
+      message: "GitHub token for alice is invalid."
+    }));
+    const request = createJsonRequest({
+      cwd: "/tmp/session/workspace",
+      command: ["pr", "create"]
+    });
+    const response = createResponse();
+
+    const handled = await handleSlackRequest(
+      "POST",
+      new URL("http://localhost/slack/github-token/resolve"),
+      request as never,
+      response as never,
+      {
+        bridge: {
+          resolveGitHubPrToken
+        } as never,
+        config: {} as never
+      }
+    );
+
+    expect(handled).toBe(true);
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.bodyText || "{}")).toMatchObject({
+      ok: false,
+      reason: "initiator_token_invalid",
+      message: "GitHub token for alice is invalid."
+    });
+  });
 });

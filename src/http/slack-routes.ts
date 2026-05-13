@@ -74,6 +74,11 @@ export async function handleSlackRequest(
     return true;
   }
 
+  if (method === "POST" && url.pathname === "/slack/github-token/resolve") {
+    await handleResolveGitHubTokenRequest(request, response, options);
+    return true;
+  }
+
   return false;
 }
 
@@ -488,6 +493,39 @@ async function handleResolveCommitCoauthorsRequest(
       ok: true,
       ...result
     });
+  } catch (error) {
+    respondJson(response, 500, {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function handleResolveGitHubTokenRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  options: {
+    readonly bridge: SlackAgentBridge;
+  }
+): Promise<void> {
+  try {
+    const body = await readJsonBody(request);
+    const cwd = readString(body.cwd);
+    const command = normalizeStringArray(body.command) ?? [];
+    if (!cwd) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["cwd"]
+      });
+      return;
+    }
+
+    const result = await options.bridge.resolveGitHubPrToken({
+      cwd,
+      command
+    });
+    respondJson(response, result.ok ? 200 : 409, result);
   } catch (error) {
     respondJson(response, 500, {
       ok: false,

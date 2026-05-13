@@ -19,7 +19,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 12;
+export const CURRENT_STATE_SCHEMA_VERSION = 13;
 export const STATE_STORE_BUSY_TIMEOUT_MS = 5_000;
 const ADMIN_EVENT_RETENTION_LIMIT = 20_000;
 
@@ -45,6 +45,9 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
           channel_type TEXT,
           root_thread_ts TEXT NOT NULL,
           workspace_path TEXT NOT NULL,
+          initiator_user_id TEXT,
+          initiator_message_ts TEXT,
+          initiator_captured_at TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           agent_session_id TEXT,
@@ -303,6 +306,13 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
     up(database) {
       createAgentActivityBindingSchema(database);
     }
+  },
+  {
+    version: 13,
+    name: "session_initiator",
+    up(database) {
+      repairSessionInitiatorSchema(database);
+    }
   }
 ];
 
@@ -399,6 +409,23 @@ function repairSessionPageLinkAnnouncementSchema(database: DatabaseSync): void {
   const columns = tableColumns(database, "sessions");
   if (!columns.has("session_page_link_posted_at")) {
     database.exec("ALTER TABLE sessions ADD COLUMN session_page_link_posted_at TEXT");
+  }
+}
+
+function repairSessionInitiatorSchema(database: DatabaseSync): void {
+  if (!tableExists(database, "sessions")) {
+    return;
+  }
+
+  const columns = tableColumns(database, "sessions");
+  if (!columns.has("initiator_user_id")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN initiator_user_id TEXT");
+  }
+  if (!columns.has("initiator_message_ts")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN initiator_message_ts TEXT");
+  }
+  if (!columns.has("initiator_captured_at")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN initiator_captured_at TEXT");
   }
 }
 
@@ -1167,6 +1194,7 @@ export class StateStore {
     this.#databaseRequired().prepare(`
       INSERT INTO sessions (
         key, channel_id, channel_name, channel_type, root_thread_ts, workspace_path, created_at, updated_at,
+        initiator_user_id, initiator_message_ts, initiator_captured_at,
         agent_session_id, active_turn_id, active_turn_started_at,
         last_observed_message_ts, last_delivered_message_ts, last_slack_reply_at, session_page_link_posted_at,
         auth_profile_name, auth_profile_bound_at, auth_blocked_at, auth_block_reason, auth_blocked_notice_posted_at,
@@ -1174,7 +1202,7 @@ export class StateStore {
         co_author_candidate_user_ids, co_author_candidate_revision,
         co_author_confirmed_user_ids, co_author_confirmed_revision,
         co_author_ignore_missing_revision, co_author_prompt_revision, co_author_prompted_at
-      ) VALUES (${placeholders(31)})
+      ) VALUES (${placeholders(34)})
       ON CONFLICT(key) DO UPDATE SET
         channel_id = excluded.channel_id,
         channel_name = excluded.channel_name,
@@ -1183,6 +1211,9 @@ export class StateStore {
         workspace_path = excluded.workspace_path,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
+        initiator_user_id = excluded.initiator_user_id,
+        initiator_message_ts = excluded.initiator_message_ts,
+        initiator_captured_at = excluded.initiator_captured_at,
         agent_session_id = excluded.agent_session_id,
         active_turn_id = excluded.active_turn_id,
         active_turn_started_at = excluded.active_turn_started_at,
@@ -1215,6 +1246,9 @@ export class StateStore {
       record.workspacePath,
       record.createdAt,
       record.updatedAt,
+      record.initiatorUserId ?? null,
+      record.initiatorMessageTs ?? null,
+      record.initiatorCapturedAt ?? null,
       record.agentSessionId ?? null,
       record.activeTurnId ?? null,
       record.activeTurnStartedAt ?? null,
@@ -1626,6 +1660,9 @@ export class StateStore {
       channelType: optionalStringColumn(row, "channel_type"),
       rootThreadTs: stringColumn(row, "root_thread_ts"),
       workspacePath: stringColumn(row, "workspace_path"),
+      initiatorUserId: optionalStringColumn(row, "initiator_user_id"),
+      initiatorMessageTs: optionalStringColumn(row, "initiator_message_ts"),
+      initiatorCapturedAt: optionalStringColumn(row, "initiator_captured_at"),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
       agentSessionId: optionalStringColumn(row, "agent_session_id"),
@@ -1823,6 +1860,9 @@ export class StateStore {
       channelType: optionalNonEmptyString(session.channelType),
       rootThreadTs: String(session.rootThreadTs),
       workspacePath,
+      initiatorUserId: optionalNonEmptyString(session.initiatorUserId),
+      initiatorMessageTs: optionalNonEmptyString(session.initiatorMessageTs),
+      initiatorCapturedAt: optionalNonEmptyString(session.initiatorCapturedAt),
       createdAt: String(session.createdAt),
       updatedAt: String(session.updatedAt),
       agentSessionId: session.agentSessionId,

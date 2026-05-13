@@ -48,6 +48,56 @@ describe("SessionManager", () => {
     });
   });
 
+  it("records the session initiator once and never replaces it with later input", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));
+    const store = new StateStore(stateDir, sessionsRoot);
+    const manager = new SessionManager({
+      stateStore: store,
+      sessionsRoot
+    });
+
+    await manager.load();
+    const created = await manager.ensureSession("C123", "111.222", {
+      channelName: "deep-review",
+      channelType: "channel",
+      initiatorUserId: "U_STARTER",
+      initiatorMessageTs: "111.223"
+    });
+
+    expect(created).toMatchObject({
+      initiatorUserId: "U_STARTER",
+      initiatorMessageTs: "111.223",
+      initiatorCapturedAt: expect.any(String)
+    });
+
+    const existing = await manager.ensureSession("C123", "111.222", {
+      channelName: "renamed",
+      initiatorUserId: "U_LATER",
+      initiatorMessageTs: "111.224"
+    });
+
+    expect(existing).toMatchObject({
+      channelName: "renamed",
+      initiatorUserId: "U_STARTER",
+      initiatorMessageTs: "111.223",
+      initiatorCapturedAt: created.initiatorCapturedAt
+    });
+
+    const reloadedStore = new StateStore(stateDir, sessionsRoot);
+    const reloadedManager = new SessionManager({
+      stateStore: reloadedStore,
+      sessionsRoot
+    });
+    await reloadedManager.load();
+
+    expect(reloadedManager.getSession("C123", "111.222")).toMatchObject({
+      initiatorUserId: "U_STARTER",
+      initiatorMessageTs: "111.223",
+      initiatorCapturedAt: created.initiatorCapturedAt
+    });
+  });
+
   it("updates codex thread and active turn metadata", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
     const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));

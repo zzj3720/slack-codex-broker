@@ -12,63 +12,90 @@ import {
 describe("admin auth profile display", () => {
   it("uses the account identity instead of the internal profile name", () => {
     const now = new Date("2026-05-09T00:00:00.000Z");
+    const fiveHours = Math.floor((now.getTime() + 5 * 60 * 60 * 1000) / 1000);
     const sevenDays = Math.floor((now.getTime() + 7 * 24 * 60 * 60 * 1000) / 1000);
     const profile = authProfile({
       name: "575d9997-db66-4b21-979d-4d3b9597b36e",
       email: "hejiachen@toeverything.info",
       planType: "prolite",
       primaryUsed: 4,
+      primaryResetsAt: fiveHours,
       secondaryUsed: 36,
       secondaryResetsAt: sevenDays
     });
 
     expect(profileAccountLabel(profile)).toBe("hejiachen@toeverything.info");
     expect(profileDisplayLabel(profile)).toBe("hejiachen@toeverything.info · Pro Lite");
-    expect(profileQuotaLabel(profile, { now })).toBe("64% | 0.64");
-    expect(profileWeeklyQuotaLabel(profile, { now })).toBe("64% | 0.64");
-    expect(profileOptionLabel(profile, { now })).toBe("hejiachen@toeverything.info · Pro Lite · 64% | 0.64");
+    expect(profileQuotaLabel(profile, { now })).toBe("7d 64% / 0.64");
+    expect(profileWeeklyQuotaLabel(profile, { now })).toBe("7d 64% / 0.64");
+    expect(profileOptionLabel(profile, { now })).toBe("hejiachen@toeverything.info · Pro Lite · 7d 64% / 0.64");
     expect(profileTitle(profile, { now })).toContain("内部标识 575d9997-db66-4b21-979d-4d3b9597b36e");
   });
 
-  it("shows weighted weekly quota normalized by reset time", () => {
+  it("shows weighted quota normalized by each window reset time", () => {
     const now = new Date("2026-05-09T00:00:00.000Z");
     const daysFromNow = (days: number) => Math.floor((now.getTime() + days * 24 * 60 * 60 * 1000) / 1000);
+    const hoursFromNow = (hours: number) => Math.floor((now.getTime() + hours * 60 * 60 * 1000) / 1000);
 
     expect(profileWeeklyQuotaLabel(authProfile({
       name: "full-week",
       email: "full@example.com",
       planType: "pro",
       primaryUsed: 0,
+      primaryResetsAt: hoursFromNow(5),
       secondaryUsed: 0,
       secondaryResetsAt: daysFromNow(7)
-    }), { now })).toBe("100% | 1");
+    }), { now })).toBe("7d 100% / 1");
 
     expect(profileWeeklyQuotaLabel(authProfile({
       name: "half-half-week",
       email: "half@example.com",
       planType: "pro",
       primaryUsed: 0,
+      primaryResetsAt: hoursFromNow(5),
       secondaryUsed: 50,
       secondaryResetsAt: daysFromNow(3.5)
-    }), { now })).toBe("50% | 1");
+    }), { now })).toBe("7d 50% / 1");
 
     expect(profileWeeklyQuotaLabel(authProfile({
       name: "full-half-week",
       email: "fast@example.com",
       planType: "pro",
       primaryUsed: 0,
+      primaryResetsAt: hoursFromNow(5),
       secondaryUsed: 0,
       secondaryResetsAt: daysFromNow(3.5)
-    }), { now })).toBe("100% | 2");
+    }), { now })).toBe("7d 100% / 2");
 
     expect(profileWeeklyQuotaLabel(authProfile({
       name: "slow",
       email: "slow@example.com",
       planType: "pro",
       primaryUsed: 0,
+      primaryResetsAt: hoursFromNow(5),
       secondaryUsed: 43,
       secondaryResetsAt: daysFromNow(12)
-    }), { now })).toBe("57% | 0.33");
+    }), { now })).toBe("7d 57% / 0.33");
+
+    expect(profileQuotaLabel(authProfile({
+      name: "short-window-remaining-low-but-reset-soon",
+      email: "short-soon@example.com",
+      planType: "pro",
+      primaryUsed: 70,
+      primaryResetsAt: hoursFromNow(1),
+      secondaryUsed: 50,
+      secondaryResetsAt: daysFromNow(7)
+    }), { now })).toBe("7d 50% / 0.5");
+
+    expect(profileQuotaLabel(authProfile({
+      name: "short-window-pressure",
+      email: "short@example.com",
+      planType: "pro",
+      primaryUsed: 70,
+      primaryResetsAt: hoursFromNow(5),
+      secondaryUsed: 50,
+      secondaryResetsAt: daysFromNow(7)
+    }), { now })).toBe("7d 50% / 0.5 | 5h 30% / 0.3");
   });
 
   it("keeps unusable profiles readable without presenting their UUID as the label", () => {
@@ -94,6 +121,7 @@ function authProfile(options: {
   readonly email: string;
   readonly planType: string;
   readonly primaryUsed: number;
+  readonly primaryResetsAt?: number | undefined;
   readonly secondaryUsed: number;
   readonly secondaryResetsAt?: number | undefined;
 }): Record<string, any> {
@@ -114,7 +142,7 @@ function authProfile(options: {
         primary: {
           usedPercent: options.primaryUsed,
           windowDurationMins: 300,
-          resetsAt: 1_779_000_000
+          resetsAt: options.primaryResetsAt ?? 1_779_000_000
         },
         secondary: {
           usedPercent: options.secondaryUsed,

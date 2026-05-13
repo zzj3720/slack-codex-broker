@@ -130,6 +130,10 @@
     .meta-line.warn strong { color: var(--amber); }
     .meta-line.danger strong { color: var(--red); }
     .auth-profile-panel { display: grid; gap: 6px; min-width: 0; }
+    .github-identity-panel { display: grid; gap: 5px; min-width: 0; }
+    .github-bind-button { justify-content: center; width: 100%; min-width: 0; }
+    .github-identity-panel .device-code-panel { padding: 6px; }
+    .github-identity-panel .device-code-panel .link-button { justify-content: center; }
     .auth-profile-compact-button { display: inline-flex; justify-content: center; align-items: center; min-width: 76px; padding: 2px 7px; border-color: var(--cyan); background: transparent; color: var(--cyan); font-weight: 700; white-space: nowrap; }
     .session-side-column .auth-profile-compact-button { width: 100%; }
     .auth-profile-compact-button.danger { border-color: var(--red); color: var(--red); }
@@ -142,7 +146,7 @@
     .auth-profile-label { color: var(--muted); font-size: 10px; white-space: nowrap; }
 
     .session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
-    .timeline { height: 100%; display: grid; gap: 0; overflow: auto; border: 0; }
+    .timeline { height: 100%; display: grid; grid-auto-rows: max-content; align-content: start; gap: 0; overflow: auto; border: 0; }
     .timeline-event { display: grid; grid-template-columns: 72px 90px minmax(0, 1fr); gap: 6px; align-items: start; padding: 4px 6px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
     .timeline-event:last-child { border-bottom: 0; }
     .timeline-main { min-width: 0; }

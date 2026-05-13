@@ -57,6 +57,7 @@ import {
 import { markdownishToMrkdwn } from "./slack-mrkdwn.js";
 import { SlackSelfMessageFilter } from "./slack-self-filter.js";
 import { SlackCoauthorService } from "./slack-coauthor-service.js";
+import type { GitHubPrIdentityService } from "../github-pr-identity-service.js";
 import { planCompletedTurnDisposition } from "./slack-turn-disposition.js";
 import { SlackTurnReconciler } from "./slack-turn-reconciler.js";
 import { SlackTurnRunner } from "./slack-turn-runner.js";
@@ -93,6 +94,7 @@ export class SlackConversationService {
       item: SlackInputMessage
     ) => Promise<SlackSessionRecord>;
   };
+  readonly #githubPrIdentity: GitHubPrIdentityService | undefined;
   readonly #runtimeSessions = new Map<string, RuntimeSessionState>();
   readonly #statusControllers = new Map<string, SlackAssistantStatusController>();
   readonly #inboundStore: SlackInboundStore;
@@ -111,6 +113,7 @@ export class SlackConversationService {
     readonly slackApi: SlackApi;
     readonly selfMessageFilter: SlackSelfMessageFilter;
     readonly coauthors?: SlackCoauthorService | undefined;
+    readonly githubPrIdentity?: GitHubPrIdentityService | undefined;
   }) {
     this.#config = options.config;
     this.#sessions = options.sessions;
@@ -120,6 +123,7 @@ export class SlackConversationService {
     this.#coauthors = options.coauthors ?? {
       noteIncomingSlackInput: async (session) => session
     };
+    this.#githubPrIdentity = options.githubPrIdentity;
     this.#inboundStore = new SlackInboundStore({
       sessions: this.#sessions,
       slackApi: this.#slackApi
@@ -862,7 +866,7 @@ export class SlackConversationService {
       await this.#postBotThreadMessage(
         session.channelId,
         session.rootThreadTs,
-        `<${url}|查看会话活动时间线>`,
+        this.#formatSessionPageLinkMessage(session, url),
         { alreadyFormatted: true }
       );
       return await this.#sessions.setSessionPageLinkPostedAt(
@@ -878,6 +882,19 @@ export class SlackConversationService {
       });
       return session;
     }
+  }
+
+  #formatSessionPageLinkMessage(session: SlackSessionRecord, url: string): string {
+    const lines = [`<${url}|查看会话活动时间线>`];
+    const identity = this.#githubPrIdentity?.getSessionIdentityStatus(session);
+    if (identity?.binding.state === "unbound" && identity.defaultAccount.available) {
+      lines.push(
+        "",
+        `当前发起人还没有绑定 GitHub 账号。不绑定时，后续创建 PR 会使用默认账号 ${identity.defaultAccount.githubLogin}。`,
+        `<${url}/github/bind|绑定 GitHub>`
+      );
+    }
+    return lines.join("\n");
   }
 
   async #recordStopSignal(

@@ -45,6 +45,12 @@ describe("loadConfig", () => {
     expect(config.isolatedMcpServers).toEqual(["linear", "notion"]);
     expect(config.codexDisabledMcpServers).toEqual(["*", "linear", "notion"]);
     expect(config.tempadLinkServiceUrl).toBeUndefined();
+    expect(config.githubOAuthClientId).toBeUndefined();
+    expect(config.githubOAuthBaseUrl).toBe("https://github.com/login/oauth");
+    expect(config.githubApiBaseUrl).toBe("https://api.github.com");
+    expect(config.githubOAuthScopes).toEqual(["repo", "read:user"]);
+    expect(config.defaultGitHubLogin).toBeUndefined();
+    expect(config.defaultGitHubToken).toBeUndefined();
     expect(config.adminBaseUrl).toBe("http://127.0.0.1:3000");
   });
 
@@ -132,6 +138,26 @@ describe("loadConfig", () => {
     } as NodeJS.ProcessEnv);
 
     expect(config.brokerAdminToken).toBe("secret-admin-token");
+  });
+
+  it("loads GitHub PR identity configuration", () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      GITHUB_OAUTH_CLIENT_ID: "github-client",
+      GITHUB_OAUTH_BASE_URL: "https://github.enterprise.test/login/oauth",
+      GITHUB_API_BASE_URL: "https://github.enterprise.test/api/v3",
+      GITHUB_OAUTH_SCOPES: "repo, read:user, workflow",
+      BROKER_DEFAULT_GITHUB_LOGIN: "default-bot",
+      BROKER_DEFAULT_GITHUB_TOKEN: "default-token"
+    } as NodeJS.ProcessEnv);
+
+    expect(config.githubOAuthClientId).toBe("github-client");
+    expect(config.githubOAuthBaseUrl).toBe("https://github.enterprise.test/login/oauth");
+    expect(config.githubApiBaseUrl).toBe("https://github.enterprise.test/api/v3");
+    expect(config.githubOAuthScopes).toEqual(["repo", "read:user", "workflow"]);
+    expect(config.defaultGitHubLogin).toBe("default-bot");
+    expect(config.defaultGitHubToken).toBe("default-token");
   });
 
   it("parses disk cleanup configuration", () => {

@@ -411,8 +411,12 @@ describe("StateStore", () => {
           name: "session_auth_profile_binding"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 12,
           name: "agent_activity_bindings"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "session_initiator"
         }
       ]);
     } finally {

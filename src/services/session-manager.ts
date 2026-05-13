@@ -24,6 +24,13 @@ export interface SessionChannelMetadata {
   readonly channelType?: string | undefined;
 }
 
+export interface SessionInitiatorMetadata {
+  readonly initiatorUserId?: string | undefined;
+  readonly initiatorMessageTs?: string | undefined;
+}
+
+export type EnsureSessionMetadata = SessionChannelMetadata & SessionInitiatorMetadata;
+
 export class SessionManager {
   readonly #stateStore: StateStore;
   readonly #sessionsRoot: string;
@@ -93,7 +100,7 @@ export class SessionManager {
   async ensureSession(
     channelId: string,
     rootThreadTs: string,
-    metadata?: SessionChannelMetadata | undefined
+    metadata?: EnsureSessionMetadata | undefined
   ): Promise<SlackSessionRecord> {
     const existing = this.getSession(channelId, rootThreadTs);
     if (existing) {
@@ -108,6 +115,7 @@ export class SessionManager {
       key: SessionManager.createKey(channelId, rootThreadTs),
       channelId,
       ...normalizeChannelMetadata(metadata),
+      ...normalizeSessionInitiator(metadata),
       rootThreadTs,
       workspacePath,
       createdAt: new Date().toISOString(),
@@ -608,6 +616,22 @@ function normalizeChannelMetadata(
   return {
     channelName: normalizeNonEmptyString(metadata?.channelName),
     channelType: normalizeNonEmptyString(metadata?.channelType)
+  };
+}
+
+function normalizeSessionInitiator(
+  metadata?: SessionInitiatorMetadata | undefined
+): Pick<SlackSessionRecord, "initiatorUserId" | "initiatorMessageTs" | "initiatorCapturedAt"> {
+  const initiatorUserId = normalizeNonEmptyString(metadata?.initiatorUserId);
+  const initiatorMessageTs = normalizeNonEmptyString(metadata?.initiatorMessageTs);
+  if (!initiatorUserId) {
+    return {};
+  }
+
+  return {
+    initiatorUserId,
+    initiatorMessageTs,
+    initiatorCapturedAt: new Date().toISOString()
   };
 }
 

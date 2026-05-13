@@ -10,6 +10,7 @@ import {
   createCodexBroker,
   createDiskPressureCleanup,
   createGitHubAuthorMappings,
+  createGitHubPrIdentity,
   createIsolatedMcpService,
   createJobManager,
   createSessionServices,
@@ -24,6 +25,7 @@ export async function startWorkerService(): Promise<{
 
   const { sessions: sessionManager } = createSessionServices(config);
   const githubAuthorMappings = await createGitHubAuthorMappings(config);
+  const githubPrIdentity = await createGitHubPrIdentity(config);
   const authProfiles = new AuthProfileService({
     config
   });
@@ -38,7 +40,8 @@ export async function startWorkerService(): Promise<{
     config,
     sessions: sessionManager,
     agentRuntime,
-    mappings: githubAuthorMappings
+    mappings: githubAuthorMappings,
+    githubPrIdentity
   });
   const isolatedMcp = createIsolatedMcpService(config);
   const jobManager = createJobManager({

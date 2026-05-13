@@ -187,6 +187,82 @@ describe.sequential("slack-codex-broker e2e", () => {
     });
   }, 60_000);
 
+  it("records the session starter and warns about default GitHub PR fallback in the session link", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const brokerPort = await getFreePort();
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: brokerPort,
+      slackPort,
+      codexUrl,
+      tempRoot,
+      extraEnv: {
+        ADMIN_BASE_URL: "https://admin.example.test",
+        BROKER_DEFAULT_GITHUB_LOGIN: "default-bot",
+        BROKER_DEFAULT_GITHUB_TOKEN: "default-token"
+      }
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-session-github-starter", {
+      type: "app_mention",
+      user: "U_STARTER",
+      channel: "C123",
+      thread_ts: "992.220",
+      ts: "992.221",
+      text: "<@UBOT> open a PR"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length >= 1, "first turn start");
+    await waitFor(
+      () => mockSlack.postedMessages.some((message) =>
+        message.threadTs === "992.220" &&
+          message.text.includes("查看会话活动时间线") &&
+          message.text.includes("当前发起人还没有绑定 GitHub 账号") &&
+          message.text.includes("默认账号 default-bot") &&
+          message.text.includes("https://admin.example.test/admin/sessions/C123%3A992.220/github/bind")
+      ),
+      "session permalink GitHub fallback message"
+    );
+    await waitForSessionIdle(tempRoot, "C123:992.220");
+    await expect(readSessionRecord(tempRoot, "C123:992.220")).resolves.toMatchObject({
+      initiatorUserId: "U_STARTER",
+      initiatorMessageTs: "992.221",
+      initiatorCapturedAt: expect.any(String)
+    });
+
+    await mockSlack.sendEvent("evt-session-github-later", {
+      type: "message",
+      user: "U_LATER",
+      channel: "C123",
+      thread_ts: "992.220",
+      ts: "992.222",
+      text: "follow-up"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length >= 2, "second turn start");
+    await waitForSessionIdle(tempRoot, "C123:992.220");
+    await expect(readSessionRecord(tempRoot, "C123:992.220")).resolves.toMatchObject({
+      initiatorUserId: "U_STARTER",
+      initiatorMessageTs: "992.221"
+    });
+  }, 60_000);
+
   it("falls back to an eyes reaction when Slack assistant status is unavailable", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {

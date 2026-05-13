@@ -10,6 +10,10 @@ import type {
 } from "../../types.js";
 import type { AgentRuntime } from "../agent-runtime/types.js";
 import { GitHubAuthorMappingService } from "../github-author-mapping-service.js";
+import type {
+  GitHubPrIdentityService,
+  GitHubPrTokenResolution
+} from "../github-pr-identity-service.js";
 import { SessionManager } from "../session-manager.js";
 import type { SessionChannelMetadata } from "../session-manager.js";
 import {
@@ -31,6 +35,7 @@ export class SlackAgentBridge {
   readonly #slackSocket: SlackSocketModeClient;
   readonly #selfMessageFilter = new SlackSelfMessageFilter();
   readonly #coauthors: SlackCoauthorService;
+  readonly #githubPrIdentity: GitHubPrIdentityService;
   readonly #conversations: SlackConversationService;
   #botUserId = "";
   #botIdentity: SlackUserIdentity | null = null;
@@ -43,6 +48,7 @@ export class SlackAgentBridge {
     readonly sessions: SessionManager;
     readonly agentRuntime: AgentRuntime;
     readonly mappings: GitHubAuthorMappingService;
+    readonly githubPrIdentity: GitHubPrIdentityService;
   }) {
     this.#config = options.config;
     this.#sessions = options.sessions;
@@ -61,13 +67,15 @@ export class SlackAgentBridge {
       slackApi: this.#slackApi,
       mappings: options.mappings
     });
+    this.#githubPrIdentity = options.githubPrIdentity;
     this.#conversations = new SlackConversationService({
       config: this.#config,
       sessions: this.#sessions,
       agentRuntime: this.#agentRuntime,
       slackApi: this.#slackApi,
       selfMessageFilter: this.#selfMessageFilter,
-      coauthors: this.#coauthors
+      coauthors: this.#coauthors,
+      githubPrIdentity: this.#githubPrIdentity
     });
   }
 
@@ -222,6 +230,26 @@ export class SlackAgentBridge {
     readonly primaryAuthorEmail?: string | undefined;
   }) {
     return await this.#coauthors.resolveCommitCoauthors(options);
+  }
+
+  async resolveGitHubPrToken(options: {
+    readonly cwd: string;
+    readonly command: readonly string[];
+  }): Promise<GitHubPrTokenResolution> {
+    const session = this.#sessions.findSessionByWorkspace(options.cwd);
+    if (!session) {
+      return {
+        ok: false,
+        mode: "blocked",
+        reason: "session_not_found",
+        message: `No Slack session is associated with ${options.cwd}.`
+      };
+    }
+
+    return await this.#githubPrIdentity.resolveTokenForSession({
+      session,
+      command: options.command
+    });
   }
 
   async #acceptEventsApi(payload: {
@@ -571,7 +599,15 @@ export class SlackAgentBridge {
   ): Promise<void> {
     const existing = this.#sessions.getSession(parsed.channelId, parsed.rootThreadTs);
     let session = options.createSession
-      ? await this.#sessions.ensureSession(parsed.channelId, parsed.rootThreadTs, options.channelMetadata)
+      ? await this.#sessions.ensureSession(parsed.channelId, parsed.rootThreadTs, {
+          ...options.channelMetadata,
+          ...(parsed.input.senderKind === "user"
+            ? {
+                initiatorUserId: parsed.input.userId,
+                initiatorMessageTs: parsed.messageTs
+              }
+            : {})
+        })
       : existing;
 
     if (!session) {

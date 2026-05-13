@@ -9,6 +9,7 @@ import { CodexBroker } from "./codex/codex-broker.js";
 import { IsolatedMcpService } from "./codex/isolated-mcp-service.js";
 import { DiskPressureCleanupService } from "./disk-pressure-cleanup-service.js";
 import { GitHubAuthorMappingService } from "./github-author-mapping-service.js";
+import { GitHubPrIdentityService } from "./github-pr-identity-service.js";
 import { JobManager } from "./job-manager.js";
 import { SessionManager } from "./session-manager.js";
 import { SlackApi } from "./slack/slack-api.js";
@@ -57,6 +58,20 @@ export async function createGitHubAuthorMappings(config: AppConfig): Promise<Git
   return mappings;
 }
 
+export async function createGitHubPrIdentity(config: AppConfig): Promise<GitHubPrIdentityService> {
+  const identities = new GitHubPrIdentityService({
+    stateDir: config.stateDir,
+    defaultGitHubLogin: config.defaultGitHubLogin,
+    defaultGitHubToken: config.defaultGitHubToken,
+    githubOAuthClientId: config.githubOAuthClientId,
+    githubOAuthBaseUrl: config.githubOAuthBaseUrl,
+    githubApiBaseUrl: config.githubApiBaseUrl,
+    githubOAuthScopes: config.githubOAuthScopes
+  });
+  await identities.load();
+  return identities;
+}
+
 export function createCodexBroker(config: AppConfig): CodexBroker {
   return new CodexBroker({
     serviceName: config.serviceName,
@@ -102,12 +117,14 @@ export function createSlackBridge(options: {
   readonly sessions: SessionManager;
   readonly agentRuntime: AgentRuntime;
   readonly mappings: GitHubAuthorMappingService;
+  readonly githubPrIdentity: GitHubPrIdentityService;
 }): SlackAgentBridge {
   return new SlackAgentBridge({
     config: options.config,
     sessions: options.sessions,
     agentRuntime: options.agentRuntime,
-    mappings: options.mappings
+    mappings: options.mappings,
+    githubPrIdentity: options.githubPrIdentity
   });
 }
 

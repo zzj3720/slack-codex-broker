@@ -226,6 +226,82 @@ describe("admin routes", () => {
     expect(sessionViewSource).toContain("/admin/api/sessions/\" + encodeURIComponent(sessionKey) + \"/timeline");
   });
 
+  it("serves the GitHub bind session deep link and routes device OAuth api calls", async () => {
+    const calls: string[] = [];
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getSessionGitHubIdentity: async (sessionKey: string) => {
+        calls.push(`identity:${sessionKey}`);
+        return {
+          ok: true,
+          sessionKey,
+          identity: {
+            binding: { state: "unbound" },
+            defaultAccount: { available: true, githubLogin: "default-bot" }
+          }
+        };
+      },
+      startSessionGitHubDeviceAuthorization: async (sessionKey: string) => {
+        calls.push(`start:${sessionKey}`);
+        return {
+          ok: true,
+          device: {
+            id: "device-1",
+            userCode: "ABCD-EFGH"
+          }
+        };
+      },
+      pollGitHubDeviceAuthorization: async (deviceAuthorizationId: string) => {
+        calls.push(`poll:${deviceAuthorizationId}`);
+        return {
+          ok: true,
+          result: { status: "pending" }
+        };
+      }
+    });
+    const sessionKey = "C123:111.222";
+
+    const page = await fetch(`${baseUrl}/admin/sessions/${encodeURIComponent(sessionKey)}/github/bind`);
+    expect(page.status).toBe(200);
+    await expect(page.text()).resolves.toContain('id="admin-root"');
+
+    const identity = await fetch(`${baseUrl}/admin/api/sessions/${encodeURIComponent(sessionKey)}/github-identity`);
+    expect(identity.status).toBe(200);
+    await expect(identity.json()).resolves.toMatchObject({
+      ok: true,
+      identity: {
+        binding: { state: "unbound" },
+        defaultAccount: { githubLogin: "default-bot" }
+      }
+    });
+
+    const started = await fetch(`${baseUrl}/admin/api/sessions/${encodeURIComponent(sessionKey)}/github-oauth/device/start`, {
+      method: "POST"
+    });
+    expect(started.status).toBe(200);
+    await expect(started.json()).resolves.toMatchObject({
+      ok: true,
+      device: {
+        id: "device-1",
+        userCode: "ABCD-EFGH"
+      }
+    });
+
+    const polled = await fetch(`${baseUrl}/admin/api/github-oauth/device/device-1`);
+    expect(polled.status).toBe(200);
+    await expect(polled.json()).resolves.toMatchObject({
+      ok: true,
+      result: { status: "pending" }
+    });
+    expect(calls).toEqual([
+      "identity:C123:111.222",
+      "start:C123:111.222",
+      "poll:device-1"
+    ]);
+  });
+
   it("persists session ui state in the admin page script", async () => {
     const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",
@@ -269,6 +345,8 @@ describe("admin routes", () => {
     expect(sessionViewSource).toContain("ongoing");
     expect(adminClientSource).toContain("authProfileQuotaItems");
     expect(adminClientSource).toContain("profileTooltip");
+    expect(sessionViewSource).toContain("自动分配");
+    expect(sessionViewSource).toContain('mode: "auto"');
     expect(adminClientSource).not.toContain("renderAccountChip");
     expect(adminClientSource).not.toContain("refreshButton");
     expect(adminClientSource).not.toContain("lastRefresh");
@@ -284,13 +362,15 @@ describe("admin routes", () => {
     expect(adminCssSource).toContain("text-overflow: ellipsis");
     expect(adminCssSource).toContain("overflow-x: auto");
     expect(adminCssSource).toContain("flex: 0 0 auto");
+    expect(adminCssSource).toContain("grid-auto-rows: max-content");
+    expect(adminCssSource).toContain("align-content: start");
     expect(adminCssSource).toContain("html, body { width: 100%; height: 100%; overflow: hidden; }");
     expect(adminCssSource).toContain(".shell { width: 100%; height: 100dvh;");
     expect(adminCssSource).toContain("grid-template-columns: minmax(320px, 420px)");
     expect(adminCssSource).toContain(".session-detail-panel > .panel-body");
     expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
     expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden;");
-    expect(adminCssSource).toContain(".timeline { height: 100%; display: grid; gap: 0; overflow: auto;");
+    expect(adminCssSource).toContain(".timeline { height: 100%; display: grid; grid-auto-rows: max-content; align-content: start;");
     expect(adminCssSource).toContain(".session-card { display: block; overflow: hidden; }");
     expect(adminCssSource).toContain(".session-meta-line { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap;");
     expect(adminCssSource).toContain(".session-meta-pill { min-width: 0; max-width: 100%; flex: 0 1 auto;");
@@ -468,6 +548,44 @@ describe("admin routes", () => {
       {
         slackUserId: "U123",
         githubAuthor: "Alice Example <alice@example.com>"
+      }
+    ]);
+  });
+
+  it("forwards automatic session auth profile switches without requiring a profile name", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getStatus: async () => ({ ok: true }),
+      addAuthProfile: async () => ({ ok: true }),
+      upsertGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true }),
+      switchSessionAuthProfile: async (payload: Record<string, unknown>) => {
+        calls.push(payload);
+        return { ok: true };
+      }
+    });
+
+    const response = await fetch(`${baseUrl}/admin/api/sessions/${encodeURIComponent("C123:111.222")}/auth-profile`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        mode: "auto"
+      })
+    });
+
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        sessionKey: "C123:111.222",
+        mode: "auto"
       }
     ]);
   });

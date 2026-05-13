@@ -1,3 +1,4 @@
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -71,6 +72,7 @@ export class AppServerProcess {
     await this.#bootstrapAuth();
     await this.#disableConfiguredMcpServers();
     await this.#ensureGitCommitHook();
+    const githubCliWrapper = await this.#ensureGitHubCliWrapper();
     const tempadLinkServiceUrl = await this.#resolveTempadLinkServiceUrl();
 
     const env: NodeJS.ProcessEnv = {
@@ -78,11 +80,16 @@ export class AppServerProcess {
       CODEX_HOME: this.#codexHome,
       HOME: this.#runtimeHome,
       BROKER_API_BASE: this.#brokerHttpBaseUrl,
+      BROKER_GH_HELPER:
+        process.env.BROKER_GH_HELPER?.trim() || resolveRuntimeToolPath("gh.js"),
+      BROKER_REAL_GH_PATH:
+        process.env.BROKER_REAL_GH_PATH?.trim() || githubCliWrapper.realGhPath || "",
       TEMPAD_LINK_SERVICE_URL: tempadLinkServiceUrl,
       BROKER_GIT_COAUTHOR_HELPER:
         process.env.BROKER_GIT_COAUTHOR_HELPER?.trim() || resolveRuntimeToolPath("git-coauthor.js"),
       BROKER_GEMINI_UI_HELPER:
-        process.env.BROKER_GEMINI_UI_HELPER?.trim() || resolveRuntimeToolPath("gemini-ui.js")
+        process.env.BROKER_GEMINI_UI_HELPER?.trim() || resolveRuntimeToolPath("gemini-ui.js"),
+      PATH: `${githubCliWrapper.binDir}:${process.env.PATH ?? ""}`
     };
 
     if (this.#geminiHttpProxy) {
@@ -222,6 +229,30 @@ export class AppServerProcess {
     await fs.writeFile(hookPath, `${hookScript}\n`, { mode: 0o755 });
     await fs.chmod(hookPath, 0o755);
     await this.#runGit(["config", "--global", "core.hooksPath", hooksDir]);
+  }
+
+  async #ensureGitHubCliWrapper(): Promise<{
+    readonly binDir: string;
+    readonly realGhPath?: string | undefined;
+  }> {
+    const binDir = path.join(this.#runtimeHome, ".local", "broker-bin");
+    await ensureDir(binDir);
+    const wrapperPath = path.join(binDir, "gh");
+    const wrapperScript = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "if [ -z \"${BROKER_GH_HELPER:-}\" ]; then",
+      "  printf '%s\\n' 'BROKER_GH_HELPER is required for broker gh wrapper.' >&2",
+      "  exit 1",
+      "fi",
+      "exec node \"$BROKER_GH_HELPER\" \"$@\""
+    ].join("\n");
+    await fs.writeFile(wrapperPath, `${wrapperScript}\n`, { mode: 0o755 });
+    await fs.chmod(wrapperPath, 0o755);
+    return {
+      binDir,
+      realGhPath: process.env.BROKER_REAL_GH_PATH?.trim() || await findExecutableOnPath("gh", process.env.PATH)
+    };
   }
 
   async #disableConfiguredMcpServers(): Promise<void> {
@@ -644,4 +675,17 @@ async function isHealthyHttpService(baseUrl: string): Promise<boolean> {
 
 function uniqueStrings(values: readonly (string | undefined)[]): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+async function findExecutableOnPath(command: string, pathValue: string | undefined): Promise<string | undefined> {
+  for (const dir of (pathValue ?? "").split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(dir, command);
+    try {
+      await fs.access(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // Keep searching PATH.
+    }
+  }
+  return undefined;
 }

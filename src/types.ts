@@ -5,6 +5,9 @@ export interface SlackSessionRecord {
   readonly channelType?: string | undefined;
   readonly rootThreadTs: string;
   readonly workspacePath: string;
+  readonly initiatorUserId?: string | undefined;
+  readonly initiatorMessageTs?: string | undefined;
+  readonly initiatorCapturedAt?: string | undefined;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly agentSessionId?: string | undefined;

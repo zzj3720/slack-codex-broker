@@ -27,6 +27,12 @@ export interface AppConfig {
   readonly codexAppServerPort: number;
   readonly codexOpenAiApiKey?: string | undefined;
   readonly tempadLinkServiceUrl?: string | undefined;
+  readonly githubOAuthClientId?: string | undefined;
+  readonly githubOAuthBaseUrl: string;
+  readonly githubApiBaseUrl: string;
+  readonly githubOAuthScopes: string[];
+  readonly defaultGitHubLogin?: string | undefined;
+  readonly defaultGitHubToken?: string | undefined;
   readonly port: number;
   readonly adminBaseUrl: string;
   readonly workerPort: number;
@@ -196,6 +202,14 @@ export function loadConfig(env = process.env): AppConfig {
     codexAppServerPort: getNumber(env, "CODEX_APP_SERVER_PORT", 4590),
     codexOpenAiApiKey: getOptional(env, "OPENAI_API_KEY"),
     tempadLinkServiceUrl: getOptional(env, "TEMPAD_LINK_SERVICE_URL"),
+    githubOAuthClientId: getOptional(env, "GITHUB_OAUTH_CLIENT_ID"),
+    githubOAuthBaseUrl: env.GITHUB_OAUTH_BASE_URL ?? "https://github.com/login/oauth",
+    githubApiBaseUrl: env.GITHUB_API_BASE_URL ?? "https://api.github.com",
+    githubOAuthScopes: getCsvList(env, "GITHUB_OAUTH_SCOPES").length > 0
+      ? getCsvList(env, "GITHUB_OAUTH_SCOPES")
+      : ["repo", "read:user"],
+    defaultGitHubLogin: getOptional(env, "BROKER_DEFAULT_GITHUB_LOGIN"),
+    defaultGitHubToken: getOptional(env, "BROKER_DEFAULT_GITHUB_TOKEN"),
     port,
     workerPort,
     workerBindHost,

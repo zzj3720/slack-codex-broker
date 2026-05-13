@@ -11,6 +11,7 @@ import { ReleaseDeploymentService } from "./services/deploy/release-deployment-s
 import {
   configureServiceLogger,
   createGitHubAuthorMappings,
+  createGitHubPrIdentity,
   createSessionServices,
   createSlackApi
 } from "./services/service-components.js";
@@ -28,6 +29,7 @@ export async function startAdminService(): Promise<{
     config
   });
   const githubAuthorMappings = await createGitHubAuthorMappings(config);
+  const githubPrIdentity = await createGitHubPrIdentity(config);
   const deployment = createReleaseDeploymentService(config);
   const runtime = new AuthFileRuntimeControl(config, {
     onRestart: async (reason) => {
@@ -43,6 +45,7 @@ export async function startAdminService(): Promise<{
     runtime,
     authProfiles,
     githubAuthorMappings,
+    githubPrIdentity,
     startedAt,
     deployment,
     slackConversations: createSlackApi(config)

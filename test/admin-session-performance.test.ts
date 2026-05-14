@@ -88,6 +88,9 @@ describe("admin session performance contract", () => {
         },
         listAgentTraceEvents: () => {
           throw new Error("session summaries must not read trace events");
+        },
+        load: async () => {
+          throw new Error("session summaries must not refresh session directories");
         }
       } as never,
       authProfiles: {
@@ -185,6 +188,9 @@ describe("admin session performance contract", () => {
         })
       } as never
     });
+    (sessions as unknown as { load: () => Promise<void> }).load = async () => {
+      throw new Error("timeline reads must not refresh session directories");
+    };
 
     const first = await service.getSessionTimeline("C123:111.222", { limit: 25 });
     const firstTraceSequences = (first.events as Array<Record<string, unknown>>)
@@ -234,6 +240,8 @@ describe("admin session performance contract", () => {
 
     const response = await fetch(`${baseUrl}/admin/api/sessions/${encodeURIComponent("C123:111.222")}/timeline?limit=25&before_sequence=96`);
     expect(response.status).toBe(200);
+    expect(response.headers.get("server-timing")).toContain("session-timeline");
+    expect(Number(response.headers.get("x-admin-duration-ms"))).toBeGreaterThanOrEqual(0);
     await response.json();
     expect(calls).toEqual([
       {

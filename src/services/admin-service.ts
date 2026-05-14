@@ -255,7 +255,6 @@ export class AdminService {
   }
 
   async getUsageOverview(): Promise<Record<string, unknown>> {
-    await this.#refreshSessions();
     return {
       ok: true,
       ...this.#readUsageOverview()
@@ -294,7 +293,6 @@ export class AdminService {
     readonly limit?: number | undefined;
     readonly beforeSequence?: number | undefined;
   } = {}): Promise<Record<string, unknown>> {
-    await this.#refreshSessions();
     const session = this.options.sessions.getSessionByKey(sessionKey);
     if (!session) {
       return {
@@ -351,7 +349,6 @@ export class AdminService {
   }
 
   async getSessionSlackThreadUrl(sessionKey: string): Promise<Record<string, unknown>> {
-    await this.#refreshSessions();
     const session = this.options.sessions.getSessionByKey(sessionKey);
     if (!session) {
       return {
@@ -984,7 +981,6 @@ export class AdminService {
   }
 
   async #readSessionSnapshot(): Promise<SessionSnapshot> {
-    await this.#refreshSessions();
     const sessions = this.options.sessions.listSessions();
     const inbound = this.options.sessions.listInboundMessages();
     const openInbound = this.options.sessions

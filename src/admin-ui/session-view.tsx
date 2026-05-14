@@ -50,7 +50,7 @@ type TimelinePayload = {
 
 const sessionFilters = ["ongoing", "all", "active", "inbound", "jobs", "issues", "usage"];
 const AUTO_AUTH_PROFILE_VALUE = "__auto_auth_profile__";
-const TIMELINE_PAGE_SIZE = 80;
+const TIMELINE_PAGE_SIZE = 30;
 
 export function AdminSessionsView(): React.JSX.Element {
   const githubBindSessionKey = readGitHubBindSessionKey();

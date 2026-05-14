@@ -26,6 +26,9 @@ The remaining problems are data-contract problems:
 - `/admin/api/sessions` returns session list summaries only. It must not read
   agent trace events, and it must not aggregate raw turn usage records for every
   request.
+- Read-only admin endpoints must not call `SessionManager.load()` or touch every
+  session workspace directory. Startup and session creation own directory
+  creation; read paths must stay DB-only.
 - Token usage and trace composition used by session UI are stored as redundant
   per-session summaries when usage or trace rows are written.
 - `/admin/api/sessions/:key/timeline` reads from newest to oldest with a bounded
@@ -37,14 +40,20 @@ The remaining problems are data-contract problems:
 - The first timeline page is rendered in chronological order inside that page,
   but it is obtained by reading the newest rows first.
 - The React detail view fetches only the selected session's first timeline page.
-  It prepends older pages only when the user asks for more.
+  It starts with a small latest page and prepends older pages only when the user
+  asks for more.
 - Realtime events append to the loaded timeline page without forcing a full
   timeline reload.
+- Read-heavy admin API responses include `Server-Timing` and
+  `X-Admin-Duration-Ms` so browser/network tooling can show whether the backend
+  or frontend is slow.
 
 ## Acceptance Criteria
 
 - `listSessionSummaries()` can run without `listAgentTraceEvents()` and without
   raw `listAgentTurnUsage()` aggregation.
+- `listSessionSummaries()` and the initial session timeline request do not call
+  `SessionManager.load()` on the read path.
 - `GET /admin/api/sessions/:key/timeline?limit=50` returns at most 50 visible
   timeline events plus pagination metadata.
 - The first page contains only the newest agent trace events. Synthetic session
@@ -55,4 +64,6 @@ The remaining problems are data-contract problems:
 - The React session detail initial request includes a bounded `limit`.
 - The React session detail has an explicit `加载更早活动` action when the API says
   older activity exists.
+- Timeline, sessions, overview, usage, and status responses expose backend
+  duration headers for request-level tracing.
 - `pnpm test` and `pnpm build` pass.

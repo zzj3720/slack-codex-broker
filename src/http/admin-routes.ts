@@ -39,19 +39,19 @@ export async function handleAdminRequest(
   }
 
   if (method === "GET" && url.pathname === "/admin/api/overview") {
-    respondJson(response, 200, await options.adminService.getOverview());
+    await respondTracedAdminJson(response, "overview", () => options.adminService.getOverview());
     return true;
   }
 
   if (method === "GET" && url.pathname === "/admin/api/logs") {
-    respondJson(response, 200, await options.adminService.getRecentLogs({
+    await respondTracedAdminJson(response, "logs", () => options.adminService.getRecentLogs({
       limit: readPositiveNumber(url.searchParams.get("limit"))
     }));
     return true;
   }
 
   if (method === "GET" && url.pathname === "/admin/api/sessions") {
-    respondJson(response, 200, await options.adminService.listSessionSummaries());
+    await respondTracedAdminJson(response, "sessions", () => options.adminService.listSessionSummaries());
     return true;
   }
 
@@ -64,7 +64,7 @@ export async function handleAdminRequest(
       return false;
     }
 
-    respondJson(response, 200, await options.adminService.getSessionTimeline(sessionKey, {
+    await respondTracedAdminJson(response, "session-timeline", () => options.adminService.getSessionTimeline(sessionKey, {
       limit: readPositiveNumber(url.searchParams.get("limit")),
       beforeSequence: readPositiveNumber(url.searchParams.get("before_sequence"))
     }));
@@ -222,7 +222,7 @@ export async function handleAdminRequest(
   }
 
   if (method === "GET" && url.pathname === "/admin/api/usage") {
-    respondJson(response, 200, await options.adminService.getUsageOverview());
+    await respondTracedAdminJson(response, "usage", () => options.adminService.getUsageOverview());
     return true;
   }
 
@@ -239,7 +239,7 @@ export async function handleAdminRequest(
   }
 
   if (method === "GET" && url.pathname === "/admin/api/status") {
-    respondJson(response, 200, await options.adminService.getStatus());
+    await respondTracedAdminJson(response, "status", () => options.adminService.getStatus());
     return true;
   }
 
@@ -675,6 +675,19 @@ function readEventCursor(url: URL, request: http.IncomingMessage): number {
   const value = Array.isArray(fromHeader) ? fromHeader.at(-1) : fromHeader;
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+}
+
+async function respondTracedAdminJson(
+  response: http.ServerResponse,
+  label: string,
+  load: () => Promise<Record<string, unknown>>
+): Promise<void> {
+  const startedAt = Date.now();
+  const body = await load();
+  const durationMs = Math.max(0, Date.now() - startedAt);
+  response.setHeader("server-timing", `admin;desc="${label}";dur=${durationMs}`);
+  response.setHeader("x-admin-duration-ms", String(durationMs));
+  respondJson(response, 200, body);
 }
 
 function isAuthorizedAdminRequest(request: http.IncomingMessage, config: AppConfig): boolean {

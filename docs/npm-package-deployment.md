@@ -71,6 +71,7 @@ Package contents are runtime-only:
 - `dist/src/`;
 - `dist/admin-ui/` only for the admin package;
 - launchd helper scripts needed by installed services;
+- direct script dependencies needed by exported package binaries;
 - README and license.
 
 Source files, tests, local state, generated preview data, and private operator

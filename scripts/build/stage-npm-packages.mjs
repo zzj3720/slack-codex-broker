@@ -13,6 +13,7 @@ const packageTargets = [
     destination: path.join(stageRoot, "admin"),
     includeAdminUi: true,
     scripts: [
+      "lib.mjs",
       "macos-bootstrap.mjs",
       "macos-launchd-launcher.mjs",
       "macos-launchd-restart.mjs"

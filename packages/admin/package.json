@@ -1,6 +1,6 @@
 {
   "name": "@agent-session-broker/admin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Admin service and UI for the agent session broker.",
   "license": "MIT",
   "repository": {
@@ -22,6 +22,7 @@
   "files": [
     "dist/src/",
     "dist/admin-ui/",
+    "scripts/ops/lib.mjs",
     "scripts/ops/macos-bootstrap.mjs",
     "scripts/ops/macos-launchd-launcher.mjs",
     "scripts/ops/macos-launchd-restart.mjs",

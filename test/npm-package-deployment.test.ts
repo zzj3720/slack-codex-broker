@@ -62,6 +62,7 @@ describe("npm package deployment contract", () => {
     expect(adminPackageJson.files).toEqual(expect.arrayContaining([
       "dist/src/",
       "dist/admin-ui/",
+      "scripts/ops/lib.mjs",
       "scripts/ops/macos-bootstrap.mjs",
       "scripts/ops/macos-launchd-launcher.mjs",
       "scripts/ops/macos-launchd-restart.mjs"
@@ -90,6 +91,12 @@ describe("npm package deployment contract", () => {
     expect(packageJson.scripts?.["release:pack"]).toContain("pnpm build");
     expect(packageJson.scripts?.["release:pack"]).toContain("npm pack artifacts/npm-packages/admin");
     expect(packageJson.scripts?.["release:pack"]).toContain("npm pack artifacts/npm-packages/worker");
+  });
+
+  it("stages script dependencies needed by published package binaries", async () => {
+    const stageScript = await fs.readFile(new URL("../scripts/build/stage-npm-packages.mjs", import.meta.url), "utf8");
+    expect(stageScript).toContain('"lib.mjs"');
+    expect(stageScript).toContain('"macos-bootstrap.mjs"');
   });
 
   it("makes CI produce the same packed artifacts that deployment consumes", async () => {

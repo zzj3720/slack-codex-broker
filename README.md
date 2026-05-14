@@ -167,8 +167,8 @@ There is no host-side code sync or production build step in the normal path.
 ### First bootstrap on the VM
 
 ```bash
-npm install -g @agent-session-broker/admin@0.1.1
-agent-session-broker-macos-bootstrap --service-root ~/services/slack-codex-broker --package-version 0.1.1 --start-worker
+npm install -g @agent-session-broker/admin@0.1.2
+agent-session-broker-macos-bootstrap --service-root ~/services/slack-codex-broker --package-version 0.1.2 --start-worker
 ```
 
 The bootstrap script installs `@agent-session-broker/admin@<version>` and

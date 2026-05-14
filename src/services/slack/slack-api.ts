@@ -40,6 +40,31 @@ export interface SlackConversationInfo {
   readonly channelType?: string | undefined;
 }
 
+export class SlackApiError extends Error {
+  readonly path: string;
+  readonly status: number;
+  readonly statusText: string;
+  readonly retryAfterMs?: number | undefined;
+
+  constructor(options: {
+    readonly path: string;
+    readonly status: number;
+    readonly statusText: string;
+    readonly retryAfterMs?: number | undefined;
+  }) {
+    super(`Slack API request failed (${options.status} ${options.statusText}) for ${options.path}`);
+    this.name = "SlackApiError";
+    this.path = options.path;
+    this.status = options.status;
+    this.statusText = options.statusText;
+    this.retryAfterMs = options.retryAfterMs;
+  }
+}
+
+export function isSlackRateLimitError(error: unknown): error is SlackApiError {
+  return error instanceof SlackApiError && error.status === 429;
+}
+
 export class SlackApi {
   readonly #baseUrl: string;
   readonly #appToken: string;
@@ -540,7 +565,12 @@ export class SlackApi {
     });
 
     if (!response.ok) {
-      throw new Error(`Slack API request failed (${response.status} ${response.statusText}) for ${path}`);
+      throw new SlackApiError({
+        path,
+        status: response.status,
+        statusText: response.statusText,
+        retryAfterMs: parseRetryAfterMs(response.headers.get("retry-after"))
+      });
     }
 
     const payload = await response.json() as SlackApiResponse<T> & T;
@@ -551,6 +581,17 @@ export class SlackApi {
 
     return payload;
   }
+}
+
+function parseRetryAfterMs(header: string | null): number | undefined {
+  if (!header) {
+    return undefined;
+  }
+  const seconds = Number(header);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return undefined;
+  }
+  return Math.ceil(seconds * 1_000);
 }
 
 export function normalizeSlackFileAttachments(files: unknown): SlackImageAttachment[] {

@@ -23,6 +23,7 @@ import {
 import { AgentTraceRecorder } from "../agent-runtime/agent-trace-recorder.js";
 import {
   SlackApi,
+  isSlackRateLimitError,
   type SlackUploadedFile
 } from "./slack-api.js";
 import { SlackAssistantStatusController } from "./slack-assistant-status.js";
@@ -80,6 +81,8 @@ interface PendingDispatchRequest {
 
 const AUTO_RESUME_AFTER_FAILURE_MS = 5_000;
 const NONRECOVERABLE_DISPATCH_RETRY_COOLDOWN_MS = 5 * 60 * 1_000;
+const MISSED_THREAD_RECOVERY_RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
+const MISSED_THREAD_RECOVERY_RATE_LIMIT_MAX_BACKOFF_MS = 10 * 60_000;
 
 export class SlackConversationService {
   readonly #config: AppConfig;
@@ -105,6 +108,8 @@ export class SlackConversationService {
   #activeTurnReconcileTimer: NodeJS.Timeout | undefined;
   #catchUpPromise: Promise<void> | undefined;
   #lastMissedThreadRecoveryAtMs = 0;
+  #missedThreadRecoveryRateLimitBackoffMs = 0;
+  #missedThreadRecoveryRateLimitUntilMs = 0;
 
   constructor(options: {
     readonly config: AppConfig;
@@ -762,8 +767,16 @@ export class SlackConversationService {
   }
 
   async #runMissedThreadRecovery(reason: "socket_ready" | "periodic"): Promise<void> {
-    this.#lastMissedThreadRecoveryAtMs = Date.now();
     const now = Date.now();
+    this.#lastMissedThreadRecoveryAtMs = now;
+    if (now < this.#missedThreadRecoveryRateLimitUntilMs) {
+      logger.info("Skipping Slack missed-message recovery during rate-limit backoff", {
+        reason,
+        retryInMs: this.#missedThreadRecoveryRateLimitUntilMs - now
+      });
+      return;
+    }
+
     const sessions = this.#sessions
       .listSessions()
       .filter((session) => shouldAutoRecoverSession(session, now))
@@ -780,12 +793,35 @@ export class SlackConversationService {
 
     let recoveredBatchCount = 0;
     let recoveredMessageCount = 0;
+    let skippedByRateLimit = false;
 
     for (let session of sessions) {
-      const messages = await this.#slackApi.listThreadMessages({
-        channelId: session.channelId,
-        rootThreadTs: session.rootThreadTs
-      });
+      let messages: SlackThreadMessage[];
+      try {
+        messages = await this.#slackApi.listThreadMessages({
+          channelId: session.channelId,
+          rootThreadTs: session.rootThreadTs
+        });
+      } catch (error) {
+        if (isSlackRateLimitError(error)) {
+          const retryInMs = this.#deferMissedThreadRecoveryAfterRateLimit(error.retryAfterMs);
+          skippedByRateLimit = true;
+          logger.warn("Paused Slack missed-message recovery after Slack rate limit", {
+            reason,
+            sessionKey: session.key,
+            retryInMs,
+            retryAfterMs: error.retryAfterMs ?? null
+          });
+          break;
+        }
+
+        logger.warn("Failed to check Slack thread for missed messages", {
+          reason,
+          sessionKey: session.key,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        continue;
+      }
       const latestPersistedMessageTs =
         this.#sessions.getLatestSlackInboundMessageTs(session.channelId, session.rootThreadTs) ??
         session.lastObservedMessageTs;
@@ -819,10 +855,16 @@ export class SlackConversationService {
       }
     }
 
+    if (!skippedByRateLimit) {
+      this.#missedThreadRecoveryRateLimitBackoffMs = 0;
+      this.#missedThreadRecoveryRateLimitUntilMs = 0;
+    }
+
     logger.info("Finished Slack missed-message recovery", {
       reason,
       recoveredBatchCount,
-      recoveredMessageCount
+      recoveredMessageCount,
+      skippedByRateLimit
     });
   }
 
@@ -1602,6 +1644,23 @@ export class SlackConversationService {
       this.#config.slackActiveTurnReconcileIntervalMs
     );
     return Date.now() - this.#lastMissedThreadRecoveryAtMs >= intervalMs;
+  }
+
+  #deferMissedThreadRecoveryAfterRateLimit(retryAfterMs: number | undefined): number {
+    const nextExponentialBackoffMs = this.#missedThreadRecoveryRateLimitBackoffMs > 0
+      ? Math.min(
+        this.#missedThreadRecoveryRateLimitBackoffMs * 2,
+        MISSED_THREAD_RECOVERY_RATE_LIMIT_MAX_BACKOFF_MS
+      )
+      : MISSED_THREAD_RECOVERY_RATE_LIMIT_MIN_BACKOFF_MS;
+    const requestedBackoffMs = retryAfterMs ?? 0;
+    const nextBackoffMs = Math.min(
+      Math.max(nextExponentialBackoffMs, requestedBackoffMs, MISSED_THREAD_RECOVERY_RATE_LIMIT_MIN_BACKOFF_MS),
+      MISSED_THREAD_RECOVERY_RATE_LIMIT_MAX_BACKOFF_MS
+    );
+    this.#missedThreadRecoveryRateLimitBackoffMs = nextBackoffMs;
+    this.#missedThreadRecoveryRateLimitUntilMs = Date.now() + nextBackoffMs;
+    return nextBackoffMs;
   }
 
   #setAssistantThinking(session: SlackSessionRecord): void {

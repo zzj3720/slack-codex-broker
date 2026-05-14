@@ -107,6 +107,7 @@ export default defineConfig({
                 child.stdin.end();
               }
             });
+            request.resume();
           });
         }
       }

@@ -1,6 +1,6 @@
 {
   "name": "agent-session-broker-repo",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Slack Socket Mode broker that routes Slack threads into Codex app-server sessions with isolated workspaces.",
   "license": "MIT",
@@ -22,6 +22,7 @@
     "build:admin-ui": "vp build",
     "dev": "tsx watch src/index.ts",
     "dev:admin": "node scripts/dev/admin.mjs",
+    "dev:admin:remote": "node scripts/dev/admin-remote.mjs",
     "dev:admin:server": "tsx watch src/admin-index.ts",
     "dev:admin-ui": "vp dev --host 127.0.0.1 --port 5173",
     "dev:worker": "tsx watch src/worker-index.ts",

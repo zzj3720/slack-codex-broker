@@ -185,7 +185,7 @@ export function loadConfig(env = process.env): AppConfig {
     slackMissedThreadRecoveryIntervalMs: getNumber(
       env,
       "SLACK_MISSED_THREAD_RECOVERY_INTERVAL_MS",
-      15_000
+      5 * 60_000
     ),
     stateDir,
     jobsRoot,

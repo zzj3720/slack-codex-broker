@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/config.js";
 import { AuthProfileUnavailableError } from "../src/services/agent-runtime/session-auth-profile-runtime.js";
 import { SlackConversationService } from "../src/services/slack/slack-conversation-service.js";
+import { SlackApiError } from "../src/services/slack/slack-api.js";
 import { SessionManager } from "../src/services/session-manager.js";
 import { StateStore } from "../src/store/state-store.js";
 import type { PersistedAgentTraceEvent, PersistedInboundMessage, SlackSessionRecord } from "../src/types.js";
@@ -327,6 +328,67 @@ describe("SlackConversationService", () => {
       kind: "final"
     }));
     expect(setActiveTurnId).not.toHaveBeenCalled();
+
+    await service.stop();
+  });
+
+  it("stops missed-message recovery on Slack rate limit and backs off the next periodic scan", async () => {
+    const agentRuntime = new EventEmitter();
+    const sessions = [
+      {
+        ...TEST_SESSION,
+        activeTurnId: undefined,
+        lastObservedMessageTs: "111.223",
+        updatedAt: new Date().toISOString()
+      },
+      {
+        ...TEST_SESSION,
+        key: "C123:222.333",
+        rootThreadTs: "222.333",
+        activeTurnId: undefined,
+        lastObservedMessageTs: "222.334",
+        updatedAt: new Date().toISOString()
+      }
+    ];
+    const listThreadMessages = vi.fn(async () => {
+      throw new SlackApiError({
+        path: "conversations.replies",
+        status: 429,
+        statusText: "Too Many Requests",
+        retryAfterMs: 120_000
+      });
+    });
+
+    const service = new SlackConversationService({
+      config: {
+        ...TEST_CONFIG,
+        slackMissedThreadRecoveryIntervalMs: 100,
+        slackActiveTurnReconcileIntervalMs: 100
+      } as AppConfig,
+      sessions: {
+        listSessions: vi.fn(() => sessions),
+        getLatestSlackInboundMessageTs: vi.fn()
+      } as never,
+      agentRuntime: agentRuntime as never,
+      slackApi: {
+        listThreadMessages,
+        setAssistantThreadStatus: vi.fn(),
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {
+        shouldIgnoreThreadMessage: vi.fn(() => false)
+      } as never
+    });
+
+    await service.recoverMissedThreadMessages("periodic");
+    await service.recoverMissedThreadMessages("periodic");
+
+    expect(listThreadMessages).toHaveBeenCalledTimes(1);
+    expect(listThreadMessages).toHaveBeenCalledWith(expect.objectContaining({
+      channelId: "C123",
+      rootThreadTs: "111.222"
+    }));
 
     await service.stop();
   });

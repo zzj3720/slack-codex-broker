@@ -108,6 +108,7 @@ export class SlackConversationService {
   readonly #sessionPageLinkPosts = new Map<string, Promise<SlackSessionRecord>>();
   #botUserId = "";
   #activeTurnReconcileTimer: NodeJS.Timeout | undefined;
+  #activeTurnReconcilePromise: Promise<void> | undefined;
   #startupRecoveryPromise: Promise<void> | undefined;
   #stopped = true;
   #catchUpPromise: Promise<void> | undefined;
@@ -728,7 +729,7 @@ export class SlackConversationService {
   #startActiveTurnReconciler(): void {
     this.#stopActiveTurnReconciler();
     this.#activeTurnReconcileTimer = setInterval(() => {
-      void this.#reconcileLiveActiveTurns();
+      this.#runLiveActiveTurnReconcileOnce();
     }, this.#config.slackActiveTurnReconcileIntervalMs);
   }
 
@@ -739,6 +740,23 @@ export class SlackConversationService {
 
     clearInterval(this.#activeTurnReconcileTimer);
     this.#activeTurnReconcileTimer = undefined;
+  }
+
+  #runLiveActiveTurnReconcileOnce(): void {
+    if (this.#activeTurnReconcilePromise) {
+      logger.debug("Skipping duplicate active-turn reconcile tick while previous pass is still running");
+      return;
+    }
+
+    this.#activeTurnReconcilePromise = this.#reconcileLiveActiveTurns()
+      .catch((error: unknown) => {
+        logger.warn("Failed to finish live active-turn reconciliation pass", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        this.#activeTurnReconcilePromise = undefined;
+      });
   }
 
   async #reconcileLiveActiveTurns(): Promise<void> {

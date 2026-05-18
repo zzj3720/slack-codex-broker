@@ -417,6 +417,19 @@ describe("StateStore", () => {
     expect(pruneMethod).not.toContain("LIMIT ?");
   });
 
+  it("keeps Slack event retention out of the per-event hot path", async () => {
+    const source = await fs.readFile(new URL("../src/store/state-store.ts", import.meta.url), "utf8");
+    const processedPruneMethod = extractMethodBody(source, "#pruneProcessedEvents");
+    const doneSlackPruneMethod = extractMethodBody(source, "  #pruneDoneSlackEvents");
+
+    expect(processedPruneMethod).toContain("PROCESSED_EVENT_PRUNE_INTERVAL");
+    expect(processedPruneMethod).not.toContain("NOT IN");
+    expect(processedPruneMethod).not.toMatch(/SELECT[\s\S]*LIMIT 2000[\s\S]*DELETE FROM processed_events/);
+    expect(doneSlackPruneMethod).toContain("SLACK_DONE_EVENT_PRUNE_INTERVAL");
+    expect(doneSlackPruneMethod).not.toContain("NOT IN");
+    expect(doneSlackPruneMethod).not.toMatch(/SELECT[\s\S]*LIMIT 2000[\s\S]*DELETE FROM slack_events/);
+  });
+
   it("persists historical agent activity bindings when the current session runtime changes", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-agent-bindings-"));
     const sessionsRoot = path.join(stateDir, "sessions");
@@ -543,8 +556,12 @@ describe("StateStore", () => {
           name: "session_initiator"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 14,
           name: "agent_session_derived_summaries"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "slack_event_retention_indexes"
         }
       ]);
     } finally {

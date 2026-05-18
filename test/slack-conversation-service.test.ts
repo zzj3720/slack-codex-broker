@@ -69,6 +69,17 @@ describe("SlackConversationService", () => {
     await service.stop();
   });
 
+  it("coalesces live active-turn reconcile timer ticks instead of overlapping passes", async () => {
+    const source = await fs.readFile(
+      new URL("../src/services/slack/slack-conversation-service.ts", import.meta.url),
+      "utf8"
+    );
+
+    expect(source).toContain("#activeTurnReconcilePromise");
+    expect(source).toContain("#runLiveActiveTurnReconcileOnce");
+    expect(source).toMatch(/if \(\s*this\.#activeTurnReconcilePromise\s*\)/);
+  });
+
   it("removes the agent runtime event listener on stop", async () => {
     const agentRuntime = new EventEmitter();
     const getSessionByKey = vi.fn(() => TEST_SESSION);

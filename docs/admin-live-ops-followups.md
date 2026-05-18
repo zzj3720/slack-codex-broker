@@ -190,3 +190,46 @@ Additional acceptance:
 - A regression test must prove admin event retention is not pruned for every
   appended admin event.
 - `pnpm test` and `pnpm build` pass before deployment.
+
+## Worker Hot Path Performance
+
+The worker must preserve Slack behavior while removing redundant work from the
+hot path. This section is explicitly not a behavior change: bot/app messages,
+release notifications, thread replies, persisted Slack events, and recovery
+passes must keep the same semantics.
+
+Production failure this protects against:
+
+- The active-turn reconciler is timer-driven. If one pass is still reading
+  Codex app-server state or doing missed-message recovery, the next timer tick
+  can start another identical pass over the same active sessions.
+- Every processed Slack event currently prunes `processed_events` with a
+  `NOT IN (SELECT ... LIMIT 2000)` cleanup.
+- Every completed Slack event currently prunes `slack_events` with a
+  `NOT IN (SELECT ... LIMIT 2000)` cleanup.
+
+Target behavior:
+
+- Active-turn reconcile timer ticks are coalesced: at most one live reconcile
+  pass runs at a time.
+- A coalesced timer tick does not cancel, skip, or reinterpret Slack work; it
+  only avoids starting duplicate reconciliation while the previous equivalent
+  pass is still running.
+- `processed_events` retention runs in bounded batches using the monotonic
+  sequence column, not with a full-table `NOT IN` cleanup on every event.
+- completed `slack_events` retention runs in bounded batches using indexed
+  timestamp ordering, not with a full-table `NOT IN` cleanup on every event.
+- No filtering is added for bot/app Slack messages. If a message was supposed
+  to wake an agent before this change, it must still wake an agent after this
+  change.
+
+Additional acceptance:
+
+- A regression test must prove live active-turn reconciliation has a reentry
+  guard.
+- A regression test must prove processed Slack event retention is batched and
+  does not use hot-path `NOT IN` cleanup.
+- A regression test must prove completed Slack event retention is batched and
+  does not use hot-path `NOT IN` cleanup.
+- Existing Slack conversation behavior tests still pass.
+- `pnpm test` and `pnpm build` pass before deployment.

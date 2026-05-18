@@ -21,10 +21,14 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 14;
+export const CURRENT_STATE_SCHEMA_VERSION = 15;
 export const STATE_STORE_BUSY_TIMEOUT_MS = 5_000;
 const ADMIN_EVENT_RETENTION_LIMIT = 20_000;
 const ADMIN_EVENT_PRUNE_INTERVAL = 500;
+const PROCESSED_EVENT_RETENTION_LIMIT = 2_000;
+const PROCESSED_EVENT_PRUNE_INTERVAL = 500;
+const SLACK_DONE_EVENT_RETENTION_LIMIT = 2_000;
+const SLACK_DONE_EVENT_PRUNE_INTERVAL = 500;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -150,6 +154,7 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
         CREATE INDEX IF NOT EXISTS idx_inbound_source ON inbound_messages(session_key, source, message_ts);
         CREATE INDEX IF NOT EXISTS idx_jobs_session_status ON background_jobs(session_key, status);
         CREATE INDEX IF NOT EXISTS idx_slack_events_status ON slack_events(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_slack_events_done_updated ON slack_events(status, updated_at);
       `);
     }
   },
@@ -325,6 +330,13 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
       rebuildAllAgentSessionUsageSummaries(database);
       rebuildAllAgentSessionTraceSummaries(database);
     }
+  },
+  {
+    version: 15,
+    name: "slack_event_retention_indexes",
+    up(database) {
+      createSlackEventRetentionIndexes(database);
+    }
   }
 ];
 
@@ -422,6 +434,15 @@ function createAdminEventsSchema(database: DatabaseSync): void {
 
     CREATE INDEX IF NOT EXISTS idx_admin_events_sequence ON admin_events(sequence);
     CREATE INDEX IF NOT EXISTS idx_admin_events_session_sequence ON admin_events(session_key, sequence);
+  `);
+}
+
+function createSlackEventRetentionIndexes(database: DatabaseSync): void {
+  if (!tableExists(database, "slack_events")) {
+    return;
+  }
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_slack_events_done_updated ON slack_events(status, updated_at);
   `);
 }
 
@@ -568,6 +589,7 @@ export class StateStore {
   readonly #sessionsRoot: string;
   #database: DatabaseSync | undefined;
   #loaded = false;
+  #doneSlackEventPruneCounter = 0;
 
   constructor(stateDir: string, sessionsRoot: string) {
     this.#stateDir = stateDir;
@@ -806,11 +828,13 @@ export class StateStore {
   async markSlackEventProcessed(eventId: string): Promise<void> {
     const now = new Date().toISOString();
     this.#transaction(() => {
-      this.#databaseRequired()
+      const result = this.#databaseRequired()
         .prepare("UPDATE slack_events SET status = 'done', updated_at = ? WHERE event_id = ?")
         .run(now, eventId);
       this.#markProcessedEvent(eventId);
-      this.#pruneDoneSlackEvents();
+      if (sqlChanges(result) > 0) {
+        this.#pruneDoneSlackEvents();
+      }
     });
   }
 
@@ -1884,28 +1908,58 @@ export class StateStore {
   }
 
   #markProcessedEvent(eventId: string): void {
-    this.#databaseRequired()
+    const result = this.#databaseRequired()
       .prepare("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)")
       .run(eventId);
-    this.#databaseRequired().exec(`
+    if (sqlChanges(result) === 0) {
+      return;
+    }
+    this.#pruneProcessedEvents(sqlLastInsertRowid(result));
+  }
+
+  #pruneProcessedEvents(latestSequence: number): void {
+    if (
+      latestSequence <= PROCESSED_EVENT_RETENTION_LIMIT ||
+      latestSequence % PROCESSED_EVENT_PRUNE_INTERVAL !== 0
+    ) {
+      return;
+    }
+    this.#databaseRequired().prepare(`
       DELETE FROM processed_events
-      WHERE sequence NOT IN (
-        SELECT sequence FROM processed_events ORDER BY sequence DESC LIMIT 2000
-      )
-    `);
+      WHERE sequence <= ?
+    `).run(latestSequence - PROCESSED_EVENT_RETENTION_LIMIT);
   }
 
   #pruneDoneSlackEvents(): void {
-    this.#databaseRequired().exec(`
+    this.#doneSlackEventPruneCounter += 1;
+    if (this.#doneSlackEventPruneCounter < SLACK_DONE_EVENT_PRUNE_INTERVAL) {
+      return;
+    }
+    this.#doneSlackEventPruneCounter = 0;
+
+    const cutoff = this.#databaseRequired()
+      .prepare(`
+        SELECT updated_at, rowid AS rowid
+        FROM slack_events
+        WHERE status = 'done'
+        ORDER BY updated_at DESC, rowid DESC
+        LIMIT 1 OFFSET ?
+      `)
+      .get(SLACK_DONE_EVENT_RETENTION_LIMIT - 1) as SqlRow | undefined;
+    const cutoffUpdatedAt = optionalStringColumn(cutoff ?? {}, "updated_at");
+    const cutoffRowid = optionalNumberColumn(cutoff ?? {}, "rowid");
+    if (!cutoffUpdatedAt || cutoffRowid === undefined) {
+      return;
+    }
+
+    this.#databaseRequired().prepare(`
       DELETE FROM slack_events
       WHERE status = 'done'
-        AND event_id NOT IN (
-          SELECT event_id FROM slack_events
-          WHERE status = 'done'
-          ORDER BY updated_at DESC
-          LIMIT 2000
+        AND (
+          updated_at < ?
+          OR (updated_at = ? AND rowid < ?)
         )
-    `);
+    `).run(cutoffUpdatedAt, cutoffUpdatedAt, cutoffRowid);
   }
 
   #rowToSession(row: SqlRow): SlackSessionRecord {
@@ -2773,6 +2827,28 @@ function optionalNumberColumn(row: SqlRow, column: string): number | undefined {
     return Number(value);
   }
   return undefined;
+}
+
+function sqlChanges(result: unknown): number {
+  const changes = (result as { readonly changes?: unknown }).changes;
+  if (typeof changes === "number" && Number.isFinite(changes)) {
+    return changes;
+  }
+  if (typeof changes === "bigint") {
+    return Number(changes);
+  }
+  return 0;
+}
+
+function sqlLastInsertRowid(result: unknown): number {
+  const lastInsertRowid = (result as { readonly lastInsertRowid?: unknown }).lastInsertRowid;
+  if (typeof lastInsertRowid === "number" && Number.isFinite(lastInsertRowid)) {
+    return lastInsertRowid;
+  }
+  if (typeof lastInsertRowid === "bigint") {
+    return Number(lastInsertRowid);
+  }
+  return 0;
 }
 
 function booleanColumn(row: SqlRow, column: string, fallback: boolean): boolean {

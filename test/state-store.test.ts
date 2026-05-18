@@ -293,6 +293,130 @@ describe("StateStore", () => {
     store.close();
   });
 
+  it("keeps agent trace summary updates bounded to the changed event", async () => {
+    const source = await fs.readFile(new URL("../src/store/state-store.ts", import.meta.url), "utf8");
+    const method = extractMethodBody(source, "async upsertAgentTraceEvent");
+
+    expect(method).not.toContain("rebuildAgentSessionTraceSummary");
+    expect(method).not.toMatch(/SELECT\s+[^`]*FROM agent_trace_events\s+WHERE session_key = \?/s);
+  });
+
+  it("updates agent trace summaries incrementally when tool results hide tool calls", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-agent-trace-summary-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+    await store.upsertSession({
+      key: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      workspacePath: "/tmp/sessions/C123-111.222/workspace",
+      createdAt: "2026-03-15T00:00:00.000Z",
+      updatedAt: "2026-03-15T00:00:00.000Z"
+    });
+
+    await store.upsertAgentTraceEvent({
+      id: "call-1",
+      sessionKey: "C123:111.222",
+      source: "agent_runtime",
+      type: "agent_tool_call",
+      at: "2026-03-15T00:00:01.000Z",
+      sequence: 1,
+      title: "exec_command",
+      summary: "running",
+      status: "running",
+      role: "assistant",
+      toolName: "exec_command",
+      callId: "tool-call-1",
+      turnId: "turn-1",
+      createdAt: "2026-03-15T00:00:01.000Z",
+      updatedAt: "2026-03-15T00:00:01.000Z"
+    });
+    await store.upsertAgentTraceEvent({
+      id: "usage-1",
+      sessionKey: "C123:111.222",
+      source: "agent_runtime",
+      type: "agent_token_count",
+      at: "2026-03-15T00:00:02.000Z",
+      sequence: 2,
+      title: "Token",
+      summary: "100 tokens",
+      status: "completed",
+      turnId: "turn-1",
+      createdAt: "2026-03-15T00:00:02.000Z",
+      updatedAt: "2026-03-15T00:00:02.000Z"
+    });
+    await store.upsertAgentTraceEvent({
+      id: "result-1",
+      sessionKey: "C123:111.222",
+      source: "agent_runtime",
+      type: "agent_tool_result",
+      at: "2026-03-15T00:00:03.000Z",
+      sequence: 3,
+      title: "exec_command",
+      summary: "done",
+      status: "completed",
+      role: "tool",
+      toolName: "exec_command",
+      callId: "tool-call-1",
+      turnId: "turn-1",
+      createdAt: "2026-03-15T00:00:03.000Z",
+      updatedAt: "2026-03-15T00:00:03.000Z"
+    });
+
+    expect(store.getAgentSessionTraceSummary("C123:111.222")).toEqual(expect.objectContaining({
+      eventCount: 1,
+      modelRequestCount: 1,
+      categories: {
+        agent_tool_result: 1
+      },
+      sources: {
+        agent_runtime: 1
+      }
+    }));
+
+    await store.upsertAgentTraceEvent({
+      id: "result-1",
+      sessionKey: "C123:111.222",
+      source: "agent_runtime",
+      type: "agent_assistant_message",
+      at: "2026-03-15T00:00:03.000Z",
+      sequence: 3,
+      title: "Assistant",
+      summary: "done",
+      status: "completed",
+      role: "assistant",
+      toolName: "exec_command",
+      callId: "tool-call-1",
+      turnId: "turn-1",
+      createdAt: "2026-03-15T00:00:03.000Z",
+      updatedAt: "2026-03-15T00:00:04.000Z"
+    });
+
+    expect(store.getAgentSessionTraceSummary("C123:111.222")).toEqual(expect.objectContaining({
+      eventCount: 2,
+      modelRequestCount: 1,
+      categories: {
+        agent_assistant_message: 1,
+        agent_tool_call: 1
+      },
+      sources: {
+        agent_runtime: 2
+      }
+    }));
+    store.close();
+  });
+
+  it("does not prune realtime admin events on every append", async () => {
+    const source = await fs.readFile(new URL("../src/store/state-store.ts", import.meta.url), "utf8");
+    const method = extractMethodBody(source, "#appendAdminEvent");
+    const pruneMethod = extractMethodBody(source, "#pruneAdminEvents");
+
+    expect(method).not.toMatch(/DELETE FROM admin_events[\s\S]*LIMIT \?/);
+    expect(pruneMethod).not.toContain("NOT IN");
+    expect(pruneMethod).not.toContain("LIMIT ?");
+  });
+
   it("persists historical agent activity bindings when the current session runtime changes", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-agent-bindings-"));
     const sessionsRoot = path.join(stateDir, "sessions");
@@ -718,4 +842,24 @@ function waitForOutput(child: ChildProcessByStdio<null, Readable, Readable>, mar
     child.stderr.on("data", onStderr);
     child.once("exit", onExit);
   });
+}
+
+function extractMethodBody(source: string, marker: string): string {
+  const markerIndex = source.indexOf(marker);
+  expect(markerIndex).toBeGreaterThanOrEqual(0);
+  const bodyStart = source.indexOf("{", markerIndex);
+  expect(bodyStart).toBeGreaterThanOrEqual(0);
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(bodyStart + 1, index);
+      }
+    }
+  }
+  throw new Error(`Could not extract method body for ${marker}`);
 }

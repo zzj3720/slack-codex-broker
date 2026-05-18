@@ -157,3 +157,36 @@ Additional acceptance:
 - A regression test must keep worker HTTP listen before `bridge.start()`.
 - Live verification must show admin `/readyz`, worker `/readyz`, current worker
   version, and a recent Slack Socket Mode connection after deploy.
+
+## Worker SQLite Write Path
+
+The worker must not let high-frequency trace or usage writes make the process
+look dead. The worker still uses SQLite as the runtime source of truth, but each
+incoming agent event must update derived data with bounded work.
+
+Production failure this protects against:
+
+- The worker process remains alive and `3001` keeps listening, but `/readyz`
+  times out because the Node main thread is busy inside synchronous SQLite work.
+- Slack Socket Mode reconnects and job callbacks are delayed behind the same
+  synchronous write path, so the bot appears hung.
+- A trace event write rebuilds a whole session summary by scanning every trace
+  event for that session, and every admin event append also runs retention
+  cleanup over the whole `admin_events` table.
+
+Target behavior:
+
+- A trace event write updates `agent_session_trace_summaries` incrementally from
+  the inserted or updated event instead of rescanning the whole session.
+- Admin realtime event retention is pruned in bounded batches based on the
+  latest sequence, not with a full-table `NOT IN` cleanup on every append.
+- `/readyz` remains responsive while active sessions emit many tool/trace
+  events.
+
+Additional acceptance:
+
+- A regression test must prove `upsertAgentTraceEvent()` does not execute a
+  whole-session `SELECT ... FROM agent_trace_events WHERE session_key = ?`.
+- A regression test must prove admin event retention is not pruned for every
+  appended admin event.
+- `pnpm test` and `pnpm build` pass before deployment.

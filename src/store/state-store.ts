@@ -24,6 +24,7 @@ export const STATE_DATABASE_FILENAME = "broker.sqlite";
 export const CURRENT_STATE_SCHEMA_VERSION = 14;
 export const STATE_STORE_BUSY_TIMEOUT_MS = 5_000;
 const ADMIN_EVENT_RETENTION_LIMIT = 20_000;
+const ADMIN_EVENT_PRUNE_INTERVAL = 500;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -1223,8 +1224,30 @@ export class StateStore {
   async upsertAgentTraceEvent(record: PersistedAgentTraceEvent): Promise<void> {
     const normalized = this.#normalizeAgentTraceEvent(record);
     this.#transaction(() => {
+      const previous = this.#getAgentTraceEventById(normalized.id);
+      const previousContribution = previous
+        ? traceSummaryContribution(previous, this.#hasCompletedToolResultForToolCall(previous, normalized.id))
+        : emptyTraceSummaryContribution();
+      const toolCallHiddenByNewResult = normalized.type === "agent_tool_result" && previous?.type !== "agent_tool_result"
+        ? this.#getMatchingToolCallForResult(normalized)
+        : undefined;
+      const oldResultStopsHidingToolCall = previous?.type === "agent_tool_result" && (
+        normalized.type !== "agent_tool_result" ||
+        traceToolEventKey(previous) !== traceToolEventKey(normalized)
+      )
+        ? this.#getMatchingToolCallForResult(previous)
+        : undefined;
+
       this.#upsertAgentTraceEvent(normalized);
-      rebuildAgentSessionTraceSummary(this.#databaseRequired(), normalized.sessionKey);
+      const nextContribution = traceSummaryContribution(normalized, this.#hasCompletedToolResultForToolCall(normalized));
+      const delta = subtractTraceSummaryContribution(nextContribution, previousContribution);
+      if (toolCallHiddenByNewResult && !this.#hasCompletedToolResultForToolCall(toolCallHiddenByNewResult, normalized.id)) {
+        applyTraceSummaryDelta(delta, traceSummaryContribution(toolCallHiddenByNewResult, false), -1);
+      }
+      if (oldResultStopsHidingToolCall && !this.#hasCompletedToolResultForToolCall(oldResultStopsHidingToolCall)) {
+        applyTraceSummaryDelta(delta, traceSummaryContribution(oldResultStopsHidingToolCall, false), 1);
+      }
+      this.#applyAgentTraceSummaryDelta(normalized.sessionKey, delta, normalized.updatedAt);
       this.#appendAdminEvent({
         kind: "trace.append",
         scope: "session",
@@ -1723,10 +1746,116 @@ export class StateStore {
     );
   }
 
+  #getAgentTraceEventById(id: string): PersistedAgentTraceEvent | undefined {
+    const row = this.#databaseRequired()
+      .prepare("SELECT * FROM agent_trace_events WHERE id = ?")
+      .get(id) as SqlRow | undefined;
+    return row ? this.#rowToAgentTraceEvent(row) : undefined;
+  }
+
+  #getMatchingToolCallForResult(record: PersistedAgentTraceEvent): PersistedAgentTraceEvent | undefined {
+    const key = traceToolEventKeyParts(record);
+    if (!key) {
+      return undefined;
+    }
+    const row = key.callId
+      ? this.#databaseRequired()
+        .prepare(`
+          SELECT * FROM agent_trace_events
+          WHERE session_key = ?
+            AND type = 'agent_tool_call'
+            AND COALESCE(turn_id, '') = ?
+            AND call_id = ?
+          ORDER BY sequence DESC, at DESC, id DESC
+          LIMIT 1
+        `)
+        .get(record.sessionKey, key.turnId, key.callId) as SqlRow | undefined
+      : this.#databaseRequired()
+        .prepare(`
+          SELECT * FROM agent_trace_events
+          WHERE session_key = ?
+            AND type = 'agent_tool_call'
+            AND COALESCE(turn_id, '') = ?
+            AND COALESCE(tool_name, '') = ?
+          ORDER BY sequence DESC, at DESC, id DESC
+          LIMIT 1
+        `)
+        .get(record.sessionKey, key.turnId, key.toolName ?? "") as SqlRow | undefined;
+    return row ? this.#rowToAgentTraceEvent(row) : undefined;
+  }
+
+  #hasCompletedToolResultForToolCall(record: PersistedAgentTraceEvent, excludeEventId?: string | undefined): boolean {
+    if (record.type !== "agent_tool_call" && record.type !== "agent_tool_result") {
+      return false;
+    }
+    const key = traceToolEventKeyParts(record);
+    if (!key) {
+      return false;
+    }
+    const excludeClause = excludeEventId ? "AND id != ?" : "";
+    const row = key.callId
+      ? this.#databaseRequired()
+        .prepare(`
+          SELECT 1 FROM agent_trace_events
+          WHERE session_key = ?
+            AND type = 'agent_tool_result'
+            AND COALESCE(turn_id, '') = ?
+            AND call_id = ?
+            ${excludeClause}
+          LIMIT 1
+        `)
+        .get(record.sessionKey, key.turnId, key.callId, ...(excludeEventId ? [excludeEventId] : [])) as SqlRow | undefined
+      : this.#databaseRequired()
+        .prepare(`
+          SELECT 1 FROM agent_trace_events
+          WHERE session_key = ?
+            AND type = 'agent_tool_result'
+            AND COALESCE(turn_id, '') = ?
+            AND COALESCE(tool_name, '') = ?
+            ${excludeClause}
+          LIMIT 1
+        `)
+        .get(record.sessionKey, key.turnId, key.toolName ?? "", ...(excludeEventId ? [excludeEventId] : [])) as SqlRow | undefined;
+    return Boolean(row);
+  }
+
+  #applyAgentTraceSummaryDelta(sessionKey: string, delta: TraceSummaryContribution, updatedAt: string): void {
+    const existing = this.getAgentSessionTraceSummary(sessionKey);
+    const eventCount = Math.max(0, (existing?.eventCount ?? 0) + delta.eventCount);
+    const modelRequestCount = Math.max(0, (existing?.modelRequestCount ?? 0) + delta.modelRequestCount);
+    const categories = mergeCountMaps(existing?.categories ?? {}, delta.categories);
+    const sources = mergeCountMaps(existing?.sources ?? {}, delta.sources);
+    const nextUpdatedAt = existing && existing.updatedAt > updatedAt ? existing.updatedAt : updatedAt;
+
+    if (eventCount === 0 && modelRequestCount === 0 && !Object.keys(categories).length && !Object.keys(sources).length) {
+      this.#databaseRequired().prepare("DELETE FROM agent_session_trace_summaries WHERE session_key = ?").run(sessionKey);
+      return;
+    }
+
+    this.#databaseRequired().prepare(`
+      INSERT INTO agent_session_trace_summaries (
+        session_key, event_count, model_request_count, categories, sources, updated_at
+      ) VALUES (${placeholders(6)})
+      ON CONFLICT(session_key) DO UPDATE SET
+        event_count = excluded.event_count,
+        model_request_count = excluded.model_request_count,
+        categories = excluded.categories,
+        sources = excluded.sources,
+        updated_at = excluded.updated_at
+    `).run(
+      sessionKey,
+      eventCount,
+      modelRequestCount,
+      JSON.stringify(categories),
+      JSON.stringify(sources),
+      nextUpdatedAt
+    );
+  }
+
   #appendAdminEvent(event: Omit<PersistedAdminEvent, "sequence" | "payload"> & {
     readonly payload: unknown;
   }): void {
-    this.#databaseRequired().prepare(`
+    const result = this.#databaseRequired().prepare(`
       INSERT INTO admin_events (
         kind, scope, session_key, entity_id, payload, created_at
       ) VALUES (${placeholders(6)})
@@ -1738,12 +1867,20 @@ export class StateStore {
       JSON.stringify(event.payload),
       event.createdAt
     );
+    this.#pruneAdminEvents(Number(result.lastInsertRowid ?? 0));
+  }
+
+  #pruneAdminEvents(latestSequence: number): void {
+    if (
+      latestSequence <= ADMIN_EVENT_RETENTION_LIMIT ||
+      latestSequence % ADMIN_EVENT_PRUNE_INTERVAL !== 0
+    ) {
+      return;
+    }
     this.#databaseRequired().prepare(`
       DELETE FROM admin_events
-      WHERE sequence NOT IN (
-        SELECT sequence FROM admin_events ORDER BY sequence DESC LIMIT ?
-      )
-    `).run(ADMIN_EVENT_RETENTION_LIMIT);
+      WHERE sequence <= ?
+    `).run(latestSequence - ADMIN_EVENT_RETENTION_LIMIT);
   }
 
   #markProcessedEvent(eventId: string): void {
@@ -2369,6 +2506,82 @@ function rebuildAllAgentSessionTraceSummaries(database: DatabaseSync): void {
   }
 }
 
+interface TraceSummaryContribution {
+  eventCount: number;
+  modelRequestCount: number;
+  categories: Record<string, number>;
+  sources: Record<string, number>;
+}
+
+function emptyTraceSummaryContribution(): TraceSummaryContribution {
+  return {
+    eventCount: 0,
+    modelRequestCount: 0,
+    categories: {},
+    sources: {}
+  };
+}
+
+function traceSummaryContribution(
+  event: PersistedAgentTraceEvent,
+  hiddenByCompletedToolResult: boolean
+): TraceSummaryContribution {
+  const contribution = emptyTraceSummaryContribution();
+  if (event.type === "agent_token_count") {
+    contribution.modelRequestCount = 1;
+  }
+  if (
+    isVisibleTraceSummaryRow(event.type, event.status) &&
+    !(event.type === "agent_tool_call" && hiddenByCompletedToolResult)
+  ) {
+    contribution.eventCount = 1;
+    contribution.categories[event.type] = 1;
+    contribution.sources[event.source] = 1;
+  }
+  return contribution;
+}
+
+function subtractTraceSummaryContribution(
+  next: TraceSummaryContribution,
+  previous: TraceSummaryContribution
+): TraceSummaryContribution {
+  const delta = emptyTraceSummaryContribution();
+  applyTraceSummaryDelta(delta, next, 1);
+  applyTraceSummaryDelta(delta, previous, -1);
+  return delta;
+}
+
+function applyTraceSummaryDelta(
+  target: TraceSummaryContribution,
+  source: TraceSummaryContribution,
+  multiplier: 1 | -1
+): void {
+  target.eventCount += source.eventCount * multiplier;
+  target.modelRequestCount += source.modelRequestCount * multiplier;
+  for (const [key, value] of Object.entries(source.categories)) {
+    target.categories[key] = (target.categories[key] ?? 0) + value * multiplier;
+  }
+  for (const [key, value] of Object.entries(source.sources)) {
+    target.sources[key] = (target.sources[key] ?? 0) + value * multiplier;
+  }
+}
+
+function mergeCountMaps(
+  existing: Record<string, number>,
+  delta: Record<string, number>
+): Record<string, number> {
+  const merged: Record<string, number> = { ...existing };
+  for (const [key, value] of Object.entries(delta)) {
+    const nextValue = (merged[key] ?? 0) + value;
+    if (nextValue <= 0) {
+      delete merged[key];
+    } else {
+      merged[key] = nextValue;
+    }
+  }
+  return merged;
+}
+
 function rebuildAgentSessionTraceSummary(database: DatabaseSync, sessionKey: string): void {
   if (!tableExists(database, "agent_trace_events")) {
     return;
@@ -2448,6 +2661,37 @@ function traceToolRowKey(row: SqlRow): string {
     return "";
   }
   return [turnId, toolName ?? ""].join("\u001f");
+}
+
+function traceToolEventKeyParts(event: PersistedAgentTraceEvent): {
+  readonly turnId: string;
+  readonly callId?: string | undefined;
+  readonly toolName?: string | undefined;
+} | undefined {
+  const turnId = event.turnId ?? "";
+  if (event.callId) {
+    return {
+      turnId,
+      callId: event.callId
+    };
+  }
+  if (!turnId && !event.toolName) {
+    return undefined;
+  }
+  return {
+    turnId,
+    toolName: event.toolName ?? ""
+  };
+}
+
+function traceToolEventKey(event: PersistedAgentTraceEvent): string {
+  const key = traceToolEventKeyParts(event);
+  if (!key) {
+    return "";
+  }
+  return key.callId
+    ? [key.turnId, key.callId].join("\u001f")
+    : [key.turnId, key.toolName ?? ""].join("\u001f");
 }
 
 function isVisibleTraceSummaryRow(type: string, status?: string | undefined): boolean {

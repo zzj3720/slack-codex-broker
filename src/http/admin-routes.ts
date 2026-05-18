@@ -703,14 +703,15 @@ function streamAdminEvents(
 }
 
 function readEventCursor(url: URL, request: http.IncomingMessage): number {
-  const fromQuery = Number(url.searchParams.get("after") ?? "");
-  if (Number.isFinite(fromQuery) && fromQuery >= 0) {
-    return Math.floor(fromQuery);
-  }
   const fromHeader = request.headers["last-event-id"];
   const value = Array.isArray(fromHeader) ? fromHeader.at(-1) : fromHeader;
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+  const parsed = value == null || value === "" ? NaN : Number(value);
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return Math.floor(parsed);
+  }
+
+  const fromQuery = Number(url.searchParams.get("after") ?? "");
+  return Number.isFinite(fromQuery) && fromQuery >= 0 ? Math.floor(fromQuery) : 0;
 }
 
 async function respondTracedAdminJson(

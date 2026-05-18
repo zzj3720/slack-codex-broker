@@ -15,6 +15,7 @@ import {
 import {
   connectAdminRealtime,
   getAdminStatusSnapshot,
+  mergeAdminStatusSnapshot,
   publishAdminStatus,
   subscribeAdminStatus
 } from "./admin-status-store";
@@ -1054,25 +1055,7 @@ async function loadAdminLogs(): Promise<Record<string, any>> {
 }
 
 function mergeStatusOverview(status: unknown, overview: unknown): AdminStatus {
-  const current = status && typeof status === "object" && !Array.isArray(status)
-    ? status as AdminStatus
-    : {};
-  const next = overview && typeof overview === "object" && !Array.isArray(overview)
-    ? overview as AdminStatus
-    : {};
-  return {
-    ...current,
-    ...next,
-    state: {
-      ...(current.state || {}),
-      ...(next.state || {}),
-      sessions: Array.isArray(next.state?.sessions)
-        ? next.state.sessions
-        : Array.isArray(current.state?.sessions)
-          ? current.state.sessions
-          : []
-    }
-  };
+  return mergeAdminStatusSnapshot(status, overview) as AdminStatus;
 }
 
 function mergeStatusLogs(status: unknown, logs: unknown): AdminStatus {

@@ -34,13 +34,23 @@ const timelineSnapshots = new Map<string, TimelineSnapshot>();
 const timelineListeners = new Map<string, Set<Listener>>();
 
 export function publishAdminStatus(status: unknown): void {
-  lastEventSequence = Math.max(lastEventSequence, readRealtimeCursor(status));
-  snapshot = { status, version: snapshot.version + 1 };
+  if (statusIncludesSessionSnapshot(status)) {
+    lastEventSequence = Math.max(lastEventSequence, readRealtimeCursor(status));
+  }
+  snapshot = {
+    status: mergeAdminStatusSnapshot(snapshot.status, status),
+    version: snapshot.version + 1
+  };
   listeners.forEach((listener) => listener());
 }
 
 export function applyAdminRealtimeEvent(event: AdminRealtimeEvent): void {
-  lastEventSequence = Math.max(lastEventSequence, Number(event.sequence || 0));
+  const eventSequence = readEventSequence(event);
+  if (eventSequence > 0 && lastEventSequence >= eventSequence) {
+    return;
+  }
+
+  lastEventSequence = Math.max(lastEventSequence, eventSequence);
   snapshot = {
     status: applyAdminRealtimeEventToStatus(snapshot.status, event),
     version: snapshot.version + 1
@@ -138,6 +148,56 @@ export function getTimelineSnapshot(sessionKey: string): TimelineSnapshot {
   return timelineSnapshots.get(sessionKey) ?? emptyTimelineSnapshot;
 }
 
+export function mergeAdminStatusSnapshot(currentStatus: unknown, incomingStatus: unknown): unknown {
+  if (!incomingStatus || typeof incomingStatus !== "object" || Array.isArray(incomingStatus)) {
+    return incomingStatus;
+  }
+
+  const current = currentStatus && typeof currentStatus === "object" && !Array.isArray(currentStatus)
+    ? currentStatus as Record<string, any>
+    : {};
+  const incoming = incomingStatus as Record<string, any>;
+  const currentState = current.state && typeof current.state === "object" && !Array.isArray(current.state)
+    ? current.state as Record<string, any>
+    : {};
+  const incomingState = incoming.state && typeof incoming.state === "object" && !Array.isArray(incoming.state)
+    ? incoming.state as Record<string, any>
+    : {};
+  const currentSessions = Array.isArray(currentState.sessions) ? currentState.sessions : [];
+  const incomingHasSessions = Array.isArray(incomingState.sessions);
+  const currentRealtime = current.realtime && typeof current.realtime === "object" && !Array.isArray(current.realtime)
+    ? current.realtime as Record<string, unknown>
+    : {};
+  const incomingRealtime = incoming.realtime && typeof incoming.realtime === "object" && !Array.isArray(incoming.realtime)
+    ? incoming.realtime as Record<string, unknown>
+    : {};
+  const mergedState: Record<string, unknown> = {
+    ...currentState,
+    ...incomingState,
+    sessions: incomingHasSessions ? incomingState.sessions : currentSessions
+  };
+
+  if (!incomingHasSessions && currentSessions.length > 0) {
+    for (const key of sessionDerivedStateKeys) {
+      if (currentState[key] !== undefined) {
+        mergedState[key] = currentState[key];
+      }
+    }
+  }
+
+  return {
+    ...current,
+    ...incoming,
+    realtime: incomingHasSessions || Object.keys(currentRealtime).length === 0
+      ? {
+        ...currentRealtime,
+        ...incomingRealtime
+      }
+      : currentRealtime,
+    state: mergedState
+  };
+}
+
 export function applyAdminRealtimeEventToStatus(status: unknown, event: AdminRealtimeEvent): unknown {
   if (!status || typeof status !== "object" || Array.isArray(status)) {
     return status;
@@ -211,12 +271,36 @@ function upsertSessionSummary(
       return existing;
     }
     replaced = true;
-    return session;
+    return mergeSessionSummary(existing, session);
   });
   if (!replaced) {
     next.push(session);
   }
   return next;
+}
+
+function mergeSessionSummary(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...existing,
+    ...incoming,
+    usage: mergeNestedObject(existing.usage, incoming.usage)
+  };
+}
+
+function mergeNestedObject(current: unknown, incoming: unknown): unknown {
+  if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+    return incoming ?? current;
+  }
+  if (!current || typeof current !== "object" || Array.isArray(current)) {
+    return incoming;
+  }
+  return {
+    ...(current as Record<string, unknown>),
+    ...(incoming as Record<string, unknown>)
+  };
 }
 
 function upsertById(
@@ -352,3 +436,29 @@ function readRealtimeCursor(status: unknown): number {
   const cursor = Number((status as Record<string, any>).realtime?.cursor || 0);
   return Number.isFinite(cursor) ? cursor : 0;
 }
+
+function readEventSequence(event: Pick<AdminRealtimeEvent, "sequence">): number {
+  const sequence = Number(event.sequence || 0);
+  return Number.isFinite(sequence) ? sequence : 0;
+}
+
+function statusIncludesSessionSnapshot(status: unknown): boolean {
+  if (!status || typeof status !== "object" || Array.isArray(status)) {
+    return false;
+  }
+  const state = (status as Record<string, any>).state;
+  return Boolean(state && typeof state === "object" && !Array.isArray(state) && Array.isArray(state.sessions));
+}
+
+const sessionDerivedStateKeys = [
+  "sessionCount",
+  "activeCount",
+  "openInboundCount",
+  "openHumanInboundCount",
+  "openSystemInboundCount",
+  "backgroundJobCount",
+  "runningBackgroundJobCount",
+  "failedBackgroundJobCount",
+  "activeSessions",
+  "openInbound"
+];

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyAdminRealtimeEventToStatus,
   applyTimelineRealtimeEvent,
+  mergeAdminStatusSnapshot,
   type AdminRealtimeEvent
 } from "../src/admin-ui/admin-status-store.js";
 
@@ -46,6 +47,112 @@ describe("admin realtime client store", () => {
     } satisfies AdminRealtimeEvent);
 
     expect((appended as Record<string, any>).state.sessions.map((session: Record<string, unknown>) => session.key)).toEqual(["C1:1", "C2:2", "C3:3"]);
+  });
+
+  it("keeps session-derived counts while overview-only refresh data is loading", () => {
+    const current = {
+      realtime: { cursor: 4 },
+      state: {
+        sessions: [
+          { key: "C1:1", runningBackgroundJobCount: 1 }
+        ],
+        sessionCount: 1,
+        activeCount: 1,
+        openInboundCount: 2,
+        openHumanInboundCount: 1,
+        openSystemInboundCount: 1,
+        backgroundJobCount: 1,
+        runningBackgroundJobCount: 1,
+        failedBackgroundJobCount: 0
+      }
+    };
+
+    const merged = mergeAdminStatusSnapshot(current, {
+      ok: true,
+      realtime: { cursor: 5 },
+      deployment: { ok: true },
+      state: {
+        sessionCount: 1,
+        activeCount: 0,
+        openInboundCount: 0,
+        openHumanInboundCount: 0,
+        openSystemInboundCount: 0,
+        backgroundJobCount: 0,
+        runningBackgroundJobCount: 0,
+        failedBackgroundJobCount: 0
+      }
+    }) as Record<string, any>;
+
+    expect(merged.deployment).toEqual({ ok: true });
+    expect(merged.realtime).toEqual({ cursor: 4 });
+    expect(merged.state.sessions).toEqual(current.state.sessions);
+    expect(merged.state).toMatchObject({
+      activeCount: 1,
+      openInboundCount: 2,
+      runningBackgroundJobCount: 1
+    });
+  });
+
+  it("lets a session snapshot overwrite preserved counts after a refresh completes", () => {
+    const current = {
+      state: {
+        sessions: [
+          { key: "C1:1", runningBackgroundJobCount: 1 }
+        ],
+        sessionCount: 1,
+        activeCount: 1,
+        runningBackgroundJobCount: 1
+      }
+    };
+
+    const merged = mergeAdminStatusSnapshot(current, {
+      state: {
+        sessions: [],
+        sessionCount: 0,
+        activeCount: 0,
+        runningBackgroundJobCount: 0
+      }
+    }) as Record<string, any>;
+
+    expect(merged.state.sessions).toEqual([]);
+    expect(merged.state).toMatchObject({
+      sessionCount: 0,
+      activeCount: 0,
+      runningBackgroundJobCount: 0
+    });
+  });
+
+  it("merges partial realtime session summaries over existing rows", () => {
+    const updated = applyAdminRealtimeEventToStatus({
+      realtime: { cursor: 1 },
+      state: {
+        sessions: [
+          { key: "C1:1", runningBackgroundJobCount: 1, backgroundJobCount: 1 }
+        ],
+        runningBackgroundJobCount: 1,
+        backgroundJobCount: 1
+      }
+    }, {
+      sequence: 2,
+      kind: "session.upsert",
+      scope: "session",
+      sessionKey: "C1:1",
+      entityId: "C1:1",
+      createdAt: "2026-05-09T00:00:02.000Z",
+      payload: {},
+      session: { key: "C1:1", updatedAt: "2026-05-09T00:00:02.000Z" }
+    } satisfies AdminRealtimeEvent) as Record<string, any>;
+
+    expect(updated.state.sessions[0]).toMatchObject({
+      key: "C1:1",
+      updatedAt: "2026-05-09T00:00:02.000Z",
+      runningBackgroundJobCount: 1,
+      backgroundJobCount: 1
+    });
+    expect(updated.state).toMatchObject({
+      runningBackgroundJobCount: 1,
+      backgroundJobCount: 1
+    });
   });
 
   it("appends realtime timeline events and updates trace counts", () => {

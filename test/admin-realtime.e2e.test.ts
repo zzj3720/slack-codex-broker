@@ -148,6 +148,38 @@ describe("admin realtime e2e", () => {
     expect(event.session).toBeUndefined();
   });
 
+  it("uses Last-Event-ID instead of the original after query on SSE reconnect", async () => {
+    const fixture = await startAdminFixture();
+    await fixture.sessions.ensureSession("COLD1", "100.000", {
+      channelName: "old-one"
+    });
+    await fixture.sessions.ensureSession("COLD2", "200.000", {
+      channelName: "old-two"
+    });
+
+    const controller = new AbortController();
+    const eventPromise = readSseEvent(`${fixture.baseUrl}/admin/api/events?after=1`, controller.signal, {
+      "last-event-id": "2"
+    });
+
+    await delay(25);
+    await fixture.sessions.ensureSession("CNEW", "300.000", {
+      channelName: "new"
+    });
+
+    const message = await eventPromise;
+    controller.abort();
+    expect(message.id).toBe("3");
+    expect(message.data).toMatchObject({
+      ok: true,
+      event: {
+        sequence: 3,
+        kind: "session.upsert",
+        sessionKey: "CNEW:300.000"
+      }
+    });
+  });
+
   async function startAdminFixture(): Promise<{
     readonly baseUrl: string;
     readonly config: AppConfig;
@@ -255,14 +287,15 @@ describe("admin realtime e2e", () => {
   }
 });
 
-async function readSseEvent(url: string, signal: AbortSignal): Promise<{
+async function readSseEvent(url: string, signal: AbortSignal, extraHeaders: Record<string, string> = {}): Promise<{
   readonly event: string;
   readonly id: string;
   readonly data: Record<string, unknown>;
 }> {
   const response = await fetch(url, {
     headers: {
-      accept: "text/event-stream"
+      accept: "text/event-stream",
+      ...extraHeaders
     },
     signal
   });

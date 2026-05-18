@@ -146,6 +146,7 @@ export type AdminOperationKind =
   | "auth_profile_delete"
   | "session_auth_profile_switch"
   | "session_reset"
+  | "session_delete"
   | "session_job_cancel"
   | "github_author_upsert"
   | "github_author_delete"

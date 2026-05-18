@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { AppConfig } from "../config.js";
-import { getBrokerLogDirectory, logger } from "../logger.js";
+import { getBrokerLogDirectory, getJobLogDirectory, getSessionLogDirectory, logger } from "../logger.js";
 import type {
   AdminOperationKind,
   JsonLike,
@@ -680,6 +680,73 @@ export class AdminService {
           workerCancel: {
             ok: workerCancel.ok !== false
           }
+        };
+      }
+    );
+  }
+
+  async deleteSession(options: {
+    readonly sessionKey: string;
+  }): Promise<Record<string, unknown>> {
+    return await this.#runTrackedOperation(
+      "session_delete",
+      {
+        sessionKey: options.sessionKey
+      },
+      async () => {
+        await this.#refreshSessions();
+        const session = this.options.sessions.getSessionByKey(options.sessionKey);
+        if (!session) {
+          throw new Error(`Session not found: ${options.sessionKey}`);
+        }
+
+        const jobs = this.options.sessions.listBackgroundJobs({
+          channelId: session.channelId,
+          rootThreadTs: session.rootThreadTs
+        });
+        const cancellableJobs = jobs.filter(isAdminCancellableJob);
+        const cancelledJobs = [];
+        for (const job of cancellableJobs) {
+          try {
+            const workerCancel = await this.#cancelWorkerBackgroundJob(session.key, job.id);
+            cancelledJobs.push({
+              id: job.id,
+              kind: job.kind,
+              ok: workerCancel.ok !== false,
+              workerCancel: {
+                ok: workerCancel.ok !== false
+              }
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            logger.warn("Failed to cancel background job before session delete; continuing delete", {
+              sessionKey: session.key,
+              jobId: job.id,
+              error: message
+            });
+            cancelledJobs.push({
+              id: job.id,
+              kind: job.kind,
+              ok: false,
+              error: message
+            });
+          }
+        }
+
+        const workerDelete = await this.#deleteWorkerSession(session.key);
+        const removedArtifacts = await this.#removeDeletedSessionArtifacts(session.key, jobs);
+        await this.#refreshSessions();
+
+        return {
+          ok: true,
+          sessionKey: session.key,
+          deleted: readNestedBoolean(workerDelete, ["delete", "deleted"]),
+          backgroundJobCount: jobs.length,
+          cancelledJobCount: cancelledJobs.filter((job) => job.ok).length,
+          failedJobCancelCount: cancelledJobs.filter((job) => !job.ok).length,
+          cancelledJobs,
+          removedArtifacts,
+          workerDelete
         };
       }
     );
@@ -1832,6 +1899,21 @@ export class AdminService {
     return payload;
   }
 
+  async #deleteWorkerSession(sessionKey: string): Promise<Record<string, unknown>> {
+    const url = new URL(
+      `/slack/sessions/${encodeURIComponent(sessionKey)}`,
+      this.options.config.workerBaseUrl
+    );
+    const response = await fetch(url, {
+      method: "DELETE"
+    });
+    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok || payload.ok === false) {
+      throw new Error(String(payload.error || response.statusText || "worker_session_delete_failed"));
+    }
+    return payload;
+  }
+
   async #resetWorkerSession(sessionKey: string): Promise<Record<string, unknown>> {
     const url = new URL(
       `/slack/sessions/${encodeURIComponent(sessionKey)}/reset`,
@@ -1866,6 +1948,41 @@ export class AdminService {
       throw new Error(String(payload.error || response.statusText || "worker_job_cancel_failed"));
     }
     return payload;
+  }
+
+  async #removeDeletedSessionArtifacts(
+    sessionKey: string,
+    jobs: readonly PersistedBackgroundJob[]
+  ): Promise<Record<string, unknown>> {
+    const pathSpecs = [
+      {
+        root: this.options.config.logDir,
+        path: getSessionLogDirectory(this.options.config.logDir, sessionKey)
+      },
+      ...jobs.map((job) => ({
+        root: this.options.config.jobsRoot,
+        path: path.join(this.options.config.jobsRoot, job.id)
+      })),
+      ...jobs.map((job) => ({
+        root: this.options.config.logDir,
+        path: getJobLogDirectory(this.options.config.logDir, job.id)
+      }))
+    ];
+
+    for (const spec of pathSpecs) {
+      assertSubpathOf(spec.root, spec.path);
+    }
+
+    await Promise.all(pathSpecs.map((spec) =>
+      fs.rm(spec.path, {
+        recursive: true,
+        force: true
+      })
+    ));
+
+    return {
+      pathCount: pathSpecs.length
+    };
   }
 }
 
@@ -2693,6 +2810,27 @@ function readStringField(value: JsonLike | undefined, key: string): string | und
   }
   const candidate = value[key];
   return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+}
+
+function readNestedBoolean(value: unknown, path: readonly string[]): boolean {
+  let current = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return false;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current === true;
+}
+
+function assertSubpathOf(rootPath: string, targetPath: string): void {
+  const resolvedRoot = path.resolve(rootPath);
+  const resolvedTarget = path.resolve(targetPath);
+  const relative = path.relative(resolvedRoot, resolvedTarget);
+  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+    return;
+  }
+  throw new Error(`Refusing to delete artifact outside managed root: ${resolvedTarget}`);
 }
 
 function isAdminCancellableJob(job: PersistedBackgroundJob): boolean {

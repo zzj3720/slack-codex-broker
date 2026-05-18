@@ -837,6 +837,65 @@ describe("admin routes", () => {
       }
     ]);
   });
+
+  it("forwards session delete requests to the admin service", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getStatus: async () => ({ ok: true }),
+      addAuthProfile: async () => ({ ok: true }),
+      upsertGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true }),
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true }),
+      deleteSession: async (payload: Record<string, unknown>) => {
+        calls.push(payload);
+        return { ok: true };
+      }
+    });
+
+    const response = await fetch(`${baseUrl}/admin/api/sessions/${encodeURIComponent("C123:111.222")}`, {
+      method: "DELETE"
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        sessionKey: "C123:111.222"
+      }
+    ]);
+  });
+
+  it("maps missing session delete failures to 404", async () => {
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getStatus: async () => ({ ok: true }),
+      addAuthProfile: async () => ({ ok: true }),
+      upsertGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true }),
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true }),
+      deleteSession: async () => {
+        throw new Error("Session not found: C123:missing");
+      }
+    });
+
+    const response = await fetch(`${baseUrl}/admin/api/sessions/${encodeURIComponent("C123:missing")}`, {
+      method: "DELETE"
+    });
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: "Session not found: C123:missing"
+    });
+  });
 });
 
 async function waitFor(predicate: () => boolean, label: string): Promise<void> {

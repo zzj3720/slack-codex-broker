@@ -47,6 +47,68 @@ function createResponse() {
 }
 
 describe("handleSlackRequest", () => {
+  it("routes internal session delete requests through the bridge", async () => {
+    const deleteSession = vi.fn(async () => ({
+      deleted: true,
+      interruptedActiveTurn: true,
+      clearedInboundCount: 2
+    }));
+    const response = createResponse();
+
+    const handled = await handleSlackRequest(
+      "DELETE",
+      new URL(`http://localhost/slack/sessions/${encodeURIComponent("C123:111.222")}`),
+      createJsonRequest({}) as never,
+      response as never,
+      {
+        bridge: {
+          deleteSession
+        } as never,
+        config: {} as never
+      }
+    );
+
+    expect(handled).toBe(true);
+    expect(deleteSession).toHaveBeenCalledWith("C123:111.222");
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.bodyText || "{}")).toMatchObject({
+      ok: true,
+      sessionKey: "C123:111.222",
+      delete: {
+        deleted: true,
+        interruptedActiveTurn: true,
+        clearedInboundCount: 2
+      }
+    });
+  });
+
+  it("returns 404 for internal session delete requests when the worker session is unknown", async () => {
+    const deleteSession = vi.fn(async () => {
+      throw new Error("Unknown session runtime key: C123:missing");
+    });
+    const response = createResponse();
+
+    const handled = await handleSlackRequest(
+      "DELETE",
+      new URL(`http://localhost/slack/sessions/${encodeURIComponent("C123:missing")}`),
+      createJsonRequest({}) as never,
+      response as never,
+      {
+        bridge: {
+          deleteSession
+        } as never,
+        config: {} as never
+      }
+    );
+
+    expect(handled).toBe(true);
+    expect(response.statusCode).toBe(404);
+    expect(JSON.parse(response.bodyText || "{}")).toMatchObject({
+      ok: false,
+      error: "Unknown session runtime key: C123:missing"
+    });
+  });
+
   it("treats blank co-author arrays as omitted in configure-session", async () => {
     const configureSessionCoauthors = vi.fn(async () => ({
       sessionKey: "session-key",

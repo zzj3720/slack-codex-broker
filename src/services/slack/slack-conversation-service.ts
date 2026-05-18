@@ -409,6 +409,70 @@ export class SlackConversationService {
     };
   }
 
+  async deleteSession(sessionKey: string): Promise<{
+    readonly deleted: boolean;
+    readonly interruptedActiveTurn: boolean;
+    readonly previousAgentSessionId: string | null;
+    readonly previousActiveTurnId: string | null;
+    readonly clearedInboundCount: number;
+    readonly interruptError?: string | undefined;
+  }> {
+    const session = this.#findSessionByKey(sessionKey);
+    const previousAgentSessionId = session.agentSessionId ?? null;
+    const previousActiveTurnId = session.activeTurnId ?? null;
+    let interruptedActiveTurn = false;
+    let interruptError: string | undefined;
+
+    this.#resetRuntimeForManualSessionReset(session.key);
+
+    if (session.activeTurnId && session.agentSessionId) {
+      try {
+        await this.#turnRunner.interrupt(session);
+        interruptedActiveTurn = true;
+      } catch (error) {
+        interruptError = error instanceof Error ? error.message : String(error);
+        logger.warn("Failed to interrupt active turn during session delete", {
+          sessionKey: session.key,
+          agentSessionId: session.agentSessionId,
+          turnId: session.activeTurnId,
+          error: interruptError
+        });
+      }
+    }
+
+    const openMessages = this.#sessions.listInboundMessages({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      status: ["pending", "inflight"]
+    });
+    if (openMessages.length > 0) {
+      await this.#sessions.updateInboundMessagesForBatch(
+        session.channelId,
+        session.rootThreadTs,
+        openMessages.map((message) => message.messageTs),
+        {
+          status: "done",
+          batchId: undefined
+        }
+      );
+    }
+
+    this.#clearAssistantStatus(session.channelId, session.rootThreadTs);
+    await this.#statusControllers.get(session.key)?.stop();
+    this.#statusControllers.delete(session.key);
+    this.#runtimeSessions.delete(session.key);
+
+    const deleted = await this.#sessions.deleteSessionByKey(session.key);
+    return {
+      deleted,
+      interruptedActiveTurn,
+      previousAgentSessionId,
+      previousActiveTurnId,
+      clearedInboundCount: openMessages.length,
+      interruptError
+    };
+  }
+
   async acceptBackgroundJobEvent(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;

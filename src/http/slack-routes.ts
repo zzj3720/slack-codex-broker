@@ -46,6 +46,12 @@ export async function handleSlackRequest(
     return true;
   }
 
+  const matchedDeleteSession = matchDeleteSessionPath(url.pathname);
+  if (method === "DELETE" && matchedDeleteSession) {
+    await handleSlackDeleteSessionRequest(response, options, matchedDeleteSession.sessionKey);
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/slack/post-message") {
     await handleSlackPostMessageRequest(request, response, options);
     return true;
@@ -124,6 +130,29 @@ async function handleSlackResetSessionRequest(
     respondJson(response, 500, {
       ok: false,
       error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function handleSlackDeleteSessionRequest(
+  response: http.ServerResponse,
+  options: {
+    readonly bridge: SlackAgentBridge;
+  },
+  sessionKey: string
+): Promise<void> {
+  try {
+    const deleted = await options.bridge.deleteSession(sessionKey);
+    respondJson(response, 200, {
+      ok: true,
+      sessionKey,
+      delete: deleted
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    respondJson(response, message.includes("Unknown session") ? 404 : 500, {
+      ok: false,
+      error: message
     });
   }
 }
@@ -674,6 +703,22 @@ function matchResetSessionPath(pathname: string): { readonly sessionKey: string 
 
   const encodedKey = pathname.slice(prefix.length, -suffix.length);
   if (!encodedKey) {
+    return null;
+  }
+
+  return {
+    sessionKey: decodeURIComponent(encodedKey)
+  };
+}
+
+function matchDeleteSessionPath(pathname: string): { readonly sessionKey: string } | null {
+  const prefix = "/slack/sessions/";
+  if (!pathname.startsWith(prefix)) {
+    return null;
+  }
+
+  const encodedKey = pathname.slice(prefix.length);
+  if (!encodedKey || encodedKey.includes("/")) {
     return null;
   }
 

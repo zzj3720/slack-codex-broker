@@ -212,6 +212,22 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "DELETE" && url.pathname.startsWith("/admin/api/sessions/")) {
+    const sessionKey = decodeURIComponent(url.pathname.slice("/admin/api/sessions/".length));
+    if (!sessionKey || sessionKey.includes("/")) {
+      return false;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.deleteSession({
+        sessionKey
+      }), {
+        errorStatus: (error) => isSessionNotFoundError(error) ? 404 : 500
+      }
+    );
+    return true;
+  }
+
   const sessionJobCancel = matchSessionJobCancelPath(url.pathname);
   if (method === "POST" && sessionJobCancel) {
     await runAdminOperation(response, () =>
@@ -625,16 +641,24 @@ function readReleaseTarget(value: unknown): "admin" | "worker" | undefined {
 
 async function runAdminOperation(
   response: http.ServerResponse,
-  operation: () => Promise<Record<string, unknown>>
+  operation: () => Promise<Record<string, unknown>>,
+  options?: {
+    readonly errorStatus?: ((error: unknown) => number) | undefined;
+  }
 ): Promise<void> {
   try {
     respondJson(response, 200, await operation());
   } catch (error) {
-    respondJson(response, 500, {
+    respondJson(response, options?.errorStatus?.(error) ?? 500, {
       ok: false,
       error: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+function isSessionNotFoundError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith("Session not found:");
 }
 
 function streamAdminEvents(

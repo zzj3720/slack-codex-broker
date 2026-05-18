@@ -147,6 +147,10 @@ export class SlackAgentBridge {
     return await this.#conversations.resetSession(sessionKey);
   }
 
+  async deleteSession(sessionKey: string) {
+    return await this.#conversations.deleteSession(sessionKey);
+  }
+
   async acceptBackgroundJobEvent(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;

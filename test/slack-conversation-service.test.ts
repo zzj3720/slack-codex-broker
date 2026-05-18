@@ -621,6 +621,62 @@ describe("SlackConversationService", () => {
     await fs.rm(sessionsRoot, { force: true, recursive: true });
   });
 
+  it("deletes a session without ensuring a new agent session first", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-conversation-delete-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-conversation-delete-sessions-"));
+    const stateStore = new StateStore(stateDir, sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot
+    });
+    await sessions.load();
+    let session = await sessions.ensureSession("C123", "111.222");
+    session = await sessions.setAgentSessionId(session.channelId, session.rootThreadTs, "thread-old");
+    session = await sessions.setActiveTurnId(session.channelId, session.rootThreadTs, "turn-old");
+
+    const agentRuntime = Object.assign(new EventEmitter(), {
+      ensureSession: vi.fn(async () => {
+        throw new Error("delete should not ensure a replacement session");
+      }),
+      interrupt: vi.fn(async () => undefined),
+      readSession: vi.fn(),
+      readTurn: vi.fn()
+    });
+    const setAssistantThreadStatus = vi.fn(async () => undefined);
+    const service = new SlackConversationService({
+      config: TEST_CONFIG,
+      sessions,
+      agentRuntime: agentRuntime as never,
+      slackApi: {
+        setAssistantThreadStatus,
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {} as never
+    });
+
+    const deleted = await service.deleteSession(session.key);
+
+    expect(deleted).toMatchObject({
+      deleted: true,
+      interruptedActiveTurn: true,
+      previousAgentSessionId: "thread-old",
+      previousActiveTurnId: "turn-old",
+      clearedInboundCount: 0
+    });
+    expect(agentRuntime.ensureSession).not.toHaveBeenCalled();
+    expect(agentRuntime.interrupt).toHaveBeenCalledWith(expect.objectContaining({
+      agentSessionId: "thread-old",
+      activeTurnId: "turn-old"
+    }));
+    expect(sessions.getSessionByKey(session.key)).toBeUndefined();
+
+    await service.stop();
+    stateStore.close();
+    await fs.rm(stateDir, { force: true, recursive: true });
+    await fs.rm(sessionsRoot, { force: true, recursive: true });
+  });
+
   it("keeps Slack input pending and posts one session link when auth profile is unavailable", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-conversation-auth-block-state-"));
     const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-conversation-auth-block-sessions-"));

@@ -17,6 +17,7 @@ import { MockSlackServer } from "./manual/mock-slack-server.js";
 
 const brokerRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const DEFAULT_E2E_TIMEOUT_MS = 30_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe.sequential("slack-codex-broker e2e", () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -1097,11 +1098,12 @@ describe.sequential("slack-codex-broker e2e", () => {
       codexUrl,
       tempRoot,
       extraEnv: {
+        DISK_CLEANUP_DRY_RUN: "false",
         DISK_CLEANUP_MIN_FREE_BYTES: "1000000000000000",
         DISK_CLEANUP_TARGET_FREE_BYTES: "1000000000000000",
-        DISK_CLEANUP_INACTIVE_SESSION_MS: String(24 * 60 * 60 * 1000),
-        DISK_CLEANUP_JOB_PROTECTION_MS: String(48 * 60 * 60 * 1000),
-        DISK_CLEANUP_OLD_LOG_MS: String(24 * 60 * 60 * 1000)
+        DISK_CLEANUP_INACTIVE_SESSION_MS: String(DAY_MS),
+        DISK_CLEANUP_JOB_PROTECTION_MS: String(2 * DAY_MS),
+        DISK_CLEANUP_OLD_LOG_MS: String(DAY_MS)
       }
     });
     cleanups.push(() => broker.stop());
@@ -1115,6 +1117,67 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(sessions.getSessionByKey(protectedSession.key)).toBeDefined();
     expect(await pathExists(protectedSession.workspacePath)).toBe(true);
     expect(await pathExists(protectedJobDir)).toBe(true);
+  }, 90_000);
+
+  it("dry-runs expired session cache cleanup on startup without deleting artifacts", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const stateStore = new StateStore(path.join(tempRoot, "state"), path.join(tempRoot, "sessions"));
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot: path.join(tempRoot, "sessions")
+    });
+    await sessions.load();
+
+    const oldAt = new Date(Date.now() - 8 * DAY_MS).toISOString();
+    const staleSession = await sessions.ensureSession("CCACHE", "999.100");
+    await stateStore.upsertSession({
+      ...staleSession,
+      createdAt: oldAt,
+      updatedAt: oldAt
+    });
+    const nodeModulesPath = path.join(staleSession.workspacePath, "web/node_modules/pkg/index.js");
+    await fs.mkdir(path.dirname(nodeModulesPath), { recursive: true });
+    await fs.writeFile(nodeModulesPath, "cached dependency");
+
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot,
+      extraEnv: {
+        DISK_CLEANUP_DRY_RUN: "true",
+        DISK_CLEANUP_MIN_FREE_BYTES: "0",
+        DISK_CLEANUP_TARGET_FREE_BYTES: "0",
+        DISK_CLEANUP_SESSION_CACHE_TTL_MS: String(DAY_MS)
+      }
+    });
+    cleanups.push(() => broker.stop());
+
+    await waitFor(() => {
+      return broker.logs.some((line) =>
+        line.includes("Disk cleanup session cache candidate") &&
+        line.includes(staleSession.key) &&
+        line.includes("\"dryRun\":true")
+      );
+    }, "session cache dry-run candidate log");
+
+    expect(await pathExists(path.join(staleSession.workspacePath, "web/node_modules"))).toBe(true);
   }, 90_000);
 
   it("injects background job events back into the same session", async () => {

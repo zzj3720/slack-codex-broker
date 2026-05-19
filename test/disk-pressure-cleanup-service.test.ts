@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { loadConfig } from "../src/config.js";
-import { getJobLogDirectory, getSessionLogDirectory } from "../src/logger.js";
+import { getJobLogDirectory, getSessionLogDirectory, logger } from "../src/logger.js";
 import { DiskPressureCleanupService } from "../src/services/disk-pressure-cleanup-service.js";
 import { SessionManager } from "../src/services/session-manager.js";
 import { StateStore } from "../src/store/state-store.js";
@@ -15,6 +15,192 @@ import { fileExists } from "../src/utils/fs.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe("DiskPressureCleanupService", () => {
+  it("dry-runs expired session cache cleanup by default and logs structured candidates", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-cache-dry-run-"));
+    const infoSpy = vi.spyOn(logger, "info");
+
+    try {
+      const config = loadConfig({
+        SLACK_APP_TOKEN: "xapp-test",
+        SLACK_BOT_TOKEN: "xoxb-test",
+        DATA_ROOT: dataRoot,
+        DISK_CLEANUP_MIN_FREE_BYTES: "0",
+        DISK_CLEANUP_TARGET_FREE_BYTES: "0",
+        DISK_CLEANUP_SESSION_CACHE_TTL_MS: String(DAY_MS)
+      } as NodeJS.ProcessEnv);
+      const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
+      const sessions = new SessionManager({
+        stateStore,
+        sessionsRoot: config.sessionsRoot
+      });
+      await sessions.load();
+
+      const now = new Date("2026-04-25T00:00:00.000Z");
+      const oldAt = new Date(now.getTime() - 8 * DAY_MS).toISOString();
+      const stale = await seedSession(sessions, stateStore, "CSTALECACHE", "100.000", oldAt);
+      const derivedDataPath = path.join(stale.workspacePath, "frontend/macos/.build/DerivedData/file.o");
+      const nodeModulesPath = path.join(stale.workspacePath, "web/node_modules/pkg/index.js");
+      await writeSizedFile(derivedDataPath, 8);
+      await writeSizedFile(nodeModulesPath, 9);
+
+      const cleanup = new DiskPressureCleanupService({
+        config,
+        sessions,
+        now: () => now,
+        isDarwin: true,
+        statFs: async () => ({
+          freeBytes: 1000,
+          totalBytes: 1000
+        })
+      });
+
+      const result = await cleanup.runOnce("test");
+
+      expect(result.dryRun).toBe(true);
+      expect(result.cacheCandidateCount).toBe(2);
+      expect(result.deletedCacheEntryCount).toBe(0);
+      expect(await fileExists(path.dirname(derivedDataPath))).toBe(true);
+      expect(await fileExists(path.dirname(nodeModulesPath))).toBe(true);
+      expect(infoSpy).toHaveBeenCalledWith("Disk cleanup session cache candidate", expect.objectContaining({
+        sessionKey: stale.key,
+        path: path.join(stale.workspacePath, "frontend/macos/.build/DerivedData"),
+        bytes: expect.any(Number),
+        dryRun: true
+      }));
+    } finally {
+      infoSpy.mockRestore();
+      await fs.rm(dataRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("deletes expired cache artifacts while skipping active and protected sessions", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-cache-delete-"));
+    const infoSpy = vi.spyOn(logger, "info");
+
+    try {
+      const config = loadConfig({
+        SLACK_APP_TOKEN: "xapp-test",
+        SLACK_BOT_TOKEN: "xoxb-test",
+        DATA_ROOT: dataRoot,
+        DISK_CLEANUP_DRY_RUN: "false",
+        DISK_CLEANUP_MIN_FREE_BYTES: "0",
+        DISK_CLEANUP_TARGET_FREE_BYTES: "0",
+        DISK_CLEANUP_SESSION_CACHE_TTL_MS: String(DAY_MS)
+      } as NodeJS.ProcessEnv);
+      const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
+      const sessions = new SessionManager({
+        stateStore,
+        sessionsRoot: config.sessionsRoot
+      });
+      await sessions.load();
+
+      const now = new Date("2026-04-25T00:00:00.000Z");
+      const oldAt = new Date(now.getTime() - 8 * DAY_MS).toISOString();
+      const stale = await seedSession(sessions, stateStore, "CSTALECACHE", "100.000", oldAt);
+      const active = await seedSession(sessions, stateStore, "CACTIVECACHE", "200.000", oldAt, {
+        activeTurnId: "turn-active",
+        activeTurnStartedAt: oldAt
+      });
+      const protectedJob = await seedSession(sessions, stateStore, "CJOBCACHE", "300.000", oldAt);
+      await seedJob(config.jobsRoot, sessions, {
+        id: "job-cache-protected",
+        status: "running",
+        sessionKey: protectedJob.key,
+        channelId: protectedJob.channelId,
+        rootThreadTs: protectedJob.rootThreadTs,
+        workspacePath: protectedJob.workspacePath,
+        at: oldAt
+      });
+
+      const staleDerivedDataPath = path.join(stale.workspacePath, "frontend/macos/.build/DerivedData/file.o");
+      const staleNodeModulesPath = path.join(stale.workspacePath, "web/node_modules/pkg/index.js");
+      const activeNodeModulesPath = path.join(active.workspacePath, "web/node_modules/pkg/index.js");
+      const protectedNodeModulesPath = path.join(protectedJob.workspacePath, "web/node_modules/pkg/index.js");
+      await writeSizedFile(staleDerivedDataPath, 11);
+      await writeSizedFile(staleNodeModulesPath, 12);
+      await writeSizedFile(activeNodeModulesPath, 13);
+      await writeSizedFile(protectedNodeModulesPath, 14);
+
+      const cleanup = new DiskPressureCleanupService({
+        config,
+        sessions,
+        now: () => now,
+        isDarwin: true,
+        statFs: async () => ({
+          freeBytes: 1000,
+          totalBytes: 1000
+        })
+      });
+
+      const result = await cleanup.runOnce("test");
+
+      expect(result.dryRun).toBe(false);
+      expect(result.cacheCandidateCount).toBe(2);
+      expect(result.deletedCacheEntryCount).toBe(2);
+      expect(result.cacheReclaimedBytes).toBeGreaterThan(0);
+      expect(await fileExists(path.join(stale.workspacePath, "frontend/macos/.build/DerivedData"))).toBe(false);
+      expect(await fileExists(path.join(stale.workspacePath, "web/node_modules"))).toBe(false);
+      expect(await fileExists(path.join(active.workspacePath, "web/node_modules"))).toBe(true);
+      expect(await fileExists(path.join(protectedJob.workspacePath, "web/node_modules"))).toBe(true);
+      expect(infoSpy).toHaveBeenCalledWith("Disk cleanup session cache deleted", expect.objectContaining({
+        sessionKey: stale.key,
+        path: path.join(stale.workspacePath, "web/node_modules"),
+        bytes: expect.any(Number),
+        dryRun: false
+      }));
+    } finally {
+      infoSpy.mockRestore();
+      await fs.rm(dataRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("guards macOS Xcode cache cleanup on non-Darwin platforms", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-cache-platform-"));
+
+    try {
+      const config = loadConfig({
+        SLACK_APP_TOKEN: "xapp-test",
+        SLACK_BOT_TOKEN: "xoxb-test",
+        DATA_ROOT: dataRoot,
+        DISK_CLEANUP_DRY_RUN: "false",
+        DISK_CLEANUP_MIN_FREE_BYTES: "0",
+        DISK_CLEANUP_TARGET_FREE_BYTES: "0",
+        DISK_CLEANUP_SESSION_CACHE_TTL_MS: String(DAY_MS)
+      } as NodeJS.ProcessEnv);
+      const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
+      const sessions = new SessionManager({
+        stateStore,
+        sessionsRoot: config.sessionsRoot
+      });
+      await sessions.load();
+
+      const now = new Date("2026-04-25T00:00:00.000Z");
+      const oldAt = new Date(now.getTime() - 8 * DAY_MS).toISOString();
+      const stale = await seedSession(sessions, stateStore, "CPLATFORM", "100.000", oldAt);
+      await writeSizedFile(path.join(stale.workspacePath, "frontend/macos/.build/DerivedData/file.o"), 15);
+      await writeSizedFile(path.join(stale.workspacePath, "web/node_modules/pkg/index.js"), 16);
+
+      const cleanup = new DiskPressureCleanupService({
+        config,
+        sessions,
+        now: () => now,
+        isDarwin: false,
+        statFs: async () => ({
+          freeBytes: 1000,
+          totalBytes: 1000
+        })
+      });
+
+      const result = await cleanup.runOnce("test");
+
+      expect(result.cacheCandidateCount).toBe(1);
+      expect(await fileExists(path.join(stale.workspacePath, "frontend/macos/.build/DerivedData"))).toBe(true);
+      expect(await fileExists(path.join(stale.workspacePath, "web/node_modules"))).toBe(false);
+    } finally {
+      await fs.rm(dataRoot, { force: true, recursive: true });
+    }
+  });
+
   it("removes old logs and deletes inactive sessions in oldest activity order", async () => {
     const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-cleanup-"));
 
@@ -23,6 +209,7 @@ describe("DiskPressureCleanupService", () => {
         SLACK_APP_TOKEN: "xapp-test",
         SLACK_BOT_TOKEN: "xoxb-test",
         DATA_ROOT: dataRoot,
+        DISK_CLEANUP_DRY_RUN: "false",
         DISK_CLEANUP_MIN_FREE_BYTES: "100",
         DISK_CLEANUP_TARGET_FREE_BYTES: "100",
         DISK_CLEANUP_INACTIVE_SESSION_MS: String(DAY_MS),
@@ -172,6 +359,7 @@ describe("DiskPressureCleanupService", () => {
         SLACK_APP_TOKEN: "xapp-test",
         SLACK_BOT_TOKEN: "xoxb-test",
         DATA_ROOT: dataRoot,
+        DISK_CLEANUP_DRY_RUN: "false",
         DISK_CLEANUP_MIN_FREE_BYTES: "100",
         DISK_CLEANUP_TARGET_FREE_BYTES: "100",
         DISK_CLEANUP_INACTIVE_SESSION_MS: String(DAY_MS),
@@ -239,6 +427,11 @@ async function seedSession(
   await stateStore.upsertSession(record);
   await fs.writeFile(path.join(session.workspacePath, "marker.txt"), `${channelId}:${rootThreadTs}`);
   return record;
+}
+
+async function writeSizedFile(filePath: string, bytes: number): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, "x".repeat(bytes));
 }
 
 async function seedJob(

@@ -15,8 +15,12 @@ interface DiskUsage {
 export interface DiskPressureCleanupResult {
   readonly ok: boolean;
   readonly skipped?: string | undefined;
+  readonly dryRun: boolean;
   readonly before?: DiskUsage | undefined;
   readonly after?: DiskUsage | undefined;
+  readonly cacheCandidateCount: number;
+  readonly deletedCacheEntryCount: number;
+  readonly cacheReclaimedBytes: number;
   readonly deletedLogCount: number;
   readonly deletedSessionCount: number;
 }
@@ -35,6 +39,16 @@ interface BackgroundJobTerminator {
 type StatFsProvider = (targetPath: string) => Promise<DiskUsage>;
 
 const PROTECTED_JOB_STATUSES = new Set(["registered", "running"]);
+const DARWIN_SESSION_CACHE_RELATIVE_PATHS = [
+  "frontend/macos/.build/DerivedData",
+  "frontend/macos/default.profraw",
+  "frontend/macos/xcodebuild.log",
+  "default.profraw"
+] as const;
+const CROSS_PLATFORM_SESSION_CACHE_RELATIVE_PATHS = [
+  "web/node_modules",
+  "workers/node_modules"
+] as const;
 
 export class DiskPressureCleanupService {
   readonly #config: AppConfig;
@@ -42,6 +56,7 @@ export class DiskPressureCleanupService {
   readonly #jobTerminator: BackgroundJobTerminator | undefined;
   readonly #now: () => Date;
   readonly #statFs: StatFsProvider;
+  readonly #isDarwin: boolean;
   #timer: NodeJS.Timeout | undefined;
   #running = false;
 
@@ -51,12 +66,14 @@ export class DiskPressureCleanupService {
     readonly jobTerminator?: BackgroundJobTerminator | undefined;
     readonly now?: (() => Date) | undefined;
     readonly statFs?: StatFsProvider | undefined;
+    readonly isDarwin?: boolean | undefined;
   }) {
     this.#config = options.config;
     this.#sessions = options.sessions;
     this.#jobTerminator = options.jobTerminator;
     this.#now = options.now ?? (() => new Date());
     this.#statFs = options.statFs ?? readDiskUsage;
+    this.#isDarwin = options.isDarwin ?? process.platform === "darwin";
   }
 
   start(): void {
@@ -80,10 +97,10 @@ export class DiskPressureCleanupService {
 
   async runOnce(reason = "manual"): Promise<DiskPressureCleanupResult> {
     if (!this.#config.diskCleanupEnabled) {
-      return emptyResult({ skipped: "disabled" });
+      return emptyResult({ skipped: "disabled", dryRun: this.#config.diskCleanupDryRun });
     }
     if (this.#running) {
-      return emptyResult({ skipped: "already_running" });
+      return emptyResult({ skipped: "already_running", dryRun: this.#config.diskCleanupDryRun });
     }
 
     this.#running = true;
@@ -95,36 +112,53 @@ export class DiskPressureCleanupService {
       ]);
 
       const before = await this.#readUsage();
-      if (before.freeBytes >= this.#config.diskCleanupMinFreeBytes) {
-        return emptyResult({ skipped: "enough_free_space", before, after: before });
+      const cacheResult = await this.#cleanExpiredSessionCaches();
+      let deletedLogCount = 0;
+      let deletedSessionCount = 0;
+
+      if (before.freeBytes < this.#config.diskCleanupMinFreeBytes) {
+        logger.warn("Disk free space below cleanup threshold", {
+          reason,
+          dryRun: this.#config.diskCleanupDryRun,
+          freeBytes: before.freeBytes,
+          minFreeBytes: this.#config.diskCleanupMinFreeBytes,
+          targetFreeBytes: this.#config.diskCleanupTargetFreeBytes
+        });
+
+        deletedLogCount = await this.#deleteOldLogs(this.#config.diskCleanupOldLogMs);
+        deletedSessionCount =
+          (await this.#readUsage()).freeBytes < this.#config.diskCleanupTargetFreeBytes
+            ? await this.#deleteInactiveSessions()
+            : 0;
       }
 
-      logger.warn("Disk free space below cleanup threshold", {
-        reason,
-        freeBytes: before.freeBytes,
-        minFreeBytes: this.#config.diskCleanupMinFreeBytes,
-        targetFreeBytes: this.#config.diskCleanupTargetFreeBytes
-      });
-
-      let deletedLogCount = await this.#deleteOldLogs(this.#config.diskCleanupOldLogMs);
-      const deletedSessionCount =
-        (await this.#readUsage()).freeBytes < this.#config.diskCleanupTargetFreeBytes
-          ? await this.#deleteInactiveSessions()
-          : 0;
-
       const after = await this.#readUsage();
+      const skipped =
+        before.freeBytes >= this.#config.diskCleanupMinFreeBytes && cacheResult.candidateCount === 0
+          ? "enough_free_space"
+          : undefined;
       logger.info("Disk pressure cleanup finished", {
         reason,
+        skipped,
+        dryRun: this.#config.diskCleanupDryRun,
         beforeFreeBytes: before.freeBytes,
         afterFreeBytes: after.freeBytes,
+        cacheCandidateCount: cacheResult.candidateCount,
+        deletedCacheEntryCount: cacheResult.deletedCount,
+        cacheReclaimedBytes: cacheResult.reclaimedBytes,
         deletedLogCount,
         deletedSessionCount
       });
 
       return {
         ok: true,
+        skipped,
+        dryRun: this.#config.diskCleanupDryRun,
         before,
         after,
+        cacheCandidateCount: cacheResult.candidateCount,
+        deletedCacheEntryCount: cacheResult.deletedCount,
+        cacheReclaimedBytes: cacheResult.reclaimedBytes,
         deletedLogCount,
         deletedSessionCount
       };
@@ -133,7 +167,7 @@ export class DiskPressureCleanupService {
         reason,
         error: error instanceof Error ? error.message : String(error)
       });
-      return emptyResult({});
+      return emptyResult({ dryRun: this.#config.diskCleanupDryRun });
     } finally {
       this.#running = false;
     }
@@ -148,9 +182,22 @@ export class DiskPressureCleanupService {
       .filter((entry) => nowMs - entry.mtimeMs >= maxAgeMs)
       .sort((left, right) => left.mtimeMs - right.mtimeMs)) {
       try {
-        await fs.rm(file.path, { force: true });
-        await removeEmptyParents(path.dirname(file.path), this.#config.logDir);
-        deletedCount += 1;
+        const bytes = await getPathSizeBytes(file.path);
+        logger.info("Disk cleanup old log candidate", {
+          path: file.path,
+          bytes,
+          dryRun: this.#config.diskCleanupDryRun
+        });
+        if (!this.#config.diskCleanupDryRun) {
+          await fs.rm(file.path, { force: true });
+          await removeEmptyParents(path.dirname(file.path), this.#config.logDir);
+          deletedCount += 1;
+          logger.info("Disk cleanup old log deleted", {
+            path: file.path,
+            bytes,
+            dryRun: false
+          });
+        }
       } catch (error) {
         logger.warn("Failed to delete log during disk cleanup", {
           path: file.path,
@@ -196,16 +243,36 @@ export class DiskPressureCleanupService {
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
       .sort((left, right) => left.lastActivityMs - right.lastActivityMs)) {
       try {
-        await this.#cancelJobs(candidate.jobs);
-        await Promise.all([
-          fs.rm(getSessionLogDirectory(this.#config.logDir, candidate.session.key), { recursive: true, force: true }),
-          ...candidate.jobs.map((job) => fs.rm(path.join(this.#config.jobsRoot, job.id), { recursive: true, force: true })),
-          ...candidate.jobs.map((job) =>
-            fs.rm(getJobLogDirectory(this.#config.logDir, job.id), { recursive: true, force: true })
-          )
-        ]);
-        await this.#sessions.deleteSessionByKey(candidate.session.key);
-        deletedCount += 1;
+        const sessionRoot = path.dirname(candidate.session.workspacePath);
+        const bytes = await getPathSizeBytes(sessionRoot);
+        logger.info("Disk cleanup inactive session candidate", {
+          sessionKey: candidate.session.key,
+          channelId: candidate.session.channelId,
+          rootThreadTs: candidate.session.rootThreadTs,
+          path: sessionRoot,
+          bytes,
+          dryRun: this.#config.diskCleanupDryRun
+        });
+        if (!this.#config.diskCleanupDryRun) {
+          await this.#cancelJobs(candidate.jobs);
+          await Promise.all([
+            fs.rm(getSessionLogDirectory(this.#config.logDir, candidate.session.key), { recursive: true, force: true }),
+            ...candidate.jobs.map((job) => fs.rm(path.join(this.#config.jobsRoot, job.id), { recursive: true, force: true })),
+            ...candidate.jobs.map((job) =>
+              fs.rm(getJobLogDirectory(this.#config.logDir, job.id), { recursive: true, force: true })
+            )
+          ]);
+          await this.#sessions.deleteSessionByKey(candidate.session.key);
+          deletedCount += 1;
+          logger.info("Disk cleanup inactive session deleted", {
+            sessionKey: candidate.session.key,
+            channelId: candidate.session.channelId,
+            rootThreadTs: candidate.session.rootThreadTs,
+            path: sessionRoot,
+            bytes,
+            dryRun: false
+          });
+        }
       } catch (error) {
         logger.warn("Failed to delete inactive session during disk cleanup", {
           sessionKey: candidate.session.key,
@@ -249,18 +316,114 @@ export class DiskPressureCleanupService {
 
     return usages.reduce((lowest, usage) => usage.freeBytes < lowest.freeBytes ? usage : lowest);
   }
+
+  async #cleanExpiredSessionCaches(): Promise<{
+    readonly candidateCount: number;
+    readonly deletedCount: number;
+    readonly reclaimedBytes: number;
+  }> {
+    const nowMs = this.#now().getTime();
+    let candidateCount = 0;
+    let deletedCount = 0;
+    let reclaimedBytes = 0;
+
+    const candidates = await Promise.all(this.#sessions.listSessions().map(async (session) => {
+      const inbound = this.#sessions.listInboundMessages({
+        channelId: session.channelId,
+        rootThreadTs: session.rootThreadTs
+      });
+      const jobs = this.#sessions.listBackgroundJobs({
+        channelId: session.channelId,
+        rootThreadTs: session.rootThreadTs
+      });
+      const lastActivityMs = getLastUserVisibleActivityMs(session, inbound);
+      if (!lastActivityMs || nowMs - lastActivityMs < this.#config.diskCleanupSessionCacheTtlMs) {
+        return null;
+      }
+      if (!canCleanSessionCaches(session, inbound, jobs)) {
+        return null;
+      }
+
+      return {
+        session,
+        lastActivityMs
+      };
+    }));
+
+    for (const candidate of candidates
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+      .sort((left, right) => left.lastActivityMs - right.lastActivityMs)) {
+      for (const relativePath of getSessionCacheRelativePaths(this.#isDarwin)) {
+        const targetPath = path.join(candidate.session.workspacePath, relativePath);
+        if (!isSubpathOf(candidate.session.workspacePath, targetPath)) {
+          continue;
+        }
+        try {
+          const bytes = await getPathSizeBytes(targetPath);
+          if (bytes <= 0) {
+            continue;
+          }
+
+          candidateCount += 1;
+          logger.info("Disk cleanup session cache candidate", {
+            sessionKey: candidate.session.key,
+            channelId: candidate.session.channelId,
+            rootThreadTs: candidate.session.rootThreadTs,
+            path: targetPath,
+            relativePath,
+            bytes,
+            dryRun: this.#config.diskCleanupDryRun
+          });
+
+          if (this.#config.diskCleanupDryRun) {
+            continue;
+          }
+
+          await fs.rm(targetPath, { recursive: true, force: true });
+          deletedCount += 1;
+          reclaimedBytes += bytes;
+          logger.info("Disk cleanup session cache deleted", {
+            sessionKey: candidate.session.key,
+            channelId: candidate.session.channelId,
+            rootThreadTs: candidate.session.rootThreadTs,
+            path: targetPath,
+            relativePath,
+            bytes,
+            dryRun: false
+          });
+        } catch (error) {
+          logger.warn("Failed to delete session cache during disk cleanup", {
+            sessionKey: candidate.session.key,
+            path: targetPath,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    }
+
+    return {
+      candidateCount,
+      deletedCount,
+      reclaimedBytes
+    };
+  }
 }
 
 function emptyResult(options: {
   readonly skipped?: string | undefined;
+  readonly dryRun: boolean;
   readonly before?: DiskUsage | undefined;
   readonly after?: DiskUsage | undefined;
 }): DiskPressureCleanupResult {
   return {
     ok: true,
     skipped: options.skipped,
+    dryRun: options.dryRun,
     before: options.before,
     after: options.after,
+    cacheCandidateCount: 0,
+    deletedCacheEntryCount: 0,
+    cacheReclaimedBytes: 0,
     deletedLogCount: 0,
     deletedSessionCount: 0
   };
@@ -310,6 +473,49 @@ function canDeleteSession(
     return false;
   }
   return !jobs.some((job) => PROTECTED_JOB_STATUSES.has(job.status));
+}
+
+function canCleanSessionCaches(
+  session: SlackSessionRecord,
+  inbound: readonly PersistedInboundMessage[],
+  jobs: readonly PersistedBackgroundJob[]
+): boolean {
+  if (session.activeTurnId) {
+    return false;
+  }
+  if (inbound.some((message) => message.status === "pending" || message.status === "inflight")) {
+    return false;
+  }
+  return !jobs.some((job) => PROTECTED_JOB_STATUSES.has(job.status));
+}
+
+function getSessionCacheRelativePaths(isDarwin: boolean): readonly string[] {
+  return isDarwin
+    ? [...DARWIN_SESSION_CACHE_RELATIVE_PATHS, ...CROSS_PLATFORM_SESSION_CACHE_RELATIVE_PATHS]
+    : CROSS_PLATFORM_SESSION_CACHE_RELATIVE_PATHS;
+}
+
+async function getPathSizeBytes(targetPath: string): Promise<number> {
+  let stat;
+  try {
+    stat = await fs.lstat(targetPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return 0;
+    }
+    throw error;
+  }
+
+  if (!stat.isDirectory()) {
+    return stat.size;
+  }
+
+  let total = stat.size;
+  const entries = await fs.readdir(targetPath, { withFileTypes: true });
+  for (const entry of entries) {
+    total += await getPathSizeBytes(path.join(targetPath, entry.name));
+  }
+  return total;
 }
 
 async function listFiles(directoryPath: string): Promise<Array<{

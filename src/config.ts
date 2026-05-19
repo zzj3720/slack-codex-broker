@@ -60,9 +60,11 @@ export interface AppConfig {
   readonly logRawHttpRequests: boolean;
   readonly logRawMaxBytes: number;
   readonly diskCleanupEnabled: boolean;
+  readonly diskCleanupDryRun: boolean;
   readonly diskCleanupCheckIntervalMs: number;
   readonly diskCleanupMinFreeBytes: number;
   readonly diskCleanupTargetFreeBytes: number;
+  readonly diskCleanupSessionCacheTtlMs: number;
   readonly diskCleanupInactiveSessionMs: number;
   readonly diskCleanupJobProtectionMs: number;
   readonly diskCleanupOldLogMs: number;
@@ -239,9 +241,11 @@ export function loadConfig(env = process.env): AppConfig {
     logRawHttpRequests: getBoolean(env, "LOG_RAW_HTTP_REQUESTS", true),
     logRawMaxBytes: getNumber(env, "LOG_RAW_MAX_BYTES", 128 * 1024),
     diskCleanupEnabled: getBoolean(env, "DISK_CLEANUP_ENABLED", true),
+    diskCleanupDryRun: getBoolean(env, "DISK_CLEANUP_DRY_RUN", true),
     diskCleanupCheckIntervalMs: getNumber(env, "DISK_CLEANUP_CHECK_INTERVAL_MS", 5 * 60 * 1000),
     diskCleanupMinFreeBytes: getNumber(env, "DISK_CLEANUP_MIN_FREE_BYTES", 10 * GIB),
     diskCleanupTargetFreeBytes: getNumber(env, "DISK_CLEANUP_TARGET_FREE_BYTES", 20 * GIB),
+    diskCleanupSessionCacheTtlMs: getNumber(env, "DISK_CLEANUP_SESSION_CACHE_TTL_MS", 7 * DAY_MS),
     diskCleanupInactiveSessionMs: getNumber(env, "DISK_CLEANUP_INACTIVE_SESSION_MS", DAY_MS),
     diskCleanupJobProtectionMs: getNumber(env, "DISK_CLEANUP_JOB_PROTECTION_MS", 2 * DAY_MS),
     diskCleanupOldLogMs: getNumber(env, "DISK_CLEANUP_OLD_LOG_MS", DAY_MS)

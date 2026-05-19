@@ -411,14 +411,14 @@ export class DiskPressureCleanupService {
 
 function emptyResult(options: {
   readonly skipped?: string | undefined;
-  readonly dryRun?: boolean | undefined;
+  readonly dryRun: boolean;
   readonly before?: DiskUsage | undefined;
   readonly after?: DiskUsage | undefined;
 }): DiskPressureCleanupResult {
   return {
     ok: true,
     skipped: options.skipped,
-    dryRun: options.dryRun ?? true,
+    dryRun: options.dryRun,
     before: options.before,
     after: options.after,
     cacheCandidateCount: 0,

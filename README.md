@@ -56,7 +56,10 @@ Copy `.env.example` to `.env` and fill in:
 - optional `LOG_RAW_HTTP_REQUESTS`
 - optional `LOG_RAW_MAX_BYTES`
 - optional disk cleanup settings (`DISK_CLEANUP_*`), including safe-by-default
-  dry-run mode and session cache TTL
+  dry-run mode and session cache TTL. Keep `DISK_CLEANUP_DRY_RUN=true`
+  for the first few days after enabling cleanup, review the structured
+  candidate logs, and only set it to `false` after confirming the listed
+  paths are expected rebuildable artifacts.
 - one Codex auth mode
 - optional host Codex home mount if you want the container to inherit your global `~/.codex` memory/instructions
 

@@ -8,6 +8,7 @@ export interface AppConfig {
   readonly slackSocketOpenUrl: string;
   readonly slackInitialThreadHistoryCount: number;
   readonly slackHistoryApiMaxLimit: number;
+  readonly slackMessageFileShareCharLimit: number;
   readonly slackActiveTurnReconcileIntervalMs: number;
   readonly slackMissedThreadRecoveryIntervalMs: number;
   readonly stateDir: string;
@@ -183,6 +184,7 @@ export function loadConfig(env = process.env): AppConfig {
     slackSocketOpenUrl: env.SLACK_SOCKET_OPEN_URL ?? "apps.connections.open",
     slackInitialThreadHistoryCount: getNumber(env, "SLACK_INITIAL_THREAD_HISTORY_COUNT", 8),
     slackHistoryApiMaxLimit: getNumber(env, "SLACK_HISTORY_API_MAX_LIMIT", 50),
+    slackMessageFileShareCharLimit: getNumber(env, "SLACK_MESSAGE_FILE_SHARE_CHAR_LIMIT", 8_000),
     slackActiveTurnReconcileIntervalMs: getNumber(env, "SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS", 15_000),
     slackMissedThreadRecoveryIntervalMs: getNumber(
       env,

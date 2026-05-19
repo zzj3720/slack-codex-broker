@@ -237,7 +237,7 @@ describe("SlackConversationService", () => {
 
   it("converts file upload initial comments from markdownish to mrkdwn", async () => {
     const agentRuntime = new EventEmitter();
-    const uploadThreadFile = vi.fn(async () => ({
+    const uploadThreadFile = vi.fn(async (_options: { readonly bytes: Uint8Array }) => ({
       fileId: "F123"
     }));
     const setLastSlackReplyAt = vi.fn(async () => TEST_SESSION);
@@ -375,6 +375,66 @@ describe("SlackConversationService", () => {
     await service.stop();
   });
 
+  it("uploads long Slack messages as files and records their turn signal", async () => {
+    const agentRuntime = new EventEmitter();
+    const recordTurnSignal = vi.fn(async () => TEST_SESSION);
+    const uploadThreadFile = vi.fn(async (_options: { readonly bytes: Uint8Array }) => ({
+      fileId: "F123"
+    }));
+    const setLastSlackReplyAt = vi.fn(async () => TEST_SESSION);
+    const longText = "0123456789\n**full report**";
+
+    const service = new SlackConversationService({
+      config: {
+        ...TEST_CONFIG,
+        slackMessageFileShareCharLimit: 10
+      } as AppConfig,
+      sessions: {
+        recordTurnSignal,
+        setLastSlackReplyAt,
+        listInboundMessages: vi.fn((): PersistedInboundMessage[] => []),
+        updateInboundMessagesForBatch: vi.fn(async () => []),
+        setLastDeliveredMessageTs: vi.fn(async () => TEST_SESSION)
+      } as never,
+      agentRuntime: agentRuntime as never,
+      slackApi: {
+        uploadThreadFile,
+        postThreadMessage: vi.fn(),
+        setAssistantThreadStatus: vi.fn(),
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {
+        rememberPostedMessageTs: vi.fn()
+      } as never
+    });
+
+    await service.postSlackMessage({
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      text: longText,
+      kind: "final"
+    });
+
+    expect(uploadThreadFile).toHaveBeenCalledWith(expect.objectContaining({
+      channelId: "C123",
+      threadTs: "111.222",
+      filename: expect.stringMatching(/^codex-message-.*\.md$/),
+      title: "Codex long message",
+      initialComment: expect.stringContaining("final message is 26 characters"),
+      snippetType: "markdown",
+      contentType: "text/markdown; charset=utf-8"
+    }));
+    expect(Buffer.from(uploadThreadFile.mock.calls[0]![0].bytes).toString("utf8")).toBe(longText);
+    expect(setLastSlackReplyAt).toHaveBeenCalledTimes(1);
+    expect(recordTurnSignal).toHaveBeenCalledWith("C123", "111.222", expect.objectContaining({
+      turnId: "turn-1",
+      kind: "final"
+    }));
+
+    await service.stop();
+  });
+
   it("stops missed-message recovery on Slack rate limit and backs off the next periodic scan", async () => {
     const agentRuntime = new EventEmitter();
     const sessions = [
@@ -382,7 +442,7 @@ describe("SlackConversationService", () => {
         ...TEST_SESSION,
         activeTurnId: undefined,
         lastObservedMessageTs: "111.223",
-        updatedAt: new Date().toISOString()
+        updatedAt: "2026-05-19T00:00:02.000Z"
       },
       {
         ...TEST_SESSION,
@@ -390,7 +450,7 @@ describe("SlackConversationService", () => {
         rootThreadTs: "222.333",
         activeTurnId: undefined,
         lastObservedMessageTs: "222.334",
-        updatedAt: new Date().toISOString()
+        updatedAt: "2026-05-19T00:00:01.000Z"
       }
     ];
     const listThreadMessages = vi.fn(async () => {

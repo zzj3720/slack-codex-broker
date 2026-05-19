@@ -390,6 +390,9 @@ curl -sS -X POST http://127.0.0.1:3000/slack/post-message \
 ```
 
 `text` accepts normal Markdown/markdownish input. The broker converts it to Slack `mrkdwn` before posting.
+If the text is longer than `SLACK_MESSAGE_FILE_SHARE_CHAR_LIMIT` (default `8000` characters),
+the broker uploads the full Markdown text as a file with a short thread comment instead of
+splitting it across multiple thread replies. Set the limit to `0` to disable this behavior.
 
 ### Upload a local image or file
 

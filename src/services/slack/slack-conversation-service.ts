@@ -557,7 +557,16 @@ export class SlackConversationService {
     readonly kind?: SlackTurnSignalKind | undefined;
     readonly reason?: string | undefined;
   }): Promise<void> {
-    const formattedText = markdownishToMrkdwn(options.text);
+    const normalizedText = options.text.trim();
+    if (this.#shouldShareMessageAsFile(normalizedText)) {
+      await this.#postLongSlackMessageFile({
+        ...options,
+        text: normalizedText
+      });
+      return;
+    }
+
+    const formattedText = markdownishToMrkdwn(normalizedText);
     const chunks = chunkSlackMessage(formattedText);
     for (const [index, chunk] of chunks.entries()) {
       await this.#postBotThreadMessage(options.channelId, options.rootThreadTs, chunk, {
@@ -648,6 +657,52 @@ export class SlackConversationService {
     });
     await this.#sessions.setLastSlackReplyAt(options.channelId, options.rootThreadTs, new Date().toISOString());
     return uploaded;
+  }
+
+  #shouldShareMessageAsFile(text: string): boolean {
+    const limit = this.#config.slackMessageFileShareCharLimit;
+    return limit > 0 && text.length > limit;
+  }
+
+  async #postLongSlackMessageFile(options: {
+    readonly channelId: string;
+    readonly rootThreadTs: string;
+    readonly text: string;
+    readonly kind?: SlackTurnSignalKind | undefined;
+    readonly reason?: string | undefined;
+  }): Promise<void> {
+    const occurredAt = new Date().toISOString();
+    const filename = `codex-message-${occurredAt.replace(/[:.]/g, "-")}.md`;
+    const label = options.kind ? `${options.kind} message` : "message";
+    const initialComment = [
+      `This ${label} is ${options.text.length.toLocaleString("en-US")} characters, so I uploaded the full text as a Markdown file.`,
+      options.reason ? `Reason: ${options.reason}` : undefined
+    ].filter((line): line is string => Boolean(line)).join("\n");
+
+    this.#clearAssistantStatus(options.channelId, options.rootThreadTs);
+    await this.#slackApi.uploadThreadFile({
+      channelId: options.channelId,
+      threadTs: options.rootThreadTs,
+      filename,
+      bytes: Buffer.from(options.text, "utf8"),
+      title: "Codex long message",
+      initialComment: markdownishToMrkdwn(initialComment),
+      snippetType: "markdown",
+      contentType: "text/markdown; charset=utf-8"
+    });
+
+    const session = await this.#sessions.setLastSlackReplyAt(
+      options.channelId,
+      options.rootThreadTs,
+      occurredAt
+    );
+    if (options.kind) {
+      await this.#recordStopSignal(session, {
+        kind: options.kind,
+        reason: options.reason,
+        occurredAt
+      });
+    }
   }
 
   async #handleCompletedTurnDisposition(

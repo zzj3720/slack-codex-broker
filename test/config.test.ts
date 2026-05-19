@@ -24,6 +24,7 @@ describe("loadConfig", () => {
     expect(config.codexHostHomePath).toBeUndefined();
     expect(config.slackInitialThreadHistoryCount).toBe(8);
     expect(config.slackHistoryApiMaxLimit).toBe(50);
+    expect(config.slackMessageFileShareCharLimit).toBe(8_000);
     expect(config.slackActiveTurnReconcileIntervalMs).toBe(15_000);
     expect(config.slackMissedThreadRecoveryIntervalMs).toBe(5 * 60_000);
     expect(config.logLevel).toBe("info");
@@ -139,6 +140,16 @@ describe("loadConfig", () => {
     } as NodeJS.ProcessEnv);
 
     expect(config.brokerAdminToken).toBe("secret-admin-token");
+  });
+
+  it("loads the Slack long-message file share limit", () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_MESSAGE_FILE_SHARE_CHAR_LIMIT: "12000"
+    } as NodeJS.ProcessEnv);
+
+    expect(config.slackMessageFileShareCharLimit).toBe(12_000);
   });
 
   it("loads GitHub PR identity configuration", () => {

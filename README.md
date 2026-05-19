@@ -345,6 +345,7 @@ Notes:
 
 - Raw logs are intentionally verbose and can grow quickly during long sessions. Oversized raw payloads are truncated to `LOG_RAW_MAX_BYTES` before they are written.
 - Admin status reads only a bounded tail of recent broker JSONL files; it does not decode entire log files into memory.
+- Broker-managed background jobs are automatically cancelled once they exceed five hours of runtime, including restartable jobs that are already over the limit when the worker boots.
 - When free space falls below `DISK_CLEANUP_MIN_FREE_BYTES`, the worker removes old hourly log files first. If space is still below `DISK_CLEANUP_TARGET_FREE_BYTES`, it removes sessions inactive for at least `DISK_CLEANUP_INACTIVE_SESSION_MS`, oldest activity first. Active turns, pending inbound work, and running jobs protect sessions only until `DISK_CLEANUP_JOB_PROTECTION_MS`; older sessions can be removed with their jobs.
 - `/slack/post-file` request logging redacts inline `content_base64` payloads into a size marker instead of writing the full blob.
 - Session and job log files are written independently, so one noisy thread no longer forces the entire broker state or log history into one giant file.

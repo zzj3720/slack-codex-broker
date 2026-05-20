@@ -68,6 +68,7 @@ export class SessionAuthProfileRuntime extends EventEmitter implements AgentRunt
   readonly #createProfileRuntime: (options: {
     readonly profile: AuthProfileSummary;
     readonly codexHome: string;
+    readonly teamCodexHomePath: string;
     readonly port: number;
   }) => AgentRuntime;
   readonly #legacyRuntime?: AgentRuntime | undefined;
@@ -84,6 +85,7 @@ export class SessionAuthProfileRuntime extends EventEmitter implements AgentRunt
     readonly createProfileRuntime?: ((options: {
       readonly profile: AuthProfileSummary;
       readonly codexHome: string;
+      readonly teamCodexHomePath: string;
       readonly port: number;
     }) => AgentRuntime) | undefined;
   }) {
@@ -249,6 +251,7 @@ export class SessionAuthProfileRuntime extends EventEmitter implements AgentRunt
     const runtime = this.#createProfileRuntime({
       profile,
       codexHome: path.join(this.#profileRuntimeRoot(profile.name), "codex-home"),
+      teamCodexHomePath: this.#config.codexTeamHomePath,
       port: this.#portForProfile(profile.name)
     });
     runtime.setSlackBotIdentity(this.#slackBotIdentity);
@@ -283,12 +286,14 @@ function createDefaultProfileRuntime(options: {
   readonly sessions: SessionManager;
   readonly profile: AuthProfileSummary;
   readonly codexHome: string;
+  readonly teamCodexHomePath: string;
   readonly port: number;
 }): AgentRuntime {
   const codex = new CodexBroker({
     serviceName: `${options.config.serviceName}:${options.profile.name}`,
     brokerHttpBaseUrl: options.config.brokerHttpBaseUrl,
     codexHome: options.codexHome,
+    teamCodexHomePath: options.teamCodexHomePath,
     reposRoot: options.config.reposRoot,
     hostCodexHomePath: options.config.codexHostHomePath,
     hostGeminiHomePath: options.config.geminiHostHomePath,

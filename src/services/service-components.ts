@@ -75,6 +75,7 @@ export function createCodexBroker(config: AppConfig): CodexBroker {
     serviceName: config.serviceName,
     brokerHttpBaseUrl: config.brokerHttpBaseUrl,
     codexHome: config.codexHome,
+    teamCodexHomePath: config.codexTeamHomePath,
     reposRoot: config.reposRoot,
     hostCodexHomePath: config.codexHostHomePath,
     hostGeminiHomePath: config.geminiHostHomePath,

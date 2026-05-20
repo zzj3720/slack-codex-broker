@@ -15,6 +15,7 @@ export interface AppConfig {
   readonly sessionsRoot: string;
   readonly reposRoot: string;
   readonly codexHome: string;
+  readonly codexTeamHomePath: string;
   readonly codexHostHomePath?: string | undefined;
   readonly codexAuthJsonPath?: string | undefined;
   readonly geminiHostHomePath?: string | undefined;
@@ -161,6 +162,9 @@ export function loadConfig(env = process.env): AppConfig {
   const sessionsRoot = env.SESSIONS_ROOT ? path.resolve(env.SESSIONS_ROOT) : path.join(dataRoot, "sessions");
   const reposRoot = env.REPOS_ROOT ? path.resolve(env.REPOS_ROOT) : path.join(dataRoot, "repos");
   const codexHome = env.CODEX_HOME ? path.resolve(env.CODEX_HOME) : path.join(dataRoot, "codex-home");
+  const codexTeamHomePath = env.CODEX_TEAM_HOME
+    ? path.resolve(env.CODEX_TEAM_HOME)
+    : path.join(dataRoot, "team-codex-home");
   const logDir = env.LOG_DIR ? path.resolve(env.LOG_DIR) : path.join(dataRoot, "logs");
   const port = getNumber(env, "PORT", 3000);
   const workerPort = getNumber(env, "WORKER_PORT", port);
@@ -194,6 +198,7 @@ export function loadConfig(env = process.env): AppConfig {
     sessionsRoot,
     reposRoot,
     codexHome,
+    codexTeamHomePath,
     codexHostHomePath: getOptional(env, "CODEX_HOST_HOME_PATH"),
     codexAuthJsonPath: getOptional(env, "CODEX_AUTH_JSON_PATH"),
     geminiHostHomePath: getOptional(env, "GEMINI_HOST_HOME_PATH"),

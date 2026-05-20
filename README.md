@@ -94,39 +94,42 @@ At startup the broker copies that file into its own `CODEX_HOME`/data directory 
 
 The main Codex runtime disables all built-in MCP servers by default, and starts the Codex app-server with the `apps` feature disabled so Apps/Connectors are not exposed to model turns. Keep tool access outside the main runtime and use broker-managed integrations instead. MCP removal only affects the broker's container-local Codex config. It does not modify your host `~/.codex/config.toml`.
 
-## Reuse Global Codex Memory
+## Shared Codex Team Home
 
-If you want the containerized Codex to see your global `~/.codex` files such as:
-
-- `AGENT.md`
-- `AGENTS.md`
-- `memory.md`
-- `memories/`
-- `skills/`
-- `superpowers/`
-
-mount your host Codex home and point the runtime at it:
+Broker auth profiles are quota/auth boundaries, not memory boundaries. Shared Codex behavior should live in one team-level home:
 
 ```env
-CODEX_HOST_HOME_PATH=/Users/you/.codex
-CODEX_HOST_HOME_PATH_HOST=/Users/you/.codex
+CODEX_TEAM_HOME=/app/.data/team-codex-home
 HOST_AGENTS_PATH_HOST=/Users/you/.agents
 HOST_AGENTS_CONTAINER_PATH=/Users/you/.agents
 ```
 
-Recommended behavior:
+Shared entries include:
 
-- `AGENT.md` is the broker's canonical personal memory file; it is bootstrapped once from your host `~/.codex/AGENT.md` if present, then persisted inside the broker state
-- new Slack sessions inject that personal memory once at `thread/start`; later turns reuse the existing session context instead of re-sending it
-- the runtime shell path `~/.codex/AGENT.md` is wired back to the broker-managed personal memory file, so agent-written memory updates persist without touching your host home directly
-- `AGENTS.md` is bootstrapped from your host `~/.codex` once and then lives independently inside the broker container state, so host and broker instructions can diverge
-- `memory.md` is still linked back to your host `~/.codex`, so durable notes continue to persist across restarts
-- directories like `skills/` and `superpowers/` are copied into the container `CODEX_HOME`
-- `HOST_AGENTS_PATH_HOST` plus `HOST_AGENTS_CONTAINER_PATH` lets relative skill symlinks like `../../.agents/...` resolve correctly during that copy
-- if your host skills contain relative symlinks, set `CODEX_HOST_HOME_PATH` to the same absolute path as the host so those symlinks keep resolving inside the container
-- for docker-side skills that need to call a host-local helper service, either set an explicit container-safe URL such as `TEMPAD_LINK_SERVICE_URL=http://host.docker.internal:4320`, or leave it unset and let the broker probe the common host-local tempad endpoints automatically
+- `AGENT.md`
+- `AGENTS.md`
+- `memory.md`
+- `config.toml`
+- `memories/`
+- `skills/`
+- `superpowers/`
+- `rules/`
+- `vendor_imports/`
 
-This keeps personal memory on the familiar `~/.codex/AGENT.md` path inside the broker runtime, while allowing broker-specific repo instructions (`AGENTS.md`) to fork away from your personal host setup without sharing the container's sqlite/log/session state.
+Runtime behavior:
+
+- `CODEX_TEAM_HOME` defaults to `.data/team-codex-home`.
+- Each auth profile still has its own `CODEX_HOME` for `auth.json`, generated images, cache, logs, and runtime state.
+- Shared entries in each profile `CODEX_HOME` are symlinks to `CODEX_TEAM_HOME`.
+- New Slack sessions inject personal memory from `CODEX_TEAM_HOME/AGENT.md` once at `thread/start`; later turns reuse the existing session context instead of re-sending it.
+- The runtime shell path `~/.codex/AGENT.md` is wired back to `CODEX_TEAM_HOME/AGENT.md`, so agent-written memory updates are visible across auth profiles.
+- If the team home is missing and there is no existing shared profile/source content, the broker creates empty shared files/directories only.
+- If existing profile/source shared content is present while the team home is empty, the broker preserves the legacy local-copy behavior instead of linking profiles to empty team files.
+- Historical profile data migration is a one-off operator action and is intentionally not part of the runtime code path.
+- `HOST_AGENTS_PATH_HOST` plus `HOST_AGENTS_CONTAINER_PATH` lets relative skill symlinks like `../../.agents/...` resolve correctly if the team home contains those symlinks.
+- For docker-side skills that need to call a host-local helper service, either set an explicit container-safe URL such as `TEMPAD_LINK_SERVICE_URL=http://host.docker.internal:4320`, or leave it unset and let the broker probe the common host-local tempad endpoints automatically.
+
+Before enabling this on an existing machine, seed `CODEX_TEAM_HOME` once from the reviewed canonical profile/global Codex files and keep an external backup of replaced profile-local shared entries. Do not move `auth.json` into the team home.
 
 ## Run With Docker Compose
 

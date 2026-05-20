@@ -17,6 +17,7 @@ const DISABLED_CODEX_APP_SERVER_FEATURES = ["apps"] as const;
 export class AppServerProcess {
   readonly #brokerHttpBaseUrl: string;
   readonly #codexHome: string;
+  readonly #teamCodexHomePath: string | undefined;
   readonly #runtimeHome: string;
   readonly #port: number;
   readonly #openAiApiKey: string | undefined;
@@ -34,6 +35,7 @@ export class AppServerProcess {
   constructor(options: {
     readonly brokerHttpBaseUrl: string;
     readonly codexHome: string;
+    readonly teamCodexHomePath?: string | undefined;
     readonly port: number;
     readonly openAiApiKey?: string | undefined;
     readonly authJsonPath?: string | undefined;
@@ -47,6 +49,7 @@ export class AppServerProcess {
   }) {
     this.#brokerHttpBaseUrl = options.brokerHttpBaseUrl;
     this.#codexHome = options.codexHome;
+    this.#teamCodexHomePath = options.teamCodexHomePath;
     this.#runtimeHome = path.join(path.dirname(options.codexHome), "runtime-home");
     this.#port = options.port;
     this.#openAiApiKey = options.openAiApiKey;
@@ -79,6 +82,7 @@ export class AppServerProcess {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       CODEX_HOME: this.#codexHome,
+      ...(this.#teamCodexHomePath ? { CODEX_TEAM_HOME: this.#teamCodexHomePath } : {}),
       HOME: this.#runtimeHome,
       BROKER_API_BASE: this.#brokerHttpBaseUrl,
       BROKER_GH_HELPER:
@@ -183,6 +187,7 @@ export class AppServerProcess {
     await ensureDir(this.#codexHome);
     await syncUserCodexHome({
       codexHome: this.#codexHome,
+      teamCodexHomePath: this.#teamCodexHomePath,
       hostCodexHomePath: this.#hostCodexHomePath,
       runtimeHomePath: this.#runtimeHome,
       legacyPersonalMemoryPath:
@@ -303,6 +308,7 @@ export class AppServerProcess {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       CODEX_HOME: this.#codexHome,
+      ...(this.#teamCodexHomePath ? { CODEX_TEAM_HOME: this.#teamCodexHomePath } : {}),
       HOME: this.#runtimeHome
     };
 

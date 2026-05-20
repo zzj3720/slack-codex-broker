@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import path from "node:path";
 
 import { AppServerClient } from "./app-server-client.js";
@@ -36,6 +37,7 @@ export class CodexBroker extends EventEmitter {
     readonly serviceName: string;
     readonly brokerHttpBaseUrl: string;
     readonly codexHome: string;
+    readonly teamCodexHomePath?: string | undefined;
     readonly reposRoot: string;
     readonly hostCodexHomePath?: string | undefined;
     readonly hostGeminiHomePath?: string | undefined;
@@ -54,7 +56,10 @@ export class CodexBroker extends EventEmitter {
     this.#brokerHttpBaseUrl = options.brokerHttpBaseUrl;
     this.#openAiApiKey = options.openAiApiKey;
     this.#codexAppServerUrl = options.codexAppServerUrl;
-    this.#personalMemoryFilePath = getPersonalMemoryPath(options.codexHome);
+    this.#personalMemoryFilePath = choosePersonalMemoryFilePath({
+      codexHome: options.codexHome,
+      teamCodexHomePath: options.teamCodexHomePath
+    });
     this.#reposRoot = options.reposRoot;
     this.#codexGeneratedImagesRoot = path.join(options.codexHome, "generated_images");
 
@@ -67,6 +72,7 @@ export class CodexBroker extends EventEmitter {
     this.#appServerProcess = new AppServerProcess({
       brokerHttpBaseUrl: options.brokerHttpBaseUrl,
       codexHome: options.codexHome,
+      teamCodexHomePath: options.teamCodexHomePath,
       hostCodexHomePath: options.hostCodexHomePath,
       hostGeminiHomePath: options.hostGeminiHomePath,
       port: options.codexAppServerPort,
@@ -328,6 +334,23 @@ export class CodexBroker extends EventEmitter {
       });
     }
   }
+}
+
+function choosePersonalMemoryFilePath(options: {
+  readonly codexHome: string;
+  readonly teamCodexHomePath?: string | undefined;
+}): string {
+  if (!options.teamCodexHomePath) {
+    return getPersonalMemoryPath(options.codexHome);
+  }
+
+  const teamMemoryPath = getPersonalMemoryPath(options.codexHome, {
+    teamCodexHomePath: options.teamCodexHomePath
+  });
+  const teamMemory = fs.existsSync(teamMemoryPath)
+    ? fs.readFileSync(teamMemoryPath, "utf8").trim()
+    : "";
+  return teamMemory ? teamMemoryPath : getPersonalMemoryPath(options.codexHome);
 }
 
 export function isRecoverableCodexConnectionError(error: unknown): boolean {

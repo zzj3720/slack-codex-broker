@@ -22,6 +22,7 @@ describe("loadConfig", () => {
     expect(config.reposRoot.endsWith(".data/repos")).toBe(true);
     expect(config.logDir.endsWith(".data/logs")).toBe(true);
     expect(config.codexHostHomePath).toBeUndefined();
+    expect(config.codexTeamHomePath.endsWith(".data/team-codex-home")).toBe(true);
     expect(config.slackInitialThreadHistoryCount).toBe(8);
     expect(config.slackHistoryApiMaxLimit).toBe(50);
     expect(config.slackActiveTurnReconcileIntervalMs).toBe(15_000);
@@ -63,6 +64,17 @@ describe("loadConfig", () => {
         PORT: "nope"
       } as NodeJS.ProcessEnv)
     ).toThrowError("Invalid numeric environment variable: PORT");
+  });
+
+
+  it("loads an explicit team codex home path", () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      CODEX_TEAM_HOME: "/team-codex-home"
+    } as NodeJS.ProcessEnv);
+
+    expect(config.codexTeamHomePath).toBe("/team-codex-home");
   });
 
   it("loads an explicit host codex home path", () => {

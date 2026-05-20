@@ -68,20 +68,24 @@ async function replaceWithCopy(targetPath: string, sourcePath: string, isDirecto
   await fs.copyFile(sourcePath, targetPath);
 }
 
-async function replaceWithSymlink(targetPath: string, sourcePath: string): Promise<void> {
+async function replaceWithSymlink(
+  targetPath: string,
+  sourcePath: string,
+  type: "file" | "dir" = "file"
+): Promise<void> {
   await fs.rm(targetPath, {
     force: true,
     recursive: true
   });
-  await fs.symlink(sourcePath, targetPath, "file");
+  await fs.symlink(sourcePath, targetPath, type);
 }
 
-async function ensureDetachedMarkdownFile(targetPath: string, sourcePath: string): Promise<void> {
+async function ensureDetachedMarkdownFile(targetPath: string, sourcePath?: string): Promise<void> {
   await ensureDir(path.dirname(targetPath));
 
   const targetExists = await fileExists(targetPath);
   if (!targetExists) {
-    if (await fileExists(sourcePath)) {
+    if (sourcePath && await fileExists(sourcePath)) {
       await fs.copyFile(sourcePath, targetPath);
       return;
     }
@@ -111,6 +115,30 @@ async function readTextIfExists(filePath: string): Promise<string> {
   return await fs.readFile(filePath, "utf8").catch(() => "");
 }
 
+async function sharedEntryHasContent(entryPath: string): Promise<boolean> {
+  const stat = await fs.stat(entryPath).catch(() => null);
+  if (!stat) {
+    return false;
+  }
+
+  if (stat.isDirectory()) {
+    return (await fs.readdir(entryPath).catch(() => [])).length > 0;
+  }
+
+  const content = await readTextIfExists(entryPath);
+  return content.trim().length > 0;
+}
+
+async function codexHomeHasSharedContent(codexHome: string): Promise<boolean> {
+  for (const entry of mirroredEntries) {
+    if (await sharedEntryHasContent(path.join(codexHome, entry))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function resolvePersonalMemoryPath(rootPath: string): string {
   return path.join(rootPath, PERSONAL_MEMORY_FILENAME);
 }
@@ -135,6 +163,7 @@ async function migrateLegacyPersonalMemory(targetPath: string, legacyPath?: stri
 
 async function ensureRuntimePersonalMemoryAlias(options: {
   readonly codexHome: string;
+  readonly teamCodexHomePath?: string | undefined;
   readonly runtimeHomePath?: string | undefined;
   readonly legacyPersonalMemoryPath?: string | undefined;
 }): Promise<void> {
@@ -142,7 +171,9 @@ async function ensureRuntimePersonalMemoryAlias(options: {
     return;
   }
 
-  const targetPath = getPersonalMemoryPath(options.codexHome);
+  const targetPath = getPersonalMemoryPath(options.codexHome, {
+    teamCodexHomePath: options.teamCodexHomePath
+  });
   await migrateLegacyPersonalMemory(targetPath, options.legacyPersonalMemoryPath);
 
   const runtimeCodexHome = path.join(options.runtimeHomePath, ".codex");
@@ -169,25 +200,112 @@ async function ensureRuntimePersonalMemoryAlias(options: {
   await replaceWithSymlink(runtimePath, targetPath);
 }
 
-export function getPersonalMemoryPath(codexHome: string): string {
-  return resolvePersonalMemoryPath(codexHome);
+export function getPersonalMemoryPath(
+  codexHome: string,
+  options: {
+    readonly teamCodexHomePath?: string | undefined;
+  } = {}
+): string {
+  return resolvePersonalMemoryPath(options.teamCodexHomePath ?? codexHome);
 }
 
 export async function readPersonalMemory(codexHome: string): Promise<string> {
   return await readTextIfExists(getPersonalMemoryPath(codexHome));
 }
 
+async function ensureTeamCodexHome(options: {
+  readonly teamCodexHomePath: string;
+  readonly legacyPersonalMemoryPath?: string | undefined;
+}): Promise<void> {
+  await ensureDir(options.teamCodexHomePath);
+
+  for (const entry of mirroredEntries) {
+    const targetPath = path.join(options.teamCodexHomePath, entry);
+
+    if (await fileExists(targetPath)) {
+      continue;
+    }
+
+    if (isDirectoryEntry(entry)) {
+      await ensureDir(targetPath);
+      continue;
+    }
+
+    await ensureDir(path.dirname(targetPath));
+    await fs.writeFile(targetPath, "");
+  }
+
+  await migrateLegacyPersonalMemory(
+    path.join(options.teamCodexHomePath, PERSONAL_MEMORY_FILENAME),
+    options.legacyPersonalMemoryPath
+  );
+}
+
+async function symlinkSharedEntriesToTeamHome(codexHome: string, teamCodexHomePath: string): Promise<void> {
+  for (const entry of mirroredEntries) {
+    const sourcePath = path.join(teamCodexHomePath, entry);
+    const targetPath = path.join(codexHome, entry);
+    if (!(await fileExists(sourcePath)) || path.resolve(sourcePath) === path.resolve(targetPath)) {
+      continue;
+    }
+
+    const sourceStat = await fs.stat(sourcePath);
+    await ensureDir(path.dirname(targetPath));
+    await replaceWithSymlink(targetPath, sourcePath, sourceStat.isDirectory() ? "dir" : "file");
+  }
+}
+
 export async function syncUserCodexHome(options: {
   readonly codexHome: string;
   readonly hostCodexHomePath?: string | undefined;
+  readonly teamCodexHomePath?: string | undefined;
   readonly runtimeHomePath?: string | undefined;
   readonly legacyPersonalMemoryPath?: string | undefined;
 }): Promise<void> {
   await ensureDir(options.codexHome);
 
   const sourceHome = await resolveSourceCodexHome(options.codexHome, options.hostCodexHomePath);
+
+  if (options.teamCodexHomePath) {
+    const teamHasSharedContent = await codexHomeHasSharedContent(options.teamCodexHomePath);
+    const existingHomeHasSharedContent = await codexHomeHasSharedContent(options.codexHome);
+    const sourceHomeHasSharedContent = sourceHome
+      ? await codexHomeHasSharedContent(sourceHome)
+      : false;
+
+    if (teamHasSharedContent || (!existingHomeHasSharedContent && !sourceHomeHasSharedContent)) {
+      await ensureTeamCodexHome({
+        teamCodexHomePath: options.teamCodexHomePath,
+        legacyPersonalMemoryPath: options.legacyPersonalMemoryPath
+      });
+      await symlinkSharedEntriesToTeamHome(options.codexHome, options.teamCodexHomePath);
+      await ensureRuntimePersonalMemoryAlias({
+        codexHome: options.codexHome,
+        teamCodexHomePath: options.teamCodexHomePath,
+        runtimeHomePath: options.runtimeHomePath,
+        legacyPersonalMemoryPath: options.legacyPersonalMemoryPath
+      });
+      return;
+    }
+  }
+
+  if (options.teamCodexHomePath && !sourceHome) {
+    await ensureRuntimePersonalMemoryAlias({
+      codexHome: options.codexHome,
+      runtimeHomePath: options.runtimeHomePath,
+      legacyPersonalMemoryPath: options.legacyPersonalMemoryPath
+    });
+    return;
+  }
+
   if (!sourceHome) {
     return;
+  }
+
+  if (options.teamCodexHomePath) {
+    // Existing shared profile/source data exists while the team home is empty.
+    // Preserve the legacy local-copy behavior until an operator seeds CODEX_TEAM_HOME.
+    await ensureDir(options.teamCodexHomePath);
   }
 
   for (const entry of mirroredEntries) {

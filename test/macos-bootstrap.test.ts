@@ -59,6 +59,19 @@ describe("macOS bootstrap", () => {
     await writeExecutable(path.join(fakeBin, "node"), fakeCommandScript("node"));
     await writeExecutable(path.join(fakeBin, "cloudflared"), fakeCommandScript("cloudflared"));
 
+    const childEnv = { ...process.env };
+    for (const key of [
+      "ADMIN_BASE_URL",
+      "BROKER_DEFAULT_GITHUB_LOGIN",
+      "BROKER_DEFAULT_GITHUB_TOKEN",
+      "GH_TOKEN",
+      "GITHUB_TOKEN",
+      "CLOUDFLARED_TUNNEL_TOKEN",
+      "CURRENT_RELEASE_PATH"
+    ]) {
+      delete childEnv[key];
+    }
+
     const result = await runNodeScript(
       [
         "scripts/ops/macos-bootstrap.mjs",
@@ -85,7 +98,7 @@ describe("macOS bootstrap", () => {
         "--start-worker"
       ],
       {
-        ...process.env,
+        ...childEnv,
         PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
         HOME: home,
         SLACK_APP_TOKEN: "xapp-test",
@@ -153,6 +166,7 @@ describe("macOS bootstrap", () => {
       expect(envText).not.toContain('ADMIN_BASE_URL="http://127.0.0.1:3000"');
       expect(envText).toContain('BROKER_DEFAULT_GITHUB_LOGIN="default-pr-account"');
       expect(envText).toContain('BROKER_DEFAULT_GITHUB_TOKEN="default-pr-token"');
+      expect(envText).toContain(`CODEX_TEAM_HOME="${path.join(serviceRoot, ".data", "team-codex-home")}"`);
       expect(envText).toContain('GH_TOKEN="legacy-gh-token"');
       expect(envText).toContain('GITHUB_TOKEN="legacy-github-token"');
       expect(envText).not.toContain("CURRENT_RELEASE_PATH");

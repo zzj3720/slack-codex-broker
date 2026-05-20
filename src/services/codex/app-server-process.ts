@@ -7,12 +7,18 @@ import type { Readable } from "node:stream";
 
 import { logger } from "../../logger.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
+import { withoutGlobalGitHubTokenEnv } from "../../utils/github-env.js";
 import { resolveRuntimeToolPath } from "../../utils/runtime-paths.js";
 import { syncUserCodexHome } from "./codex-home.js";
 import { syncGeminiHome } from "./gemini-home.js";
 
 const ALL_MCP_SERVERS = "*";
 const DISABLED_CODEX_APP_SERVER_FEATURES = ["apps"] as const;
+
+function resolveRuntimeHomePath(): string {
+  const envHome = process.env.HOME?.trim();
+  return envHome ? path.resolve(envHome) : os.homedir();
+}
 
 export class AppServerProcess {
   readonly #brokerHttpBaseUrl: string;
@@ -50,7 +56,7 @@ export class AppServerProcess {
     this.#brokerHttpBaseUrl = options.brokerHttpBaseUrl;
     this.#codexHome = options.codexHome;
     this.#teamCodexHomePath = options.teamCodexHomePath;
-    this.#runtimeHome = path.join(path.dirname(options.codexHome), "runtime-home");
+    this.#runtimeHome = resolveRuntimeHomePath();
     this.#port = options.port;
     this.#openAiApiKey = options.openAiApiKey;
     this.#authJsonPath = options.authJsonPath;
@@ -79,7 +85,7 @@ export class AppServerProcess {
     const githubCliWrapper = await this.#ensureGitHubCliWrapper();
     const tempadLinkServiceUrl = await this.#resolveTempadLinkServiceUrl();
 
-    const env: NodeJS.ProcessEnv = {
+    const env: NodeJS.ProcessEnv = withoutGlobalGitHubTokenEnv({
       ...process.env,
       CODEX_HOME: this.#codexHome,
       ...(this.#teamCodexHomePath ? { CODEX_TEAM_HOME: this.#teamCodexHomePath } : {}),
@@ -95,7 +101,7 @@ export class AppServerProcess {
       BROKER_GEMINI_UI_HELPER:
         process.env.BROKER_GEMINI_UI_HELPER?.trim() || resolveRuntimeToolPath("gemini-ui.js"),
       PATH: `${githubCliWrapper.binDir}:${process.env.PATH ?? ""}`
-    };
+    });
 
     if (this.#geminiHttpProxy) {
       env.BROKER_GEMINI_HTTP_PROXY = this.#geminiHttpProxy;
@@ -189,11 +195,7 @@ export class AppServerProcess {
       codexHome: this.#codexHome,
       teamCodexHomePath: this.#teamCodexHomePath,
       hostCodexHomePath: this.#hostCodexHomePath,
-      runtimeHomePath: this.#runtimeHome,
-      legacyPersonalMemoryPath:
-        path.resolve(this.#runtimeHome) === path.resolve(os.homedir())
-        ? undefined
-          : path.join(os.homedir(), ".codex", "AGENT.md")
+      runtimeHomePath: this.#runtimeHome
     });
     await syncGeminiHome({
       runtimeHomePath: this.#runtimeHome,
@@ -215,7 +217,7 @@ export class AppServerProcess {
     }
 
     const candidatePaths = [
-      path.join(os.homedir(), ".codex", "auth.json")
+      path.join(this.#runtimeHome, ".codex", "auth.json")
     ].filter((value): value is string => Boolean(value));
 
     for (const candidate of candidatePaths) {
@@ -305,12 +307,12 @@ export class AppServerProcess {
   }
 
   async #runCodex(args: string[]): Promise<string> {
-    const env: NodeJS.ProcessEnv = {
+    const env: NodeJS.ProcessEnv = withoutGlobalGitHubTokenEnv({
       ...process.env,
       CODEX_HOME: this.#codexHome,
       ...(this.#teamCodexHomePath ? { CODEX_TEAM_HOME: this.#teamCodexHomePath } : {}),
       HOME: this.#runtimeHome
-    };
+    });
 
     if (this.#openAiApiKey) {
       env.OPENAI_API_KEY = this.#openAiApiKey;
@@ -343,10 +345,10 @@ export class AppServerProcess {
   }
 
   async #runGit(args: string[]): Promise<string> {
-    const env: NodeJS.ProcessEnv = {
+    const env: NodeJS.ProcessEnv = withoutGlobalGitHubTokenEnv({
       ...process.env,
       HOME: this.#runtimeHome
-    };
+    });
 
     return await new Promise<string>((resolve, reject) => {
       const child = spawn("git", args, {

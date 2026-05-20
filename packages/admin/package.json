@@ -1,6 +1,6 @@
 {
   "name": "@agent-session-broker/admin",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "description": "Admin service and UI for the agent session broker.",
   "license": "MIT",
   "repository": {

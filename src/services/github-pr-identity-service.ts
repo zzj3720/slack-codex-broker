@@ -5,6 +5,7 @@ import path from "node:path";
 
 import type { SlackSessionRecord } from "../types.js";
 import { ensureDir } from "../utils/fs.js";
+import { withoutGlobalGitHubTokenEnv } from "../utils/github-env.js";
 
 export interface GitHubPrBindingRecord {
   readonly slackUserId: string;
@@ -372,7 +373,7 @@ export class GitHubPrIdentityService {
       this.#githubOAuthScopes.join(",")
     ], {
       env: {
-        ...process.env,
+        ...withoutGlobalGitHubTokenEnv(process.env),
         GH_BROWSER: "echo",
         GH_CONFIG_DIR: ghConfigDir,
         NO_COLOR: "1"
@@ -708,7 +709,7 @@ export class GitHubPrIdentityService {
     return await new Promise<string>((resolve, reject) => {
       const child = spawn(this.#ghPath, [...args], {
         env: {
-          ...process.env,
+          ...withoutGlobalGitHubTokenEnv(process.env),
           GH_CONFIG_DIR: ghConfigDir,
           GH_PROMPT_DISABLED: "1",
           NO_COLOR: "1"

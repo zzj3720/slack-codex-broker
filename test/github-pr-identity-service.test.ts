@@ -199,18 +199,36 @@ describe("GitHubPrIdentityService", () => {
     });
   });
 
-  it("binds a Slack user through isolated GitHub CLI device login", async () => {
-    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "github-pr-identity-"));
-    cleanups.push(async () => fs.rm(stateDir, { recursive: true, force: true }));
-    const ghConfigPathFile = path.join(stateDir, "fake-gh-config-path");
-    const fakeGhPath = path.join(stateDir, "fake-gh.sh");
-    await fs.writeFile(fakeGhPath, `#!/bin/sh
-set -eu
-if [ "$1 $2" = "auth login" ]; then
-  printf "%s" "$GH_CONFIG_DIR" > ${JSON.stringify(ghConfigPathFile)}
-  echo "! First copy your one-time code: ABCD-EFGH"
-  echo "Open this URL to continue in your web browser: https://github.com/login/device"
-  while [ ! -f "$GH_CONFIG_DIR/complete" ]; do sleep 0.05; done
+	  it("binds a Slack user through isolated GitHub CLI device login", async () => {
+	    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "github-pr-identity-"));
+	    cleanups.push(async () => fs.rm(stateDir, { recursive: true, force: true }));
+	    const ghConfigPathFile = path.join(stateDir, "fake-gh-config-path");
+	    const ghLoginEnvFile = path.join(stateDir, "fake-gh-login-env.json");
+	    const fakeGhPath = path.join(stateDir, "fake-gh.sh");
+	    const previousGhToken = process.env.GH_TOKEN;
+	    const previousGitHubToken = process.env.GITHUB_TOKEN;
+	    process.env.GH_TOKEN = "global-gh-token";
+	    process.env.GITHUB_TOKEN = "global-github-token";
+	    cleanups.push(async () => {
+	      if (previousGhToken === undefined) {
+	        delete process.env.GH_TOKEN;
+	      } else {
+	        process.env.GH_TOKEN = previousGhToken;
+	      }
+	      if (previousGitHubToken === undefined) {
+	        delete process.env.GITHUB_TOKEN;
+	      } else {
+	        process.env.GITHUB_TOKEN = previousGitHubToken;
+	      }
+	    });
+	    await fs.writeFile(fakeGhPath, `#!/bin/sh
+	set -eu
+	if [ "$1 $2" = "auth login" ]; then
+	  printf "%s" "$GH_CONFIG_DIR" > ${JSON.stringify(ghConfigPathFile)}
+	  printf '{"ghToken":"%s","githubToken":"%s","ghConfigDir":"%s"}' "\${GH_TOKEN-}" "\${GITHUB_TOKEN-}" "$GH_CONFIG_DIR" > ${JSON.stringify(ghLoginEnvFile)}
+	  echo "! First copy your one-time code: ABCD-EFGH"
+	  echo "Open this URL to continue in your web browser: https://github.com/login/device"
+	  while [ ! -f "$GH_CONFIG_DIR/complete" ]; do sleep 0.05; done
   exit 0
 fi
 if [ "$1 $2" = "auth status" ]; then
@@ -268,8 +286,13 @@ exit 2
       status: "pending"
     });
 
-    const ghConfigDir = await fs.readFile(ghConfigPathFile, "utf8");
-    await fs.writeFile(path.join(ghConfigDir, "complete"), "ok");
+	    const ghConfigDir = await fs.readFile(ghConfigPathFile, "utf8");
+	    await expect(fs.readFile(ghLoginEnvFile, "utf8").then(JSON.parse)).resolves.toMatchObject({
+	      ghToken: "",
+	      githubToken: "",
+	      ghConfigDir
+	    });
+	    await fs.writeFile(path.join(ghConfigDir, "complete"), "ok");
     let completed: unknown;
     for (let index = 0; index < 20; index += 1) {
       const result = await service.pollDeviceAuthorization(started.id);

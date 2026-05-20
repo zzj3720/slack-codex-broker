@@ -173,6 +173,11 @@ Binding uses GitHub CLI:
 The broker must never run this flow against the global `gh` config, because
 binding one Slack user must not mutate the server's operator account.
 
+The broker may run all auth-profile app-servers with the VM operator `HOME`.
+That shared `HOME` is acceptable because GitHub PR identity must not be read
+from global `gh` state. Device-code OAuth uses a temporary `GH_CONFIG_DIR` and
+app-server children must not inherit `GH_TOKEN` or `GITHUB_TOKEN`.
+
 ## Runtime GitHub Identity Resolution
 
 The Codex app-server runtime receives a broker-managed `gh` wrapper before the
@@ -193,6 +198,11 @@ The wrapper:
 8. Execs the real `gh` with `GH_TOKEN` set.
 
 The wrapper must never print or log tokens.
+
+The wrapper must also remove inherited `GH_TOKEN` and `GITHUB_TOKEN` before it
+execs the real `gh`, then set `GH_TOKEN` to the token resolved for the current
+session. This keeps shared VM `HOME` compatible with different threads using
+different GitHub PR accounts.
 
 ## Commit Co-Authors
 
@@ -241,6 +251,10 @@ When a Slack participant is selected as a co-author:
   account when `U_A` is unbound and that default is available.
 - Running `gh` inside the session workspace uses the legacy env default token
   only when `U_A` is unbound and no selected default bound account exists.
+- Sharing the VM operator `HOME` across auth-profile app-servers does not change
+  PR identity selection.
+- Global `GH_TOKEN`/`GITHUB_TOKEN` values are not visible to app-server or
+  device-code child processes.
 - A revoked or invalid bound token blocks instead of silently using the default.
 - A revoked or invalid selected default account blocks instead of silently using
   the legacy env fallback.

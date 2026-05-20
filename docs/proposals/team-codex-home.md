@@ -16,6 +16,13 @@ Separate OpenAI authentication/quota profiles from long-lived team-level Codex b
 
 Observed on the current machine: auth profiles have different `AGENT.md` files, and at least one profile has different `config.toml`. That means memory/config are currently isolated by auth profile, not by team or Slack user.
 
+The per-profile `HOME` is too broad for a broker-dedicated VM. Auth profiles
+only represent Codex account identity and quota. They must not create separate
+Unix user homes, because Go, npm/yarn, Gemini, Git, `gh`, macOS `Library`, and
+other tool caches are machine/runtime state. On the live VM this duplicates
+large caches under every profile and makes disk cleanup harder without adding a
+useful isolation boundary.
+
 ## Proposed state
 
 Add a team-level Codex home:
@@ -32,12 +39,32 @@ Add a team-level Codex home:
   - `superpowers/`
   - `vendor_imports/`
 - Per-profile `CODEX_HOME` remains the app-server home, but those shared entries are symlinked to `CODEX_TEAM_HOME`.
+- App-server processes inherit the VM operator `HOME`. The broker must not
+  derive `HOME` from the per-profile `CODEX_HOME`.
 - Per-profile state remains local to the auth profile:
   - `auth.json`
-  - logs/state/cache/session files
-  - generated images/model cache/runtime scratch files
+  - Codex state that is explicitly stored under that profile's `CODEX_HOME`
 - `CodexBroker` reads personal memory from `CODEX_TEAM_HOME/AGENT.md`, not the profile-local home.
-- `runtime-home/.codex/AGENT.md` points at the same team-level `AGENT.md`.
+- `$HOME/.codex/AGENT.md` points at the same team-level `AGENT.md`.
+- Git commit hooks, broker CLI wrappers, Gemini home, tool caches, and other
+  Unix-home state live in the VM operator home and are shared by all auth
+  profiles.
+
+## GitHub Identity Boundary
+
+Sharing `HOME` must not make all sessions share one GitHub PR account. GitHub PR
+identity is session state, not Unix home state:
+
+- The app-server `PATH` contains the broker-managed `gh` wrapper before the real
+  `gh`.
+- The wrapper resolves `cwd` to a Slack session, then resolves that session's
+  initiator GitHub OAuth binding or selected default PR account.
+- The wrapper execs the real `gh` with only the broker-resolved `GH_TOKEN`.
+- App-server child environments must not inherit global `GH_TOKEN`,
+  `GITHUB_TOKEN`, or `BROKER_DEFAULT_GITHUB_TOKEN`; those would let agent code
+  bypass session-aware identity resolution.
+- GitHub binding device-code login must use a temporary `GH_CONFIG_DIR` and must
+  not inherit global `GH_TOKEN` or `GITHUB_TOKEN`.
 
 ## Migration stance
 
@@ -51,8 +78,16 @@ If `CODEX_TEAM_HOME` is still empty while an existing profile/source home has sh
 
 - `CODEX_TEAM_HOME` is configurable and documented.
 - Different auth profiles resolve shared entries through the same team home.
-- `auth.json` and runtime state remain per-profile and are never linked to the team home.
+- `auth.json` and Codex state under profile `CODEX_HOME` remain per-profile and
+  are never linked to the team home.
+- Different auth profiles keep different `CODEX_HOME` paths but inherit the same
+  VM operator `HOME`.
 - `CodexBroker` injects personal memory from the team home.
 - If the team home is not seeded, existing profile/source memory is preserved and not replaced by empty team files.
 - Updating `CODEX_TEAM_HOME/AGENT.md` is visible to all profiles without editing profile-local files.
+- App-server, helper `codex`, helper `git`, and GitHub device-code child
+  processes do not leak global GitHub tokens into agent-visible environments.
+- Running `gh` from a session still resolves the PR token through the broker
+  wrapper by `cwd`, so session initiators can use different GitHub accounts even
+  though `HOME` is shared.
 - Tests cover team-home symlink cutover and memory path selection.

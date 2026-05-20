@@ -42,6 +42,10 @@ export async function syncGeminiHome(options: {
     const sourcePath = path.join(sourceHome, entry);
     const targetPath = path.join(targetHome, entry);
 
+    if (path.resolve(sourcePath) === path.resolve(targetPath)) {
+      continue;
+    }
+
     if (await fileExists(sourcePath)) {
       await fs.copyFile(sourcePath, targetPath);
       continue;

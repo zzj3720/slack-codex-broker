@@ -1,6 +1,6 @@
 {
   "name": "agent-session-broker-repo",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "private": true,
   "description": "Slack Socket Mode broker that routes Slack threads into Codex app-server sessions with isolated workspaces.",
   "license": "MIT",

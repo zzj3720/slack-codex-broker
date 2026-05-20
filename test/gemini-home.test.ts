@@ -75,4 +75,19 @@ describe("syncGeminiHome", () => {
 
     await expect(fs.access(path.join(runtimeHome, ".gemini", "oauth_creds.json"))).rejects.toThrow();
   });
+
+  it("does not copy Gemini auth files onto themselves when the runtime HOME is the source HOME", async () => {
+    const runtimeHome = await makeTempDir("gemini-runtime-home-");
+    const geminiHome = path.join(runtimeHome, ".gemini");
+    await fs.mkdir(geminiHome, { recursive: true });
+    await fs.writeFile(path.join(geminiHome, "settings.json"), "{\"selectedAuthType\":\"oauth-personal\"}\n");
+
+    await expect(syncGeminiHome({
+      runtimeHomePath: runtimeHome,
+      hostGeminiHomePath: geminiHome
+    })).resolves.toBeUndefined();
+    await expect(fs.readFile(path.join(geminiHome, "settings.json"), "utf8")).resolves.toContain(
+      "selectedAuthType"
+    );
+  });
 });

@@ -22,15 +22,16 @@ describe("broker gh wrapper", () => {
     cleanups.push(async () => fs.rm(tempRoot, { recursive: true, force: true }));
     const capturePath = path.join(tempRoot, "capture.json");
     const realGhPath = path.join(tempRoot, "real-gh.mjs");
-    await fs.writeFile(realGhPath, [
-      "#!/usr/bin/env node",
-      "import fs from 'node:fs/promises';",
-      "await fs.writeFile(process.env.CAPTURE_PATH, JSON.stringify({",
-      "  argv: process.argv.slice(2),",
-      "  ghToken: process.env.GH_TOKEN,",
-      "  cwd: process.cwd()",
-      "}));"
-    ].join("\n"));
+	    await fs.writeFile(realGhPath, [
+	      "#!/usr/bin/env node",
+	      "import fs from 'node:fs/promises';",
+	      "await fs.writeFile(process.env.CAPTURE_PATH, JSON.stringify({",
+	      "  argv: process.argv.slice(2),",
+	      "  ghToken: process.env.GH_TOKEN,",
+	      "  githubToken: process.env.GITHUB_TOKEN,",
+	      "  cwd: process.cwd()",
+	      "}));"
+	    ].join("\n"));
     await fs.chmod(realGhPath, 0o755);
 
     let resolveRequest: Record<string, unknown> | undefined;
@@ -62,24 +63,28 @@ describe("broker gh wrapper", () => {
       realGhPath,
       cwd: tempRoot,
       argv: ["pr", "create", "--fill"],
-      env: {
-        ...process.env,
-        CAPTURE_PATH: capturePath
-      }
-    });
+	      env: {
+	        ...process.env,
+	        CAPTURE_PATH: capturePath,
+	        GH_TOKEN: "inherited-gh-token",
+	        GITHUB_TOKEN: "inherited-github-token"
+	      }
+	    });
 
     expect(result.status).toBe(0);
     expect(resolveRequest).toMatchObject({
       cwd: tempRoot,
       command: ["pr", "create", "--fill"]
     });
-    const realTempRoot = await fs.realpath(tempRoot);
-    await expect(fs.readFile(capturePath, "utf8").then(JSON.parse)).resolves.toMatchObject({
-      argv: ["pr", "create", "--fill"],
-      ghToken: "starter-token",
-      cwd: realTempRoot
-    });
-  });
+	    const realTempRoot = await fs.realpath(tempRoot);
+	    const captured = JSON.parse(await fs.readFile(capturePath, "utf8")) as Record<string, unknown>;
+	    expect(captured).toMatchObject({
+	      argv: ["pr", "create", "--fill"],
+	      ghToken: "starter-token",
+	      cwd: realTempRoot
+	    });
+	    expect(captured).not.toHaveProperty("githubToken");
+	  });
 
   it("does not call the real gh when broker token resolution blocks", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "broker-gh-wrapper-"));

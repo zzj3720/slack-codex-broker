@@ -2,6 +2,8 @@
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+import { withoutGlobalGitHubTokenEnv } from "../utils/github-env.js";
+
 export interface GhWrapperOptions {
   readonly brokerApiBase: string;
   readonly realGhPath: string;
@@ -85,7 +87,7 @@ function runRealGh(options: GhWrapperOptions & {
     const child = spawn(options.realGhPath, [...options.argv], {
       cwd: options.cwd,
       env: {
-        ...options.env,
+        ...withoutGlobalGitHubTokenEnv(options.env),
         GH_TOKEN: options.token
       },
       stdio: ["ignore", "pipe", "pipe"]

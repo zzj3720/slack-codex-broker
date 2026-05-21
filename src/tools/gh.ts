@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import type { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 import { withoutGlobalGitHubTokenEnv } from "../utils/github-env.js";
@@ -10,6 +11,7 @@ export interface GhWrapperOptions {
   readonly cwd: string;
   readonly argv: readonly string[];
   readonly env: NodeJS.ProcessEnv;
+  readonly stdin?: Readable | undefined;
 }
 
 export interface GhWrapperResult {
@@ -90,10 +92,19 @@ function runRealGh(options: GhWrapperOptions & {
         ...withoutGlobalGitHubTokenEnv(options.env),
         GH_TOKEN: options.token
       },
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"]
     });
     let stdout = "";
     let stderr = "";
+
+    child.stdin.on("error", () => {
+      // Real gh may exit before consuming stdin for commands that do not read it.
+    });
+    if (options.stdin) {
+      options.stdin.pipe(child.stdin);
+    } else {
+      child.stdin.end();
+    }
 
     child.stdout.on("data", (chunk: Buffer | string) => {
       stdout += chunk.toString();
@@ -134,7 +145,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       realGhPath,
       cwd: process.cwd(),
       argv: process.argv.slice(2),
-      env: process.env
+      env: process.env,
+      stdin: process.stdin
     });
     process.stdout.write(result.stdout);
     process.stderr.write(result.stderr);

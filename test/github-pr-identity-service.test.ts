@@ -232,7 +232,7 @@ describe("GitHubPrIdentityService", () => {
   exit 0
 fi
 if [ "$1 $2" = "auth status" ]; then
-  echo '{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"alice","scopes":"repo, read:user, user:email","gitProtocol":"https"}]}}'
+  echo '{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"alice","scopes":"repo, read:user, user:email, workflow","gitProtocol":"https"}]}}'
   exit 0
 fi
 if [ "$1 $2" = "auth token" ]; then
@@ -314,7 +314,7 @@ exit 2
     });
     await expect(service.getBinding("U_STARTER")).resolves.toMatchObject({
       token: "user-token",
-      scopes: ["repo", "read:user", "user:email"],
+      scopes: ["repo", "read:user", "user:email", "workflow"],
       githubEmail: "alice@example.com"
     });
   });

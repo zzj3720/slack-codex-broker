@@ -7,7 +7,7 @@ import type { Readable } from "node:stream";
 
 import { logger } from "../../logger.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
-import { withoutGlobalGitHubTokenEnv } from "../../utils/github-env.js";
+import { withBrokerGitHubEnv } from "../../utils/github-env.js";
 import { resolveRuntimeToolPath } from "../../utils/runtime-paths.js";
 import { syncUserCodexHome } from "./codex-home.js";
 import { syncGeminiHome } from "./gemini-home.js";
@@ -25,6 +25,7 @@ export class AppServerProcess {
   readonly #codexHome: string;
   readonly #teamCodexHomePath: string | undefined;
   readonly #runtimeHome: string;
+  readonly #githubCliConfigDir: string;
   readonly #port: number;
   readonly #openAiApiKey: string | undefined;
   readonly #authJsonPath: string | undefined;
@@ -57,6 +58,7 @@ export class AppServerProcess {
     this.#codexHome = options.codexHome;
     this.#teamCodexHomePath = options.teamCodexHomePath;
     this.#runtimeHome = resolveRuntimeHomePath();
+    this.#githubCliConfigDir = path.join(path.dirname(options.codexHome), "gh-config");
     this.#port = options.port;
     this.#openAiApiKey = options.openAiApiKey;
     this.#authJsonPath = options.authJsonPath;
@@ -85,22 +87,25 @@ export class AppServerProcess {
     const githubCliWrapper = await this.#ensureGitHubCliWrapper();
     const tempadLinkServiceUrl = await this.#resolveTempadLinkServiceUrl();
 
-    const env: NodeJS.ProcessEnv = withoutGlobalGitHubTokenEnv({
-      ...process.env,
-      CODEX_HOME: this.#codexHome,
-      ...(this.#teamCodexHomePath ? { CODEX_TEAM_HOME: this.#teamCodexHomePath } : {}),
-      HOME: this.#runtimeHome,
-      BROKER_API_BASE: this.#brokerHttpBaseUrl,
-      BROKER_GH_HELPER:
-        process.env.BROKER_GH_HELPER?.trim() || resolveRuntimeToolPath("gh.js"),
-      BROKER_REAL_GH_PATH:
-        process.env.BROKER_REAL_GH_PATH?.trim() || githubCliWrapper.realGhPath || "",
-      TEMPAD_LINK_SERVICE_URL: tempadLinkServiceUrl,
-      BROKER_GIT_COAUTHOR_HELPER:
-        process.env.BROKER_GIT_COAUTHOR_HELPER?.trim() || resolveRuntimeToolPath("git-coauthor.js"),
-      BROKER_GEMINI_UI_HELPER:
-        process.env.BROKER_GEMINI_UI_HELPER?.trim() || resolveRuntimeToolPath("gemini-ui.js"),
-      PATH: `${githubCliWrapper.binDir}:${process.env.PATH ?? ""}`
+    const env: NodeJS.ProcessEnv = withBrokerGitHubEnv({
+      env: {
+        ...process.env,
+        CODEX_HOME: this.#codexHome,
+        ...(this.#teamCodexHomePath ? { CODEX_TEAM_HOME: this.#teamCodexHomePath } : {}),
+        HOME: this.#runtimeHome,
+        BROKER_API_BASE: this.#brokerHttpBaseUrl,
+        BROKER_GH_HELPER:
+          process.env.BROKER_GH_HELPER?.trim() || resolveRuntimeToolPath("gh.js"),
+        BROKER_REAL_GH_PATH:
+          process.env.BROKER_REAL_GH_PATH?.trim() || githubCliWrapper.realGhPath || "",
+        TEMPAD_LINK_SERVICE_URL: tempadLinkServiceUrl,
+        BROKER_GIT_COAUTHOR_HELPER:
+          process.env.BROKER_GIT_COAUTHOR_HELPER?.trim() || resolveRuntimeToolPath("git-coauthor.js"),
+        BROKER_GEMINI_UI_HELPER:
+          process.env.BROKER_GEMINI_UI_HELPER?.trim() || resolveRuntimeToolPath("gemini-ui.js"),
+        PATH: `${githubCliWrapper.binDir}:${process.env.PATH ?? ""}`
+      },
+      ghConfigDir: githubCliWrapper.configDir
     });
 
     if (this.#geminiHttpProxy) {
@@ -191,6 +196,7 @@ export class AppServerProcess {
     }
 
     await ensureDir(this.#codexHome);
+    await ensureDir(this.#githubCliConfigDir);
     await syncUserCodexHome({
       codexHome: this.#codexHome,
       teamCodexHomePath: this.#teamCodexHomePath,
@@ -248,10 +254,12 @@ export class AppServerProcess {
 
   async #ensureGitHubCliWrapper(): Promise<{
     readonly binDir: string;
+    readonly configDir: string;
     readonly realGhPath?: string | undefined;
   }> {
     const binDir = path.join(this.#runtimeHome, ".local", "broker-bin");
     await ensureDir(binDir);
+    await ensureDir(this.#githubCliConfigDir);
     const wrapperPath = path.join(binDir, "gh");
     const wrapperScript = [
       "#!/usr/bin/env bash",
@@ -266,6 +274,7 @@ export class AppServerProcess {
     await fs.chmod(wrapperPath, 0o755);
     return {
       binDir,
+      configDir: this.#githubCliConfigDir,
       realGhPath: process.env.BROKER_REAL_GH_PATH?.trim() || await findExecutableOnPath("gh", process.env.PATH)
     };
   }
@@ -307,11 +316,14 @@ export class AppServerProcess {
   }
 
   async #runCodex(args: string[]): Promise<string> {
-    const env: NodeJS.ProcessEnv = withoutGlobalGitHubTokenEnv({
-      ...process.env,
-      CODEX_HOME: this.#codexHome,
-      ...(this.#teamCodexHomePath ? { CODEX_TEAM_HOME: this.#teamCodexHomePath } : {}),
-      HOME: this.#runtimeHome
+    const env: NodeJS.ProcessEnv = withBrokerGitHubEnv({
+      env: {
+        ...process.env,
+        CODEX_HOME: this.#codexHome,
+        ...(this.#teamCodexHomePath ? { CODEX_TEAM_HOME: this.#teamCodexHomePath } : {}),
+        HOME: this.#runtimeHome
+      },
+      ghConfigDir: this.#githubCliConfigDir
     });
 
     if (this.#openAiApiKey) {
@@ -345,9 +357,12 @@ export class AppServerProcess {
   }
 
   async #runGit(args: string[]): Promise<string> {
-    const env: NodeJS.ProcessEnv = withoutGlobalGitHubTokenEnv({
-      ...process.env,
-      HOME: this.#runtimeHome
+    const env: NodeJS.ProcessEnv = withBrokerGitHubEnv({
+      env: {
+        ...process.env,
+        HOME: this.#runtimeHome
+      },
+      ghConfigDir: this.#githubCliConfigDir
     });
 
     return await new Promise<string>((resolve, reject) => {

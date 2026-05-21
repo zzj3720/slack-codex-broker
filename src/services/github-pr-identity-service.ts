@@ -148,7 +148,7 @@ export class GitHubPrIdentityService {
     this.#defaultGitHubToken = normalizeString(options.defaultGitHubToken);
     this.#githubApiBaseUrl = normalizeString(options.githubApiBaseUrl) ?? "https://api.github.com";
     this.#githubHostname = resolveGitHubHostname(this.#githubApiBaseUrl);
-    this.#githubOAuthScopes = options.githubOAuthScopes?.length ? options.githubOAuthScopes : ["repo", "read:user", "user:email"];
+    this.#githubOAuthScopes = options.githubOAuthScopes?.length ? options.githubOAuthScopes : ["repo", "read:user", "user:email", "workflow"];
     this.#ghPath = normalizeString(options.ghPath) ?? "gh";
   }
 

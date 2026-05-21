@@ -50,7 +50,7 @@ describe("loadConfig", () => {
     expect(config.codexDisabledMcpServers).toEqual(["*", "linear", "notion"]);
     expect(config.tempadLinkServiceUrl).toBeUndefined();
     expect(config.githubApiBaseUrl).toBe("https://api.github.com");
-    expect(config.githubOAuthScopes).toEqual(["repo", "read:user", "user:email"]);
+    expect(config.githubOAuthScopes).toEqual(["repo", "read:user", "user:email", "workflow"]);
     expect(config.defaultGitHubLogin).toBeUndefined();
     expect(config.defaultGitHubToken).toBeUndefined();
     expect(config.adminBaseUrl).toBe("http://127.0.0.1:3000");

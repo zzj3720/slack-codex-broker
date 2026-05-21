@@ -214,7 +214,7 @@ export function loadConfig(env = process.env): AppConfig {
     githubApiBaseUrl: env.GITHUB_API_BASE_URL ?? "https://api.github.com",
     githubOAuthScopes: getCsvList(env, "GITHUB_OAUTH_SCOPES").length > 0
       ? getCsvList(env, "GITHUB_OAUTH_SCOPES")
-      : ["repo", "read:user", "user:email"],
+      : ["repo", "read:user", "user:email", "workflow"],
     defaultGitHubLogin: getOptional(env, "BROKER_DEFAULT_GITHUB_LOGIN"),
     defaultGitHubToken: getOptional(env, "BROKER_DEFAULT_GITHUB_TOKEN"),
     port,
